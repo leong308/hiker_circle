@@ -144,6 +144,7 @@ class DemoAlerts extends SosAlertRepository {
   @override
   Future<Map<SosAlertMode, String>> loadCustomWhatsAppNotes({
     required AppSession session,
+    bool cacheOnly = false,
   }) async => {};
 
   /// Loads alert logs.

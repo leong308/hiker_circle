@@ -1,9 +1,12 @@
 // OnboardingRepository saves first-time profile details and prepares the selected profile photo.
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../app/Data/user_module_paths.dart';
 
+import '../../app/Data/conditional_cloud_cache.dart';
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
+import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../Model/onboarding_profile.dart';
 
@@ -22,16 +25,37 @@ class OnboardingRepositoryException implements Exception {
 /// Represents onboarding repository.
 class OnboardingRepository {
   /// Creates onboarding repository.
-  const OnboardingRepository({
+  OnboardingRepository({
     FirebaseFirestore? firestore,
+    FirebaseFunctions? functions,
+    LocalSessionDatabase? localDatabase,
+    ConditionalCloudCache? cache,
+    String? Function()? currentOwner,
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
+       _functions = functions,
+       _localDatabase = localDatabase ?? LocalSessionDatabase(),
+       _providedCache = cache,
+       _currentOwner = currentOwner,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
   final FirebaseFirestore? _firestore;
+  final FirebaseFunctions? _functions;
+  final LocalSessionDatabase _localDatabase;
+  final ConditionalCloudCache? _providedCache;
+  final String? Function()? _currentOwner;
+  late final ConditionalCloudCache _cache =
+      _providedCache ??
+      ConditionalCloudCache(
+        _localDatabase,
+        () => _functions ?? FirebaseFunctions.instance,
+        currentOwner: _currentOwner,
+      );
   final FirebaseBootstrapResult _firebaseBootstrapResult;
-  static const Duration _firebaseReadTimeout = Duration(seconds: 12);
+
+  /// Publishes validated downloaded profile changes across repository instances.
+  Stream<CacheResourceUpdate> get cachedReadUpdates => _cache.updates;
 
   /// Returns resolved firestore.
   FirebaseFirestore get _resolvedFirestore =>
@@ -52,16 +76,30 @@ class OnboardingRepository {
   }
 
   /// Loads profile.
-  Future<OnboardingProfile> loadProfile(AppSession session) async {
-    _ensureFirebaseAvailable();
+  Future<OnboardingProfile> loadProfile(
+    AppSession session, {
+    bool force = false,
+    bool cacheOnly = false,
+  }) async {
     try {
-      final snapshot = await _userDocument(
-        session,
-      ).get().timeout(_firebaseReadTimeout);
-      final profile = snapshot.data()?['profile'];
-      final profileData = profile is Map
-          ? Map<String, dynamic>.from(profile)
-          : <String, dynamic>{};
+      final data = await _cache.read(
+        owner: session.phoneNumber,
+        type: 'profile',
+        id: 'current',
+        callable: 'readMobileResource',
+        arguments: const {'resourceType': 'profile'},
+        freshness: const Duration(minutes: 5),
+        online: _firebaseBootstrapResult.isAvailable,
+        force: force,
+        cacheOnly: cacheOnly,
+      );
+      final profile = data['profile'];
+      if (profile is! Map) {
+        throw const OnboardingRepositoryException(
+          'Your profile is not available on this device. Connect to the internet and try again.',
+        );
+      }
+      final profileData = Map<String, dynamic>.from(profile);
       return OnboardingProfile.fromFirestore(profileData);
     } on FirebaseException catch (error) {
       throw OnboardingRepositoryException(_firebaseMessage(error));
@@ -87,6 +125,7 @@ class OnboardingRepository {
         'profileUpdatedAt': FieldValue.serverTimestamp(),
         'profileUpdatedAtLocal': now.toIso8601String(),
       }, SetOptions(merge: true));
+      await _invalidateProfile(session);
     } on FirebaseException catch (error) {
       throw OnboardingRepositoryException(_firebaseMessage(error));
     }
@@ -138,10 +177,24 @@ class OnboardingRepository {
           'onboardingVersion': 1,
         }, SetOptions(merge: true));
       });
+      await _invalidateProfile(session);
     } on OnboardingRepositoryException {
       rethrow;
     } on FirebaseException catch (error) {
       throw OnboardingRepositoryException(_firebaseMessage(error));
+    }
+  }
+
+  Future<void> _invalidateProfile(AppSession session) async {
+    try {
+      await _cache.invalidate(
+        owner: session.phoneNumber,
+        type: 'profile',
+        id: 'current',
+      );
+      await loadProfile(session, force: true);
+    } catch (_) {
+      // Confirmed profile writes remain valid if their display refresh fails.
     }
   }
 

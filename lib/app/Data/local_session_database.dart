@@ -17,6 +17,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart'
     show databaseFactoryFfi, sqfliteFfiInit;
 
 import '../../home/Model/hike_session_models.dart';
+import '../../feedback/Model/feedback_saved_draft.dart';
 import '../../sos/Model/nearby_sos_event.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/app_session.dart';
@@ -275,6 +276,190 @@ class LocalSessionDatabase {
   /// Returns device notification changes.
   static Stream<String> get deviceNotificationChanges =>
       _deviceNotificationChanges.stream;
+
+  FeedbackSavedDraft _feedbackDraftFromRow(Map<String, Object?> row) =>
+      FeedbackSavedDraft(
+        id: row['draft_id'] as String,
+        uid: row['owner'] as String,
+        category: row['category'] as String,
+        message: row['message'] as String,
+        screenshot: row['screenshot'] as Uint8List?,
+        submissionAttempted: row['submission_attempted'] == 1,
+        revision: row['revision'] as int,
+      );
+
+  String _feedbackScreenshotHash(Uint8List? bytes) =>
+      bytes == null ? '' : crypto.sha256.convert(bytes).toString();
+
+  Future<FeedbackSavedDraft?> loadFeedbackDraft(String owner) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'feedback_drafts',
+      where: 'owner = ? AND status = ?',
+      whereArgs: [owner, 'active'],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : _feedbackDraftFromRow(rows.single);
+  }
+
+  /// Open is atomic across multiple forms and never replaces an existing draft.
+  Future<FeedbackSavedDraft> openFeedbackDraft(
+    FeedbackSavedDraft initial,
+  ) async {
+    final database = await _openDatabase();
+    return database.transaction((transaction) async {
+      final rows = await transaction.query(
+        'feedback_drafts',
+        where: 'owner = ?',
+        whereArgs: [initial.uid],
+        limit: 1,
+      );
+      if (rows.isNotEmpty && rows.single['status'] == 'active') {
+        return _feedbackDraftFromRow(rows.single);
+      }
+      final revision = rows.isEmpty ? 0 : (rows.single['revision'] as int) + 1;
+      final saved = {
+        'owner': initial.uid,
+        'draft_id': initial.id,
+        'status': 'active',
+        'revision': revision,
+        'category': initial.category,
+        'message': initial.message,
+        'screenshot': initial.screenshot,
+        'screenshot_hash': _feedbackScreenshotHash(initial.screenshot),
+        'submission_attempted': initial.submissionAttempted ? 1 : 0,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      await transaction.insert(
+        'feedback_drafts',
+        saved,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      return _feedbackDraftFromRow(saved);
+    });
+  }
+
+  /// CAS saves keep stale debounce callbacks from resurrecting a sent form.
+  Future<FeedbackSavedDraft?> saveFeedbackDraft(
+    FeedbackSavedDraft draft,
+  ) async {
+    final database = await _openDatabase();
+    final screenshotHash = _feedbackScreenshotHash(draft.screenshot);
+    return database.transaction((transaction) async {
+      final rows = await transaction.query(
+        'feedback_drafts',
+        columns: [
+          'draft_id',
+          'revision',
+          'status',
+          'category',
+          'message',
+          'screenshot_hash',
+          'submission_attempted',
+        ],
+        where: 'owner = ?',
+        whereArgs: [draft.uid],
+        limit: 1,
+      );
+      if (rows.isEmpty ||
+          rows.single['status'] != 'active' ||
+          rows.single['draft_id'] != draft.id ||
+          rows.single['revision'] != draft.revision) {
+        return null;
+      }
+      // Once a request may have reached the server, this identity belongs to
+      // its frozen payload. A late autosave cannot edit or unfreeze that report.
+      if (rows.single['submission_attempted'] == 1 &&
+          (!draft.submissionAttempted ||
+              rows.single['category'] != draft.category ||
+              rows.single['message'] != draft.message ||
+              rows.single['screenshot_hash'] != screenshotHash)) {
+        return null;
+      }
+      final changedImage = rows.single['screenshot_hash'] != screenshotHash;
+      final revision = draft.revision + 1;
+      await transaction.update(
+        'feedback_drafts',
+        {
+          'category': draft.category,
+          'message': draft.message,
+          'submission_attempted': draft.submissionAttempted ? 1 : 0,
+          'revision': revision,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+          if (changedImage) 'screenshot': draft.screenshot,
+          if (changedImage) 'screenshot_hash': screenshotHash,
+        },
+        where: 'owner = ? AND draft_id = ? AND revision = ? AND status = ?',
+        whereArgs: [draft.uid, draft.id, draft.revision, 'active'],
+      );
+      return FeedbackSavedDraft(
+        id: draft.id,
+        uid: draft.uid,
+        category: draft.category,
+        message: draft.message,
+        screenshot: draft.screenshot,
+        submissionAttempted: draft.submissionAttempted,
+        revision: revision,
+      );
+    });
+  }
+
+  Future<bool> discardFeedbackDraft(FeedbackSavedDraft expected) async {
+    final database = await _openDatabase();
+    return await database.update(
+          'feedback_drafts',
+          _clearedFeedbackDraftValues(expected.revision + 1),
+          where: 'owner = ? AND draft_id = ? AND revision = ? AND status = ?',
+          whereArgs: [expected.uid, expected.id, expected.revision, 'active'],
+        ) ==
+        1;
+  }
+
+  Future<bool> acknowledgeFeedbackDraft({
+    required String owner,
+    required String id,
+    required String category,
+    required String message,
+    Uint8List? screenshot,
+  }) async {
+    final database = await _openDatabase();
+    return database.transaction((transaction) async {
+      final rows = await transaction.query(
+        'feedback_drafts',
+        columns: ['revision'],
+        where:
+            'owner = ? AND draft_id = ? AND status = ? AND submission_attempted = 1 AND category = ? AND message = ? AND screenshot_hash = ?',
+        whereArgs: [
+          owner,
+          id,
+          'active',
+          category,
+          message,
+          _feedbackScreenshotHash(screenshot),
+        ],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+      await transaction.update(
+        'feedback_drafts',
+        _clearedFeedbackDraftValues((rows.single['revision'] as int) + 1),
+        where: 'owner = ? AND draft_id = ? AND status = ?',
+        whereArgs: [owner, id, 'active'],
+      );
+      return true;
+    });
+  }
+
+  Map<String, Object?> _clearedFeedbackDraftValues(int revision) => {
+    'status': 'cleared',
+    'revision': revision,
+    'category': '',
+    'message': '',
+    'screenshot': null,
+    'screenshot_hash': '',
+    'submission_attempted': 0,
+    'updated_at': DateTime.now().toUtc().toIso8601String(),
+  };
 
   /// Creates button debug session.
   Future<void> createButtonDebugSession(
@@ -1299,6 +1484,259 @@ class LocalSessionDatabase {
       limit: 1,
     );
     return rows.isEmpty ? null : LocalCachedEntity.fromRow(rows.first);
+  }
+
+  /// Bounds the registered reconnect working set while retaining offline data.
+  /// Pending user operations and downloaded historical rows are never removed.
+  Future<void> registerConditionalReadDescriptor(
+    LocalCachedEntity descriptor, {
+    int maximumPerOwner = 64,
+    int maximumWorkUnits = 12288,
+  }) async {
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      await transaction.insert('cached_entities', {
+        'owner_phone_number': descriptor.ownerPhoneNumber.trim(),
+        'entity_type': 'conditional_read_descriptor',
+        'entity_id': descriptor.entityId,
+        'parent_id': '',
+        'payload_json': jsonEncode(descriptor.payload),
+        'cached_at': descriptor.cachedAt.toUtc().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      final rows = await transaction.query(
+        'cached_entities',
+        where: 'owner_phone_number = ? AND entity_type = ?',
+        whereArgs: [
+          descriptor.ownerPhoneNumber.trim(),
+          'conditional_read_descriptor',
+        ],
+        orderBy: 'cached_at DESC, entity_id ASC',
+      );
+      for (final row in rows.skip(maximumPerOwner.clamp(1, 64))) {
+        final old = LocalCachedEntity.fromRow(row);
+        await transaction.delete(
+          'cached_entities',
+          where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
+          whereArgs: [
+            old.ownerPhoneNumber,
+            'conditional_read_descriptor',
+            old.entityId,
+          ],
+        );
+      }
+      // A detailed history projection is more expensive than a preference
+      // record. Keep the registered working set within the server's work budget.
+      // Only registration metadata is evicted here: downloaded data remains
+      // available offline and can register again when it is next opened.
+      final retained = rows
+          .take(maximumPerOwner.clamp(1, 64))
+          .map(LocalCachedEntity.fromRow)
+          .toList();
+      int cost(LocalCachedEntity item) =>
+          (item.payload['workUnits'] as num?)?.toInt().clamp(1, 16384) ?? 4;
+      var total = retained.fold(0, (sum, item) => sum + cost(item));
+      for (final old in retained.reversed) {
+        if (total <= maximumWorkUnits) break;
+        await transaction.delete(
+          'cached_entities',
+          where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
+          whereArgs: [
+            old.ownerPhoneNumber,
+            'conditional_read_descriptor',
+            old.entityId,
+          ],
+        );
+        total -= cost(old);
+      }
+    });
+  }
+
+  /// Removes legacy private reads mistakenly stored in the shared public scope.
+  /// Public profiles, trail/weather caches and pending operations are preserved.
+  Future<void> purgeUnownedConditionalReadCaches({
+    required Set<String> privateCallables,
+  }) async {
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      await transaction.delete(
+        'cached_entities',
+        where: "owner_phone_number = '' AND entity_type IN (?, ?, ?, ?)",
+        whereArgs: [
+          'hike_history_list',
+          'hike_history_list:validation',
+          'hike_history_detail',
+          'hike_history_detail:validation',
+        ],
+      );
+      final descriptors = await transaction.query(
+        'cached_entities',
+        where: "owner_phone_number = '' AND entity_type = ?",
+        whereArgs: ['conditional_read_descriptor'],
+      );
+      for (final row in descriptors) {
+        final descriptor = LocalCachedEntity.fromRow(row);
+        if (!privateCallables.contains(descriptor.payload['callable'])) {
+          continue;
+        }
+        final type = descriptor.payload['type'];
+        final id = descriptor.payload['id'];
+        if (type is String && id is String) {
+          await transaction.delete(
+            'cached_entities',
+            where:
+                "owner_phone_number = '' AND entity_id = ? AND entity_type IN (?, ?)",
+            whereArgs: [id, type, '$type:validation'],
+          );
+        }
+        await transaction.delete(
+          'cached_entities',
+          where:
+              "owner_phone_number = '' AND entity_type = ? AND entity_id = ?",
+          whereArgs: ['conditional_read_descriptor', descriptor.entityId],
+        );
+      }
+    });
+  }
+
+  /// Applies a response only while its account and requested local baseline match.
+  Future<bool> saveConditionalCacheResponse({
+    required LocalCachedEntity entity,
+    required LocalCachedEntity validation,
+    required String? expectedPayloadHash,
+    required DateTime? expectedCachedAt,
+    String? expectedValidationHash,
+    String? descriptorId,
+    String expectedSessionOwner = '',
+    bool payloadChanged = true,
+    bool deletePayload = false,
+  }) async {
+    final database = await _openDatabase();
+    return database.transaction((transaction) async {
+      if (expectedSessionOwner.isNotEmpty) {
+        final users = await transaction.query(
+          'users',
+          columns: ['phone_number'],
+          orderBy: 'signed_in_at DESC',
+          limit: 1,
+        );
+        if (users.isEmpty ||
+            users.single['phone_number'] != expectedSessionOwner) {
+          return false;
+        }
+      }
+      final rows = await transaction.query(
+        'cached_entities',
+        where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
+        whereArgs: [
+          entity.ownerPhoneNumber,
+          entity.entityType,
+          entity.entityId,
+        ],
+        limit: 1,
+      );
+      final current = rows.isEmpty
+          ? null
+          : LocalCachedEntity.fromRow(rows.single);
+      if ((current == null) != (expectedPayloadHash == null) ||
+          (current != null &&
+              (stableContentHash(current.payload) != expectedPayloadHash ||
+                  current.cachedAt != expectedCachedAt))) {
+        return false;
+      }
+      final validationRows = await transaction.query(
+        'cached_entities',
+        where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
+        whereArgs: [
+          entity.ownerPhoneNumber,
+          validation.entityType,
+          entity.entityId,
+        ],
+        limit: 1,
+      );
+      final currentValidation = validationRows.isEmpty
+          ? null
+          : LocalCachedEntity.fromRow(validationRows.single);
+      if ((currentValidation == null) != (expectedValidationHash == null) ||
+          (currentValidation != null &&
+              stableContentHash(currentValidation.payload) !=
+                  expectedValidationHash)) {
+        return false;
+      }
+      if (descriptorId != null) {
+        final descriptors = await transaction.query(
+          'cached_entities',
+          columns: ['entity_id'],
+          where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
+          whereArgs: [
+            entity.ownerPhoneNumber,
+            'conditional_read_descriptor',
+            descriptorId,
+          ],
+          limit: 1,
+        );
+        if (descriptors.isEmpty) return false;
+      }
+      if (deletePayload) {
+        await transaction.delete(
+          'cached_entities',
+          where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
+          whereArgs: [
+            entity.ownerPhoneNumber,
+            entity.entityType,
+            entity.entityId,
+          ],
+        );
+      }
+      for (final item in [
+        if (payloadChanged && !deletePayload) entity,
+        validation,
+      ]) {
+        await transaction.insert('cached_entities', {
+          'owner_phone_number': item.ownerPhoneNumber,
+          'entity_type': item.entityType,
+          'entity_id': item.entityId,
+          'parent_id': item.parentId,
+          'payload_json': jsonEncode(item.payload),
+          'source_updated_at': item.sourceUpdatedAt?.toUtc().toIso8601String(),
+          'cached_at': item.cachedAt.toUtc().toIso8601String(),
+          'expires_at': item.expiresAt?.toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      return true;
+    });
+  }
+
+  /// Invalidates a downloaded read model without touching its retryable intent.
+  Future<void> deleteConditionalCacheResource({
+    required String owner,
+    required String type,
+    required String id,
+    String? invalidationToken,
+  }) async {
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      await transaction.delete(
+        'cached_entities',
+        where:
+            'owner_phone_number = ? AND entity_id = ? AND entity_type IN (?, ?)',
+        whereArgs: [owner, id, type, '$type:validation'],
+      );
+      // This tombstone also protects a request that began before the first
+      // cached payload existed. A late response cannot repopulate that cache.
+      await transaction.insert('cached_entities', {
+        'owner_phone_number': owner,
+        'entity_type': '$type:validation',
+        'entity_id': id,
+        'parent_id': '',
+        'payload_json': jsonEncode({
+          'invalidated': true,
+          'invalidationToken':
+              invalidationToken ??
+              DateTime.now().microsecondsSinceEpoch.toString(),
+        }),
+        'cached_at': DateTime.now().toUtc().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   // replaceCachedEntitySet replaces one scoped cache result atomically without disturbing other
@@ -2344,7 +2782,7 @@ class LocalSessionDatabase {
 
     final opening = SecureLocalDatabase.open(
       databasePath,
-      version: 35,
+      version: 36,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2381,8 +2819,12 @@ class LocalSessionDatabase {
         await _createStaticHazardTables(database);
         await _createButtonDebugTables(database);
         await _createCommunityTables(database);
+        await _createFeedbackDraftTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 36) {
+          await _createFeedbackDraftTable(database);
+        }
         // One-time rename keeps pending samples, IDs and owner isolation intact.
         if (oldVersion < 29) {
           final oldTable = await database.rawQuery(
@@ -3169,6 +3611,24 @@ class LocalSessionDatabase {
         id INTEGER PRIMARY KEY CHECK (id = 1),
         app_instance_id TEXT NOT NULL,
         created_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  /// Keeps unsent feedback independent of downloaded caches and upload queues.
+  Future<void> _createFeedbackDraftTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS feedback_drafts (
+        owner TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'cleared')),
+        revision INTEGER NOT NULL DEFAULT 0,
+        category TEXT NOT NULL,
+        message TEXT NOT NULL,
+        screenshot BLOB,
+        screenshot_hash TEXT NOT NULL DEFAULT '',
+        submission_attempted INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
       )
     ''');
   }

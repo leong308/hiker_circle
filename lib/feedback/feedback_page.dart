@@ -304,36 +304,312 @@ class FeedbackComposePage extends StatefulWidget {
 }
 
 /// Manages the feedback compose page presentation and lifecycle.
-class _FeedbackComposePageState extends State<FeedbackComposePage> {
+class _FeedbackComposePageState extends State<FeedbackComposePage>
+    with WidgetsBindingObserver {
   final _form = GlobalKey<FormState>();
   late final _repository = widget.repository ?? FeedbackRepository();
   late final _message = TextEditingController(text: widget.initialText);
   late Uint8List? _screenshot = widget.screenshot;
   String _category = feedbackCategories.first;
   FeedbackDraft? _draft;
+  FeedbackSavedDraft? _savedDraft;
+  String? _draftOwner;
+  Future<void> _saveChain = Future.value();
+  Timer? _saveTimer;
+  int _editRevision = 0;
+  bool _restoring = true;
+  bool _restored = false;
+  bool _localSaved = false;
+  bool _allowPop = false;
+  bool _leaving = false;
+  bool _disposed = false;
+  bool _incomingCapturePending = false;
+  String? _saveError;
   bool _busy = false;
   bool _sent = false;
   String? _error;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _message.addListener(_draftChanged);
+    unawaited(_restoreSavedDraft());
+  }
+
+  Future<void> _restoreSavedDraft() async {
+    try {
+      _draftOwner ??= await _repository.draftOwner();
+      final existing = await _repository.loadSavedDraft(
+        expectedOwner: _draftOwner,
+      );
+      var replacedEmptyDraft = false;
+      if (existing != null &&
+          !existing.hasContent &&
+          !existing.submissionAttempted &&
+          (widget.initialText.isNotEmpty || widget.screenshot != null)) {
+        if (!await _repository.discardSavedDraft(existing)) {
+          throw StateError('The device draft changed while opening a capture.');
+        }
+        replacedEmptyDraft = true;
+      }
+      final saved = await _repository.openSavedDraft(
+        expectedOwner: _draftOwner,
+        message: widget.initialText,
+        screenshot: (widget.screenshot?.length ?? 0) <= feedbackImageLimit
+            ? widget.screenshot
+            : null,
+      );
+      if (!mounted || _disposed) return;
+      _savedDraft = saved;
+      _message.text = saved.message;
+      _category = saved.category;
+      _screenshot = saved.screenshot == null
+          ? null
+          : Uint8List.fromList(saved.screenshot!);
+      _draft = saved.submissionAttempted
+          ? _repository.submissionForSavedDraft(saved)
+          : null;
+      _restored = existing?.hasContent == true;
+      _incomingCapturePending =
+          _restored &&
+          (widget.initialText.isNotEmpty || widget.screenshot != null);
+      if ((existing == null || replacedEmptyDraft) &&
+          (widget.screenshot?.length ?? 0) > feedbackImageLimit) {
+        _screenshot = widget.screenshot;
+        _saveError =
+            'This screenshot is too large to save. Remove it to continue.';
+      }
+      if (_draft != null) {
+        _error =
+            'Your previous send was not confirmed here. Retry delivery to check the same report.';
+      }
+      setState(() {
+        _restoring = false;
+        _localSaved = _saveError == null;
+      });
+    } catch (_) {
+      if (!mounted || _disposed) return;
+      setState(() {
+        _restoring = false;
+        _saveError =
+            'Could not open your saved feedback on this device. Please try again.';
+      });
+    }
+  }
+
+  void _draftChanged() {
+    if (_disposed || _restoring || _busy || _sent || _draft != null) return;
+    _editRevision++;
+    _saveTimer?.cancel();
+    setState(() {
+      _localSaved = false;
+      _saveError = null;
+    });
+    _saveTimer = Timer(const Duration(milliseconds: 350), () {
+      unawaited(_persistCurrent());
+    });
+  }
+
+  Future<bool> _persistCurrent({bool freezeForSubmission = false}) {
+    final message = freezeForSubmission ? _message.text.trim() : _message.text;
+    final category = _category;
+    final screenshot = _screenshot;
+    final revision = _editRevision;
+    final done = Completer<bool>();
+    _saveChain = _saveChain.then((_) async {
+      try {
+        final base = _savedDraft;
+        if (base == null) throw StateError('No device draft is open.');
+        if (base.submissionAttempted && !freezeForSubmission) {
+          // A lifecycle save queued before Send must not change its frozen payload.
+          done.complete(true);
+          return;
+        }
+        final saved = await _repository.saveSavedDraft(
+          base.copyWith(
+            category: category,
+            message: message,
+            screenshot: screenshot,
+            removeScreenshot: screenshot == null,
+            submissionAttempted:
+                freezeForSubmission || base.submissionAttempted,
+          ),
+        );
+        if (saved == null) throw StateError('The device draft changed.');
+        _savedDraft = saved;
+        if (mounted && !_disposed && revision == _editRevision) {
+          setState(() {
+            _localSaved = true;
+            _saveError = null;
+          });
+        }
+        done.complete(true);
+      } catch (_) {
+        if (mounted && !_disposed) {
+          setState(() {
+            _localSaved = false;
+            _saveError = (screenshot?.length ?? 0) > feedbackImageLimit
+                ? 'This screenshot is too large to save. Remove it to continue.'
+                : 'Could not save your draft on this device. Please try saving again before leaving.';
+          });
+        }
+        done.complete(false);
+      }
+    });
+    return done.future;
+  }
+
+  Future<void> _leave() async {
+    if (_busy || _restoring || _leaving) return;
+    setState(() => _leaving = true);
+    FocusScope.of(context).unfocus();
+    _saveTimer?.cancel();
+    await _saveChain;
+    // Attempted reports are already durable and immutable. Do not recreate one
+    // that a late server acknowledgement has cleared while this page was open.
+    var saved = _sent || _draft != null;
+    while (!saved && mounted) {
+      final revision = _editRevision;
+      if (!await _persistCurrent()) break;
+      saved = revision == _editRevision;
+    }
+    _saveTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _leaving = false;
+      _allowPop = saved;
+    });
+    if (!saved) return;
+    Navigator.of(context).pop();
+  }
+
+  Future<void> _discard() async {
+    if (_busy || _restoring || _leaving || _savedDraft == null) return;
+    _saveTimer?.cancel();
+    setState(() => _restoring = true);
+    try {
+      await _saveChain;
+      if (!await _repository.discardSavedDraft(_savedDraft!)) {
+        final current = await _repository.loadSavedDraft(
+          expectedOwner: _draftOwner,
+        );
+        if (current != null) throw StateError('The device draft changed.');
+        // A late confirmation may already have cleared this frozen report.
+      }
+      final useCapture = _incomingCapturePending;
+      final saved = await _repository.openSavedDraft(
+        expectedOwner: _draftOwner,
+        message: useCapture ? widget.initialText : '',
+        screenshot:
+            useCapture && (widget.screenshot?.length ?? 0) <= feedbackImageLimit
+            ? widget.screenshot
+            : null,
+      );
+      if (!mounted || _disposed) return;
+      _savedDraft = saved;
+      _draft = null;
+      _message.text = saved.message;
+      _category = saved.category;
+      _screenshot = saved.screenshot == null
+          ? null
+          : Uint8List.fromList(saved.screenshot!);
+      _error = null;
+      _saveError = null;
+      _restored = false;
+      _incomingCapturePending = false;
+      _editRevision++;
+      _localSaved = true;
+      if (useCapture && (widget.screenshot?.length ?? 0) > feedbackImageLimit) {
+        _screenshot = widget.screenshot;
+        _saveError =
+            'This screenshot is too large to save. Remove it to continue.';
+        _localSaved = false;
+      }
+    } catch (_) {
+      if (mounted && !_disposed) {
+        _saveError = 'Could not discard the saved draft. Please try again.';
+      }
+    } finally {
+      if (mounted && !_disposed) setState(() => _restoring = false);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_restoring &&
+        !_busy &&
+        !_sent &&
+        _draft == null &&
+        (state == AppLifecycleState.inactive ||
+            state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached)) {
+      _saveTimer?.cancel();
+      unawaited(_persistCurrent());
+    }
+  }
+
   /// Releases resources owned by this instance.
   @override
   void dispose() {
+    _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
+    _saveTimer?.cancel();
+    _message.removeListener(_draftChanged);
+    if (!_allowPop && !_localSaved && !_restoring && !_sent && _draft == null) {
+      unawaited(_persistCurrent());
+    }
     _message.dispose();
     super.dispose();
   }
 
   /// Sends.
+  Future<void> _applyDeliveryConfirmation(FeedbackDraft submitted) async {
+    await _repository.checkDraftOwner(submitted.uid);
+    if (!mounted ||
+        _disposed ||
+        _restoring ||
+        _leaving ||
+        _draft?.id != submitted.id ||
+        _savedDraft?.id != submitted.id) {
+      return;
+    }
+    setState(() {
+      _sent = true;
+      _error = null;
+    });
+  }
+
   Future<void> _send() async {
-    if (_busy || !_form.currentState!.validate()) return;
+    if (_busy || _restoring || _leaving || !_form.currentState!.validate()) {
+      return;
+    }
     FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      _draft ??= _repository.draft(_category, _message.text, _screenshot);
-      await _repository.submit(_draft!).timeout(const Duration(seconds: 30));
-      if (mounted) setState(() => _sent = true);
+      _saveTimer?.cancel();
+      await _saveChain;
+      if (_draft == null) {
+        if (!await _persistCurrent(freezeForSubmission: true)) return;
+        _draft = _repository.submissionForSavedDraft(_savedDraft!);
+        _message.text = _draft!.message;
+      }
+      final submitted = _draft!;
+      final delivery = _repository.submit(submitted);
+      unawaited(
+        delivery.then<void>((_) async {
+          try {
+            await _applyDeliveryConfirmation(submitted);
+          } catch (_) {
+            // A completed request for the old account must not update a new page.
+          }
+        }, onError: (Object _, StackTrace __) {}),
+      );
+      await delivery.timeout(const Duration(seconds: 30));
+      await _applyDeliveryConfirmation(submitted);
     } catch (error) {
       // Log the service/code only, never report text, screenshots or credentials.
       debugPrint(
@@ -350,7 +626,14 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => PopScope(
-    canPop: !_busy,
+    canPop:
+        !_busy &&
+        !_restoring &&
+        !_leaving &&
+        (_allowPop || _sent || (_localSaved && _saveError == null)),
+    onPopInvokedWithResult: (didPop, result) {
+      if (!didPop) unawaited(_leave());
+    },
     child: Scaffold(
       appBar: PageHeaderAppBar(
         title: Text(_sent ? 'Thank you' : 'Review feedback'),
@@ -395,6 +678,16 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
                         'What would you like to share?',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
+                      if (_restoring || _leaving)
+                        const LinearProgressIndicator(),
+                      if (_restored) ...[
+                        const SizedBox(height: 12),
+                        const Text('Your saved feedback has been restored.'),
+                      ],
+                      if (_incomingCapturePending)
+                        const Text(
+                          'Discard the saved draft below to use your new capture.',
+                        ),
                       const SizedBox(height: 16),
                       Wrap(
                         spacing: 8,
@@ -403,10 +696,17 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
                               (category) => ChoiceChip(
                                 label: Text(category),
                                 selected: _category == category,
-                                onSelected: _draft != null || _busy
+                                onSelected:
+                                    _draft != null ||
+                                        _busy ||
+                                        _leaving ||
+                                        _restoring ||
+                                        _savedDraft == null
                                     ? null
-                                    : (_) =>
-                                          setState(() => _category = category),
+                                    : (_) {
+                                        setState(() => _category = category);
+                                        _draftChanged();
+                                      },
                               ),
                             )
                             .toList(),
@@ -414,7 +714,12 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
                       const SizedBox(height: 20),
                       TextFormField(
                         controller: _message,
-                        readOnly: _draft != null || _busy,
+                        readOnly:
+                            _draft != null ||
+                            _busy ||
+                            _leaving ||
+                            _restoring ||
+                            _savedDraft == null,
                         maxLength: 4000,
                         minLines: 5,
                         maxLines: 10,
@@ -440,9 +745,13 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
                           ),
                         ),
                         TextButton.icon(
-                          onPressed: _draft != null || _busy
+                          onPressed:
+                              _draft != null || _busy || _restoring || _leaving
                               ? null
-                              : () => setState(() => _screenshot = null),
+                              : () {
+                                  setState(() => _screenshot = null);
+                                  _draftChanged();
+                                },
                           icon: const Icon(Icons.delete_outline),
                           label: const Text('Remove screenshot'),
                         ),
@@ -455,6 +764,43 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
                       const Text(
                         'Sending shares this text and optional screenshot privately with the HikerCircle admin team, along with your account ID and platform.',
                       ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _localSaved
+                            ? 'Draft saved on this device. It is only sent when you tap Send or Retry.'
+                            : 'Saving draft on this device…',
+                      ),
+                      if (_saveError != null) ...[
+                        Text(
+                          _saveError!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: _busy || _restoring || _leaving
+                              ? null
+                              : () {
+                                  if (_savedDraft == null) {
+                                    setState(() => _restoring = true);
+                                    unawaited(_restoreSavedDraft());
+                                  } else {
+                                    unawaited(_persistCurrent());
+                                  }
+                                },
+                          child: const Text('Try saving again'),
+                        ),
+                        TextButton(
+                          onPressed: _busy || _restoring || _leaving
+                              ? null
+                              : () {
+                                  _saveTimer?.cancel();
+                                  setState(() => _allowPop = true);
+                                  Navigator.of(context).pop();
+                                },
+                          child: const Text('Leave without saving'),
+                        ),
+                      ],
                       if (_error != null)
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 16),
@@ -470,18 +816,36 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
                         const Padding(
                           padding: EdgeInsets.only(bottom: 12),
                           child: Text(
-                            'Retry uses the same report to avoid duplicates. To write different feedback, go back and start a new report.',
+                            'Retry uses the same report to avoid duplicates. Discard this draft before writing different feedback. Discarding cannot recall a report already accepted by the server.',
                           ),
                         ),
                       FilledButton.icon(
                         onPressed:
                             _busy ||
+                                _leaving ||
+                                _restoring ||
+                                _savedDraft == null ||
                                 (_screenshot?.length ?? 0) > feedbackImageLimit
                             ? null
                             : _send,
                         icon: const Icon(Icons.send_outlined),
                         label: Text(
                           _draft == null ? 'Send feedback' : 'Retry delivery',
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed:
+                            _busy ||
+                                _restoring ||
+                                _leaving ||
+                                _savedDraft == null
+                            ? null
+                            : _discard,
+                        icon: const Icon(Icons.delete_outline),
+                        label: Text(
+                          _incomingCapturePending
+                              ? 'Discard saved draft and use capture'
+                              : 'Discard draft',
                         ),
                       ),
                     ],

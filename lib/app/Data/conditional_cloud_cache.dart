@@ -1,37 +1,282 @@
-// ConditionalCloudCache reuses local payloads and sends content/revision hashes for authenticated
-// refreshes without rewriting unchanged data.
+// Read-cache hashes detect changed content; pending writes retain their own
+// durable identities, ordering and server acknowledgement rules.
+import 'dart:async';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../core/services/content_hash.dart';
 import 'local_session_database.dart';
 
-/// Local-first non-real-time reads. Hash checks never poll the full collection.
+enum CacheReadPolicy { localFirst, cloudFirst }
+
+class CacheResourceUpdate {
+  const CacheResourceUpdate({
+    required this.owner,
+    required this.type,
+    required this.id,
+    this.invalidated = false,
+    this.revoked = false,
+  });
+  final String owner, type, id;
+  final bool invalidated;
+
+  /// Server access was denied or the resource no longer exists.
+  final bool revoked;
+}
+
+class CacheReconciliationResult {
+  const CacheReconciliationResult({
+    this.requestedCount = 0,
+    this.changedCount = 0,
+    this.unchangedCount = 0,
+    this.unavailableCount = 0,
+    this.deferredCount = 0,
+    this.skippedCount = 0,
+  });
+  final int requestedCount,
+      changedCount,
+      unchangedCount,
+      unavailableCount,
+      deferredCount,
+      skippedCount;
+  bool get isComplete =>
+      unavailableCount == 0 && deferredCount == 0 && skippedCount == 0;
+}
+
+typedef ConditionalCacheRequest =
+    Future<Map<String, dynamic>> Function(
+      String callable,
+      Map<String, Object?> arguments,
+    );
+
+/// Local-first reads and one owner-scoped hash batch after reconnection.
 class ConditionalCloudCache {
-  /// Creates conditional cloud cache.
   ConditionalCloudCache(
     this.database,
     this.functions, {
     String? Function()? currentOwner,
-  }) : currentOwner =
-           currentOwner ?? (() => FirebaseAuth.instance.currentUser?.uid);
+    ConditionalCacheRequest? request,
+    DateTime Function()? clock,
+  }) : currentOwner = currentOwner ?? _firebaseOwner,
+       _request = request,
+       _clock = clock ?? DateTime.now;
+
+  // Each account and the shared public scope retain at most 64 registered read
+  // descriptors. Older downloaded payloads remain available for offline use.
+  // All registered resources therefore fit one 128-item request.
+  static const maximumRegisteredResourcesPerOwner = 64;
+  static const maximumBatchResources = 128;
+  static const maximumOwnerReadWorkUnits = 12288;
+  static const maximumPublicReadWorkUnits = 4096;
+  static const _descriptorType = 'conditional_read_descriptor';
+  static const _ownerCallables = {
+    'readMobileResource',
+    'listMyHikeHistory',
+    'loadMyHikeHistoryDetail',
+    'listExpiredScheduledHikes',
+  };
+  static final _updates = StreamController<CacheResourceUpdate>.broadcast();
+  static final _refreshes = <String, Future<Map<String, dynamic>>>{};
+  static final _refreshEpochs = <String, int>{};
+  static final _batches = <String, Future<CacheReconciliationResult>>{};
+  static final _checked = <String, DateTime>{};
+  static final _epochs = <String, int>{};
+  static final _validationVersions = <String, int>{};
+  static final _pauses = <String, int>{};
+  static final _pauseCompletions = <String, Completer<void>>{};
+  static final _batchResourceKeys = <String, Set<String>>{};
+  static final _batchAttemptVersions = <String, int>{};
+  static final _pauseOwnersZoneKey = Object();
+
   final LocalSessionDatabase database;
   final FirebaseFunctions Function() functions;
   final String? Function() currentOwner;
-  final _pending = <String, Future<Map<String, dynamic>>>{};
-  final _checked = <String, DateTime>{};
+  final ConditionalCacheRequest? _request;
+  final DateTime Function() _clock;
+  Stream<CacheResourceUpdate> get updates => _updates.stream;
 
-  /// Computes require owner.
-  void _requireOwner(String owner) {
-    if (owner.isNotEmpty && currentOwner() != owner) {
-      throw FirebaseFunctionsException(
-        code: 'unauthenticated',
-        message: 'The signed-in account changed.',
-      );
+  static String? _firebaseOwner() {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      return null;
+    } // Local restoration can precede Firebase startup.
+  }
+
+  String? _authenticationOwner() {
+    try {
+      return currentOwner();
+    } catch (_) {
+      return null;
     }
   }
 
-  // ConditionalCloudCache.read coalesces requests by owner/resource and rejects responses after an
-  // account change.
-  /// Reads.
+  FirebaseFunctionsException _accountChanged() => FirebaseFunctionsException(
+    code: 'unauthenticated',
+    message: 'The signed-in account changed.',
+  );
+
+  Future<void> _requireLocalOwner(String owner) async {
+    if (owner.isEmpty) return;
+    String? local;
+    try {
+      local = (await database.loadSession())?.phoneNumber.trim();
+    } catch (_) {
+      /* A cloud read can remain possible without SQLite. */
+    }
+    final authenticated = _authenticationOwner();
+    if ((local != null && local != owner) ||
+        (authenticated != null && authenticated != owner) ||
+        (local != owner && authenticated != owner)) {
+      throw _accountChanged();
+    }
+  }
+
+  void _requireRemoteOwner(String owner) {
+    if (owner.isNotEmpty && _authenticationOwner() != owner) {
+      throw _accountChanged();
+    }
+  }
+
+  String _key(String owner, String type, String id) =>
+      stableContentHash([owner, type, id]);
+  bool _paused(String owner) => owner.isEmpty
+      ? _pauses.values.any((count) => count > 0)
+      : (_pauses[owner] ?? 0) > 0;
+
+  /// Automatic listeners wait for the shared pending-write/hash-batch sequence.
+  bool isRevalidationPausedFor(String owner) =>
+      _paused(owner) ||
+      (owner.isEmpty ? _batches.isNotEmpty : _batches.containsKey(owner));
+
+  bool _insidePendingWriteSequence(String owner) {
+    final owners = Zone.current[_pauseOwnersZoneKey] as Set<String>?;
+    return owner.isEmpty
+        ? owners?.isNotEmpty == true
+        : owners?.contains(owner) == true;
+  }
+
+  Future<void> _waitForRevalidation(String owner) async {
+    while (isRevalidationPausedFor(owner)) {
+      final waiting = <Future<void>>[
+        for (final entry in _pauseCompletions.entries)
+          if (owner.isEmpty || entry.key == owner) entry.value.future,
+        for (final entry in _batches.entries)
+          if (owner.isEmpty || entry.key == owner)
+            entry.value.then<void>(
+              (_) {},
+              onError: (Object _, StackTrace __) {},
+            ),
+      ];
+      if (waiting.isEmpty) return;
+      await Future.wait(waiting);
+    }
+  }
+
+  /// Holds automatic individual checks while pending writes and the batch run.
+  Future<T> withRevalidationPaused<T>({
+    required String owner,
+    required Future<T> Function() action,
+  }) async {
+    if ((_pauses[owner] ?? 0) == 0) {
+      _pauseCompletions[owner] = Completer<void>();
+    }
+    _pauses[owner] = (_pauses[owner] ?? 0) + 1;
+    try {
+      // A pending-write helper may itself load a read model. Returning its local
+      // copy avoids making that helper wait for the batch which depends on it.
+      // Readers opened by other UI work wait for the completed batch instead.
+      final owners = <String>{
+        ...?Zone.current[_pauseOwnersZoneKey] as Set<String>?,
+        owner,
+      };
+      return await runZoned(action, zoneValues: {_pauseOwnersZoneKey: owners});
+    } finally {
+      final remaining = (_pauses[owner] ?? 1) - 1;
+      if (remaining <= 0) {
+        _pauses.remove(owner);
+        _pauseCompletions.remove(owner)?.complete();
+      } else {
+        _pauses[owner] = remaining;
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _call(
+    String callable,
+    Map<String, Object?> arguments, {
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
+    if (_request != null) return _request(callable, arguments).timeout(timeout);
+    final response = await functions()
+        .httpsCallable(
+          callable,
+          options: HttpsCallableOptions(timeout: timeout),
+        )
+        .call<Map<String, dynamic>>(arguments)
+        .timeout(timeout);
+    return Map<String, dynamic>.from(response.data);
+  }
+
+  Future<LocalCachedEntity?> _cached(_ReadResource resource) async {
+    try {
+      return await database.loadCachedEntity(
+        ownerPhoneNumber: resource.owner,
+        entityType: resource.type,
+        entityId: resource.id,
+        includeExpired: true,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<LocalCachedEntity?> _validation(_ReadResource resource) async {
+    try {
+      return await database.loadCachedEntity(
+        ownerPhoneNumber: resource.owner,
+        entityType: '${resource.type}:validation',
+        entityId: resource.id,
+        includeExpired: true,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _register(_ReadResource resource) async {
+    final previous = await database.loadCachedEntity(
+      ownerPhoneNumber: resource.owner,
+      entityType: _descriptorType,
+      entityId: resource.key,
+      includeExpired: true,
+    );
+    if (previous != null &&
+        (previous.payload['callable'] != resource.callable ||
+            stableContentHash(previous.payload['arguments']) !=
+                stableContentHash(resource.arguments))) {
+      await invalidate(
+        owner: resource.owner,
+        type: resource.type,
+        id: resource.id,
+      );
+    }
+    await database.registerConditionalReadDescriptor(
+      LocalCachedEntity(
+        ownerPhoneNumber: resource.owner,
+        entityType: _descriptorType,
+        entityId: resource.key,
+        parentId: '',
+        payload: resource.toMap(),
+        cachedAt: _clock().toUtc(),
+      ),
+      maximumPerOwner: maximumRegisteredResourcesPerOwner,
+      maximumWorkUnits: resource.owner.isEmpty
+          ? maximumPublicReadWorkUnits
+          : maximumOwnerReadWorkUnits,
+    );
+  }
+
+  /// Returns cached data immediately by default and revalidates stale data safely.
   Future<Map<String, dynamic>> read({
     required String owner,
     required String type,
@@ -41,157 +286,705 @@ class ConditionalCloudCache {
     required Duration freshness,
     bool online = true,
     bool force = false,
+    CacheReadPolicy policy = CacheReadPolicy.localFirst,
+    bool cacheOnly = false,
+    bool registerForReconciliation = true,
   }) async {
-    final key = '$owner/$type/$id';
-    final existing = _pending[key];
-    if (existing != null) return existing;
-    final future = _read(
-      owner,
-      type,
-      id,
-      callable,
-      arguments,
-      freshness,
-      online,
-      force,
-      key,
-    );
-    _pending[key] = future;
-    try {
-      return await future;
-    } finally {
-      if (identical(_pending[key], future)) _pending.remove(key);
+    if (owner.trim().isEmpty && _ownerCallables.contains(callable)) {
+      throw _accountChanged();
     }
-  }
-
-  /// Reads.
-  Future<Map<String, dynamic>> _read(
-    String owner,
-    String type,
-    String id,
-    String callable,
-    Map<String, Object?> arguments,
-    Duration freshness,
-    bool online,
-    bool force,
-    String key,
-  ) async {
-    final cached = await database.loadCachedEntity(
-      ownerPhoneNumber: owner,
-      entityType: type,
-      entityId: id,
-      includeExpired: true,
+    await _requireLocalOwner(owner);
+    final resource = _ReadResource(
+      key: _key(owner, type, id),
+      owner: owner,
+      type: type,
+      id: id,
+      callable: callable,
+      arguments: arguments,
+      policy: policy,
+      registered: registerForReconciliation,
     );
-    final now = DateTime.now().toUtc();
-    final validation = cached == null
-        ? null
-        : await database.loadCachedEntity(
-            ownerPhoneNumber: owner,
-            entityType: '$type:validation',
-            entityId: id,
-            includeExpired: true,
-          );
-    final validMetadata =
-        validation?.payload['contentHash'] == cached?.payload['contentHash']
-        ? validation
-        : null;
-    final revision =
-        validMetadata?.payload['revisionHash'] ??
-        cached?.payload['revisionHash'];
-    final fullCheckedAt =
-        (validMetadata?.payload['fullCheckedAtMillis'] as num?)?.toInt() ??
-        cached?.cachedAt.millisecondsSinceEpoch ??
-        0;
-    final checked = _checked[key] ?? cached?.cachedAt;
-    if (cached != null &&
-        (!online ||
-            (!force &&
-                checked != null &&
-                now.difference(checked) < freshness))) {
+    if (!cacheOnly && registerForReconciliation) {
+      try {
+        await _register(resource);
+      } catch (_) {
+        /* A storage failure must not prevent the service request. */
+      }
+    }
+    final cached = await _cached(resource);
+    await _requireLocalOwner(owner);
+    if (cacheOnly || !online) return cached?.payload ?? const {};
+    if (policy == CacheReadPolicy.localFirst &&
+        isRevalidationPausedFor(owner)) {
+      if (cached != null || _insidePendingWriteSequence(owner)) {
+        return cached?.payload ?? const {};
+      }
+      final attemptVersion = _batchAttemptVersions[resource.key] ?? 0;
+      final includedInActiveBatch = _batchResourceKeys.values.any(
+        (keys) => keys.contains(resource.key),
+      );
+      await _waitForRevalidation(owner);
+      await _requireLocalOwner(owner);
+      final reconciled = await _cached(resource);
+      await _requireLocalOwner(owner);
+      if (reconciled != null) return reconciled.payload;
+      if (includedInActiveBatch ||
+          (_batchAttemptVersions[resource.key] ?? 0) > attemptVersion) {
+        // This resource was already checked by the one batch. An unavailable
+        // result must not immediately fan out into another individual check.
+        return const {};
+      }
+      // A screen opened after the batch captured its descriptors. Download its
+      // uncached resource normally, without issuing a second manifest request.
+      return _refresh(resource);
+    }
+    if (!force && policy == CacheReadPolicy.localFirst && cached != null) {
+      final validation = await _validation(resource);
+      final validatedMillis =
+          validation?.payload['contentHash'] == cached.payload['contentHash']
+          ? (validation?.payload['fullCheckedAtMillis'] as num?)?.toInt()
+          : null;
+      final checked =
+          _checked[resource.key] ??
+          (validatedMillis == null
+              ? cached.cachedAt
+              : DateTime.fromMillisecondsSinceEpoch(
+                  validatedMillis,
+                  isUtc: true,
+                ));
+      await _requireLocalOwner(owner);
+      if ((validation?.payload['refreshRequired'] == true ||
+              _clock().toUtc().difference(checked) >= freshness) &&
+          !isRevalidationPausedFor(owner)) {
+        unawaited(_refresh(resource).catchError((_) => cached.payload));
+      }
       return cached.payload;
     }
-    if (!online) return const {};
-    try {
-      _requireOwner(owner);
-      final response = await functions()
-          .httpsCallable(callable)
-          .call<Map<String, dynamic>>({
-            ...arguments,
-            if (owner.isNotEmpty) 'expectedOwner': owner,
-            if (cached != null)
-              'knownContentHash': cached.payload['contentHash'],
-            if (cached != null) 'knownRevision': revision,
-            'forcePayload':
-                force ||
-                (cached != null &&
-                    now.millisecondsSinceEpoch - fullCheckedAt >
-                        const Duration(hours: 6).inMilliseconds),
-          })
-          .timeout(const Duration(seconds: 20));
-      final data = Map<String, dynamic>.from(response.data);
-      _requireOwner(owner);
-      _checked[key] = now;
-      if (data['notModified'] == true) {
-        if (cached == null ||
-            data['contentHash'] != cached.payload['contentHash']) {
-          throw const FormatException('Invalid cache validation');
-        }
-        if (data['revisionHash'] != revision ||
-            data['payloadChecked'] == true) {
-          await database.saveCachedEntity(
-            LocalCachedEntity(
-              ownerPhoneNumber: owner,
-              entityType: '$type:validation',
-              entityId: id,
-              parentId: '',
-              cachedAt: now,
-              payload: {
-                'revisionHash': data['revisionHash'],
-                'contentHash': data['contentHash'],
-                'fullCheckedAtMillis': data['payloadChecked'] == true
-                    ? now.millisecondsSinceEpoch
-                    : fullCheckedAt,
-              },
-            ),
-          );
-        }
-        // Only small validation metadata changes; unchanged history rows stay intact.
-        return cached.payload;
+    return _refresh(resource);
+  }
+
+  Future<Map<String, dynamic>> _refresh(_ReadResource resource) {
+    final epoch = _epochs[resource.key] ?? 0;
+    final pending = _refreshes[resource.key];
+    if (pending != null && _refreshEpochs[resource.key] == epoch) {
+      return pending;
+    }
+    final operation = _fetch(resource, epoch: epoch);
+    _refreshes[resource.key] = operation;
+    _refreshEpochs[resource.key] = epoch;
+    void clear() {
+      if (identical(_refreshes[resource.key], operation)) {
+        _refreshes.remove(resource.key);
+        _refreshEpochs.remove(resource.key);
       }
-      await database.saveCachedEntity(
-        LocalCachedEntity(
-          ownerPhoneNumber: owner,
-          entityType: type,
-          entityId: id,
-          parentId: '',
-          payload: data,
-          cachedAt: now,
-        ),
-      );
-      await database.saveCachedEntity(
-        LocalCachedEntity(
-          ownerPhoneNumber: owner,
-          entityType: '$type:validation',
-          entityId: id,
-          parentId: '',
-          cachedAt: now,
-          payload: {
-            'revisionHash': data['revisionHash'],
-            'contentHash': data['contentHash'],
-            'fullCheckedAtMillis': now.millisecondsSinceEpoch,
-          },
-        ),
-      );
-      return data;
+    }
+
+    unawaited(
+      operation.then<void>(
+        (_) => clear(),
+        onError: (Object _, StackTrace _) => clear(),
+      ),
+    );
+    return operation;
+  }
+
+  Future<Map<String, dynamic>> _fetch(
+    _ReadResource resource, {
+    required int epoch,
+  }) async {
+    await _requireLocalOwner(resource.owner);
+    final baseline = await _cached(resource);
+    final validationBaseline = await _validation(resource);
+    if ((_epochs[resource.key] ?? 0) != epoch) {
+      throw const FormatException('The requested resource changed.');
+    }
+    try {
+      _requireRemoteOwner(resource.owner);
+      final data = await _call(resource.callable, {
+        ...resource.arguments,
+        if (resource.owner.isNotEmpty) 'expectedOwner': resource.owner,
+        if (baseline != null)
+          'knownContentHash': baseline.payload['contentHash'],
+        if (baseline != null) 'knownRevision': baseline.payload['revisionHash'],
+        // An actual refresh checks content rather than trusting a revision hint.
+        'forcePayload': true,
+      });
+      _requireRemoteOwner(resource.owner);
+      await _requireLocalOwner(resource.owner);
+      bool applied;
+      try {
+        applied = await _apply(
+          resource,
+          baseline,
+          data,
+          validationBaseline: validationBaseline,
+          epoch: epoch,
+          expectedSessionOwner: resource.owner,
+        );
+      } on _CachePersistenceException {
+        // A valid server result can still be displayed when disk persistence
+        // is unavailable. It must not outlive its account or invalidation epoch.
+        _requireRemoteOwner(resource.owner);
+        await _requireLocalOwner(resource.owner);
+        if ((_epochs[resource.key] ?? 0) != epoch) {
+          throw const FormatException('The cache changed during the request.');
+        }
+        return data['notModified'] == true ? baseline!.payload : data;
+      }
+      _requireRemoteOwner(resource.owner);
+      await _requireLocalOwner(resource.owner);
+      if (applied) {
+        return data['notModified'] == true ? baseline!.payload : data;
+      }
+      final current = await _cached(resource);
+      _requireRemoteOwner(resource.owner);
+      await _requireLocalOwner(resource.owner);
+      if (current != null) return current.payload;
+      if ((_epochs[resource.key] ?? 0) == epoch &&
+          data['notModified'] != true) {
+        return data;
+      }
+      throw const FormatException('The cache changed during the request.');
     } on FirebaseFunctionsException catch (error) {
-      if (const {'unauthenticated', 'permission-denied'}.contains(error.code)) {
+      if (const {'permission-denied', 'not-found'}.contains(error.code)) {
+        await _invalidateIfCurrent(
+          resource,
+          baseline,
+          validationBaseline,
+          epoch: epoch,
+          expectedSessionOwner: resource.owner,
+        );
         rethrow;
       }
+      if (error.code == 'unauthenticated') {
+        rethrow;
+      }
+      await _requireLocalOwner(resource.owner);
+      final cached = await _cached(resource);
+      await _requireLocalOwner(resource.owner);
       if (cached != null) return cached.payload;
       rethrow;
     } catch (_) {
+      await _requireLocalOwner(resource.owner);
+      final cached = await _cached(resource);
+      await _requireLocalOwner(resource.owner);
       if (cached != null) return cached.payload;
       rethrow;
     }
   }
+
+  Future<bool> _apply(
+    _ReadResource resource,
+    LocalCachedEntity? baseline,
+    Map<String, dynamic> data, {
+    required LocalCachedEntity? validationBaseline,
+    required int epoch,
+    required String expectedSessionOwner,
+  }) async {
+    if ((_epochs[resource.key] ?? 0) != epoch) return false;
+    final hash = data['contentHash'];
+    if (hash is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) {
+      throw const FormatException('Missing cache content hash.');
+    }
+    final unchanged = data['notModified'] == true;
+    if (unchanged &&
+        (baseline == null || baseline.payload['contentHash'] != hash)) {
+      throw const FormatException('Invalid cache validation.');
+    }
+    await _requireLocalOwner(expectedSessionOwner);
+    if ((_epochs[resource.key] ?? 0) != epoch) return false;
+    final now = _clock().toUtc();
+    final bool applied;
+    try {
+      applied = await database.saveConditionalCacheResponse(
+        entity: LocalCachedEntity(
+          ownerPhoneNumber: resource.owner,
+          entityType: resource.type,
+          entityId: resource.id,
+          parentId: '',
+          payload: unchanged ? baseline!.payload : data,
+          cachedAt: now,
+        ),
+        validation: LocalCachedEntity(
+          ownerPhoneNumber: resource.owner,
+          entityType: '${resource.type}:validation',
+          entityId: resource.id,
+          parentId: '',
+          cachedAt: now,
+          payload: {
+            'contentHash': hash,
+            'revisionHash': data['revisionHash'],
+            'fullCheckedAtMillis': now.millisecondsSinceEpoch,
+          },
+        ),
+        expectedPayloadHash: baseline == null
+            ? null
+            : stableContentHash(baseline.payload),
+        expectedCachedAt: baseline?.cachedAt,
+        expectedValidationHash: validationBaseline == null
+            ? null
+            : stableContentHash(validationBaseline.payload),
+        descriptorId: resource.registered ? resource.key : null,
+        expectedSessionOwner: expectedSessionOwner,
+        payloadChanged: !unchanged,
+      );
+    } on FirebaseFunctionsException {
+      rethrow;
+    } on FormatException {
+      rethrow;
+    } catch (error) {
+      throw _CachePersistenceException(error);
+    }
+    if (!applied || (_epochs[resource.key] ?? 0) != epoch) return false;
+    _checked[resource.key] = now;
+    _validationVersions[resource.key] =
+        (_validationVersions[resource.key] ?? 0) + 1;
+    if (!unchanged && baseline?.payload['contentHash'] != hash) {
+      _updates.add(
+        CacheResourceUpdate(
+          owner: resource.owner,
+          type: resource.type,
+          id: resource.id,
+        ),
+      );
+    }
+    return true;
+  }
+
+  /// Deletes only the downloaded resource, retaining its registered read recipe.
+  Future<void> invalidate({
+    required String owner,
+    required String type,
+    required String id,
+  }) async {
+    final key = _key(owner, type, id);
+    _epochs[key] = (_epochs[key] ?? 0) + 1;
+    _checked.remove(key);
+    await database.deleteConditionalCacheResource(
+      owner: owner,
+      type: type,
+      id: id,
+      invalidationToken: '$key:${_epochs[key]}',
+    );
+    _updates.add(
+      CacheResourceUpdate(owner: owner, type: type, id: id, invalidated: true),
+    );
+  }
+
+  Future<void> _invalidateIfCurrent(
+    _ReadResource resource,
+    LocalCachedEntity? baseline,
+    LocalCachedEntity? validationBaseline, {
+    required int epoch,
+    required String expectedSessionOwner,
+  }) async {
+    if ((_epochs[resource.key] ?? 0) != epoch) return;
+    await _requireLocalOwner(expectedSessionOwner);
+    final now = _clock().toUtc();
+    final nextEpoch = epoch + 1;
+    final invalidated = await database.saveConditionalCacheResponse(
+      entity: LocalCachedEntity(
+        ownerPhoneNumber: resource.owner,
+        entityType: resource.type,
+        entityId: resource.id,
+        parentId: '',
+        payload: baseline?.payload ?? const {},
+        cachedAt: now,
+      ),
+      validation: LocalCachedEntity(
+        ownerPhoneNumber: resource.owner,
+        entityType: '${resource.type}:validation',
+        entityId: resource.id,
+        parentId: '',
+        cachedAt: now,
+        payload: {
+          'invalidated': true,
+          'revoked': true,
+          'invalidationToken': '${resource.key}:$nextEpoch',
+        },
+      ),
+      expectedPayloadHash: baseline == null
+          ? null
+          : stableContentHash(baseline.payload),
+      expectedCachedAt: baseline?.cachedAt,
+      expectedValidationHash: validationBaseline == null
+          ? null
+          : stableContentHash(validationBaseline.payload),
+      expectedSessionOwner: expectedSessionOwner,
+      descriptorId: resource.registered ? resource.key : null,
+      payloadChanged: false,
+      deletePayload: true,
+    );
+    if (!invalidated) return;
+    _epochs[resource.key] = nextEpoch;
+    _checked.remove(resource.key);
+    if (baseline != null || validationBaseline?.payload['revoked'] != true) {
+      _updates.add(
+        CacheResourceUpdate(
+          owner: resource.owner,
+          type: resource.type,
+          id: resource.id,
+          invalidated: true,
+          revoked: true,
+        ),
+      );
+    }
+  }
+
+  Future<bool> _markDeferredRefresh(
+    _ReadResource resource,
+    LocalCachedEntity? baseline,
+    LocalCachedEntity? validationBaseline, {
+    required int epoch,
+    required String owner,
+  }) async {
+    await _requireLocalOwner(owner);
+    if ((_epochs[resource.key] ?? 0) != epoch) return false;
+    final now = _clock().toUtc();
+    final marked = await database.saveConditionalCacheResponse(
+      entity: LocalCachedEntity(
+        ownerPhoneNumber: resource.owner,
+        entityType: resource.type,
+        entityId: resource.id,
+        parentId: '',
+        payload: baseline?.payload ?? const {},
+        cachedAt: now,
+      ),
+      validation: LocalCachedEntity(
+        ownerPhoneNumber: resource.owner,
+        entityType: '${resource.type}:validation',
+        entityId: resource.id,
+        parentId: '',
+        cachedAt: now,
+        payload: {
+          'contentHash': baseline?.payload['contentHash'],
+          'fullCheckedAtMillis': 0,
+          'refreshRequired': true,
+          'requestGeneration': epoch + 1,
+        },
+      ),
+      expectedPayloadHash: baseline == null
+          ? null
+          : stableContentHash(baseline.payload),
+      expectedCachedAt: baseline?.cachedAt,
+      expectedValidationHash: validationBaseline == null
+          ? null
+          : stableContentHash(validationBaseline.payload),
+      expectedSessionOwner: owner,
+      descriptorId: resource.key,
+      payloadChanged: false,
+    );
+    if (marked) {
+      _epochs[resource.key] = epoch + 1;
+      _checked.remove(resource.key);
+    }
+    return marked;
+  }
+
+  /// All registered cached resources fit a single bounded server hash request.
+  Future<CacheReconciliationResult> reconcileRegistered({
+    required String owner,
+  }) {
+    final existing = _batches[owner];
+    if (existing != null) return existing;
+    final operation = _reconcile(owner);
+    _batches[owner] = operation;
+    void clear() {
+      if (identical(_batches[owner], operation)) {
+        _batches.remove(owner);
+        _batchResourceKeys.remove(owner);
+      }
+    }
+
+    unawaited(
+      operation.then<void>(
+        (_) => clear(),
+        onError: (Object _, StackTrace _) => clear(),
+      ),
+    );
+    return operation;
+  }
+
+  Future<CacheReconciliationResult> _reconcile(String owner) async {
+    await _requireLocalOwner(owner);
+    _requireRemoteOwner(owner);
+    try {
+      await database.purgeUnownedConditionalReadCaches(
+        privateCallables: _ownerCallables,
+      );
+    } catch (_) {
+      // Invalid public-scope private descriptors are also rejected below.
+    }
+    final descriptors = <LocalCachedEntity>[
+      ...await database.loadCachedEntities(
+        ownerPhoneNumber: owner,
+        entityType: _descriptorType,
+        includeExpired: true,
+      ),
+      if (owner.isNotEmpty)
+        ...await database.loadCachedEntities(
+          ownerPhoneNumber: '',
+          entityType: _descriptorType,
+          includeExpired: true,
+        ),
+    ];
+    final resources = <_ReadResource>[];
+    final baselines = <String, LocalCachedEntity?>{};
+    final validations = <String, LocalCachedEntity?>{};
+    final epochs = <String, int>{};
+    var skipped = 0;
+    for (final descriptor in descriptors) {
+      final resource = _ReadResource.fromDescriptor(descriptor);
+      if (resource == null ||
+          resource.key != _key(resource.owner, resource.type, resource.id) ||
+          (resource.owner.isEmpty &&
+              _ownerCallables.contains(resource.callable))) {
+        skipped += 1;
+        continue;
+      }
+      final cached = await _cached(resource);
+      resources.add(resource);
+      baselines[resource.key] = cached;
+      validations[resource.key] = await _validation(resource);
+      epochs[resource.key] = _epochs[resource.key] ?? 0;
+    }
+    if (resources.length > maximumBatchResources) {
+      throw StateError(
+        'The registered read cache exceeds its bounded batch size.',
+      );
+    }
+    if (resources.isEmpty) {
+      return CacheReconciliationResult(skippedCount: skipped);
+    }
+    resources.sort((a, b) => a.key.compareTo(b.key));
+    _batchResourceKeys[owner] = {
+      for (final resource in resources) resource.key,
+    };
+    for (final resource in resources) {
+      _batchAttemptVersions[resource.key] =
+          (_batchAttemptVersions[resource.key] ?? 0) + 1;
+    }
+    final response = await _call('reconcileMobileReadCache', {
+      'expectedOwner': owner,
+      'resources': [
+        for (final resource in resources)
+          {
+            ...resource.toRequest(),
+            'knownContentHash': baselines[resource.key]?.payload['contentHash'],
+            'knownRevision': baselines[resource.key]?.payload['revisionHash'],
+          },
+      ],
+    }, timeout: const Duration(seconds: 125));
+    _requireRemoteOwner(owner);
+    await _requireLocalOwner(owner);
+    final raw = response['resources'];
+    if (raw is! List) {
+      throw const FormatException('Invalid cache batch result.');
+    }
+    final results = <String, Map<String, dynamic>>{};
+    for (final value in raw) {
+      if (value is! Map || value['key'] is! String) continue;
+      final entry = Map<String, dynamic>.from(value);
+      final key = entry['key'] as String;
+      if (results.containsKey(key)) {
+        throw const FormatException('Duplicate cache batch result.');
+      }
+      results[key] = entry;
+    }
+    var changed = 0, unchanged = 0, unavailable = 0, deferred = 0;
+    for (final resource in resources) {
+      final result = results[resource.key];
+      if (result == null || result['status'] == 'unavailable') {
+        if (const {
+          'permission-denied',
+          'not-found',
+        }.contains(result?['code'])) {
+          try {
+            await _invalidateIfCurrent(
+              resource,
+              baselines[resource.key],
+              validations[resource.key],
+              epoch: epochs[resource.key]!,
+              expectedSessionOwner: owner,
+            );
+          } on FirebaseFunctionsException catch (error) {
+            if (error.code == 'unauthenticated') rethrow;
+          } catch (_) {
+            // One failed local purge must not discard other batch results.
+          }
+        }
+        unavailable += 1;
+        continue;
+      }
+      Map<String, dynamic> data;
+      if (result['status'] == 'unchanged') {
+        data = {
+          'notModified': true,
+          'contentHash': result['contentHash'],
+          'revisionHash': result['revisionHash'],
+          'payloadChecked': true,
+        };
+      } else if (result['status'] == 'changed') {
+        final payload = result['payload'];
+        if (payload is! Map) {
+          // The one manifest already compared this hash. Download only its
+          // changed payload through the normal read endpoint; unchanged entries
+          // never produce extra requests.
+          try {
+            final marked = await _markDeferredRefresh(
+              resource,
+              baselines[resource.key],
+              validations[resource.key],
+              epoch: epochs[resource.key]!,
+              owner: owner,
+            );
+            if (!marked) {
+              skipped += 1;
+              continue;
+            }
+            final version = _validationVersions[resource.key] ?? 0;
+            await _refresh(resource);
+            if ((_validationVersions[resource.key] ?? 0) > version) {
+              changed += 1;
+            } else {
+              deferred += 1;
+            }
+          } on FirebaseFunctionsException catch (error) {
+            if (error.code == 'unauthenticated') rethrow;
+            deferred += 1;
+          } catch (_) {
+            deferred += 1;
+          }
+          continue;
+        }
+        data = {
+          ...Map<String, dynamic>.from(payload),
+          'contentHash': result['contentHash'],
+          'revisionHash': result['revisionHash'],
+          'payloadChecked': true,
+        };
+      } else {
+        unavailable += 1;
+        continue;
+      }
+      try {
+        final applied = await _apply(
+          resource,
+          baselines[resource.key],
+          data,
+          validationBaseline: validations[resource.key],
+          epoch: epochs[resource.key]!,
+          expectedSessionOwner: owner,
+        );
+        if (!applied) {
+          skipped += 1;
+        } else if (result['status'] == 'unchanged') {
+          unchanged += 1;
+        } else {
+          changed += 1;
+        }
+      } on FirebaseFunctionsException catch (error) {
+        if (error.code == 'unauthenticated') rethrow;
+        unavailable += 1;
+      } catch (_) {
+        unavailable += 1;
+      }
+    }
+    return CacheReconciliationResult(
+      requestedCount: resources.length,
+      changedCount: changed,
+      unchangedCount: unchanged,
+      unavailableCount: unavailable,
+      deferredCount: deferred,
+      skippedCount: skipped,
+    );
+  }
+}
+
+class _CachePersistenceException implements Exception {
+  const _CachePersistenceException(this.cause);
+  final Object cause;
+}
+
+class _ReadResource {
+  const _ReadResource({
+    required this.key,
+    required this.owner,
+    required this.type,
+    required this.id,
+    required this.callable,
+    required this.arguments,
+    required this.policy,
+    this.registered = true,
+  });
+  static _ReadResource? fromDescriptor(LocalCachedEntity descriptor) {
+    final data = descriptor.payload;
+    if (data['key'] is! String ||
+        data['type'] is! String ||
+        data['id'] is! String ||
+        data['callable'] is! String ||
+        data['arguments'] is! Map) {
+      return null;
+    }
+    return _ReadResource(
+      key: data['key'] as String,
+      owner: descriptor.ownerPhoneNumber,
+      type: data['type'] as String,
+      id: data['id'] as String,
+      callable: data['callable'] as String,
+      arguments: Map<String, Object?>.from(data['arguments'] as Map),
+      policy: data['policy'] == CacheReadPolicy.cloudFirst.name
+          ? CacheReadPolicy.cloudFirst
+          : CacheReadPolicy.localFirst,
+    );
+  }
+
+  final String key, owner, type, id, callable;
+  final Map<String, Object?> arguments;
+  final CacheReadPolicy policy;
+  final bool registered;
+  Map<String, Object?> toRequest() => {
+    'key': key,
+    'type': type,
+    'id': id,
+    'callable': callable,
+    'arguments': arguments,
+  };
+  // Matches the conservative projection weights in mobile_read_cache.js.
+  int get workUnits {
+    int limit(Object? value, int fallback) =>
+        value is num ? value.toInt() : fallback;
+    if (callable == 'loadMyHikeHistoryDetail') return 2500;
+    if (callable == 'listMyHikeHistory') {
+      return 2 * limit(arguments['limit'], 100) + 1;
+    }
+    if (callable == 'listExpiredScheduledHikes') return 2000;
+    if (callable == 'loadAchievementLeaderboard') return 2500;
+    if (callable == 'loadPublicHikerProfile') return 100;
+    if (callable == 'getPublicProfiles') {
+      final phones = arguments['phoneNumbers'];
+      final users = arguments['userIds'];
+      final count = phones is List && phones.isNotEmpty
+          ? phones.length
+          : users is List && users.isNotEmpty
+          ? users.length
+          : limit(arguments['limit'], 80);
+      return 3 * count;
+    }
+    final resource = arguments['resourceType'];
+    final args = arguments['resourceArgs'];
+    final nested = args is Map ? args : const {};
+    if (resource == 'achievement_progress') return 2000;
+    if (resource == 'my_feedback') return limit(nested['limit'], 100);
+    if (resource == 'my_upcoming_hikes' || resource == 'chat_list') {
+      return limit(nested['limit'], 200);
+    }
+    return 4;
+  }
+
+  Map<String, Object?> toMap() => {
+    ...toRequest(),
+    'policy': policy.name,
+    'workUnits': workUnits,
+  };
 }

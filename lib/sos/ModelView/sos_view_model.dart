@@ -51,11 +51,28 @@ class SosViewModel extends ChangeNotifier {
       }
       unawaited(loadQueuedAlertCount());
     });
+    _noteSubscription = SosAlertRepository.customNoteChanges.listen((change) {
+      if (_isDisposed ||
+          change.phoneNumber != _session.phoneNumber ||
+          !change.isCurrent) {
+        return;
+      }
+      _customNoteReadRevisions[change.mode] =
+          (_customNoteReadRevisions[change.mode] ?? 0) + 1;
+      if (_customWhatsAppNotes[change.mode] == change.note) return;
+      _customWhatsAppNotes = {
+        ..._customWhatsAppNotes,
+        change.mode: change.note,
+      };
+      _notifyListenersIfActive();
+    });
   }
 
   final AppSession _session;
   StreamSubscription<EmergencyContactsChange>? _contactsSubscription;
   StreamSubscription<SosQueueChange>? _queueSubscription;
+  StreamSubscription<SosCustomNoteChange>? _noteSubscription;
+  final Map<SosAlertMode, int> _customNoteReadRevisions = {};
   int _queueCountRevision = 0;
   int _cloudLogsRevision = 0;
   final EmergencyContactsRepository emergencyContactsRepository;
@@ -179,6 +196,7 @@ class SosViewModel extends ChangeNotifier {
     if (_isDisposed) {
       return;
     }
+    final revisions = Map<SosAlertMode, int>.from(_customNoteReadRevisions);
     try {
       final notes = await _sosAlertRepository.loadCustomWhatsAppNotes(
         session: _session,
@@ -186,7 +204,13 @@ class SosViewModel extends ChangeNotifier {
       if (_isDisposed) {
         return;
       }
-      _customWhatsAppNotes = notes;
+      _customWhatsAppNotes = {
+        ..._customWhatsAppNotes,
+        for (final entry in notes.entries)
+          if ((revisions[entry.key] ?? 0) ==
+              (_customNoteReadRevisions[entry.key] ?? 0))
+            entry.key: entry.value,
+      };
       _notifyListenersIfActive();
     } catch (_) {
       // Custom notes are optional; the composer default remains available.
@@ -201,6 +225,7 @@ class SosViewModel extends ChangeNotifier {
     if (_isDisposed) {
       return;
     }
+    _customNoteReadRevisions[mode] = (_customNoteReadRevisions[mode] ?? 0) + 1;
     _customWhatsAppNotes = {..._customWhatsAppNotes, mode: note};
     _notifyListenersIfActive();
     await _sosAlertRepository.saveCustomWhatsAppNote(
@@ -442,6 +467,7 @@ class SosViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _queueSubscription?.cancel();
+    unawaited(_noteSubscription?.cancel());
     _isDisposed = true;
     unawaited(_contactsSubscription?.cancel());
     super.dispose();

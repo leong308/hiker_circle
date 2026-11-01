@@ -1,7 +1,7 @@
 import '../Model/trail_models.dart';
 import '../Model/trail_weather_location.dart';
 
-/// Reads the trail's shared forecast before requesting any provider refresh.
+/// Reuses a fresh shared forecast and refreshes an expired forecast before display.
 class TrailCheckpointWeatherRepository {
   /// Receives cloud boundaries from the app's configured repository.
   const TrailCheckpointWeatherRepository({
@@ -23,7 +23,7 @@ class TrailCheckpointWeatherRepository {
   final DateTime Function() now;
   static const freshness = TrailWeather.cacheFreshness;
 
-  /// Shows existing data first; only missing or stale forecasts need a callable.
+  /// Holds expired data as a fallback while requesting a current shared forecast.
   Stream<TrailWeather> watch(
     Trail trail,
     TrailWeatherLocation location,
@@ -43,29 +43,39 @@ class TrailCheckpointWeatherRepository {
     } catch (_) {
       // The callable can still recover when a direct cache read is unavailable.
     }
+    TrailWeather? fallback;
     final raw = cached?['weather'];
     if (raw is Map) {
       final weather = TrailWeather.fromPersistence(
         Map<String, dynamic>.from(raw),
       );
       if (_hasForecast(weather)) {
-        yield weather;
         final age = now().toUtc().difference(weather.cachedAt.toUtc());
-        if (age >= const Duration(minutes: -1) && age < freshness) return;
+        if (age >= const Duration(minutes: -1) && age < freshness) {
+          yield weather;
+          return;
+        }
+        fallback = weather;
       }
     }
-    final response = await fetchWeather(trail.trailId, location.key);
-    final updated = response['weather'];
-    if (updated is! Map) {
-      throw const FormatException('Checkpoint forecast is missing.');
+    try {
+      final response = await fetchWeather(trail.trailId, location.key);
+      final updated = response['weather'];
+      if (updated is! Map) {
+        throw const FormatException('Checkpoint forecast is missing.');
+      }
+      final weather = TrailWeather.fromPersistence(
+        Map<String, dynamic>.from(updated),
+      );
+      if (!_hasForecast(weather)) {
+        throw const FormatException('Checkpoint forecast is incomplete.');
+      }
+      yield weather;
+    } catch (_) {
+      if (fallback == null) rethrow;
+      // Its original timestamp lets the UI retain the stale forecast label.
+      yield fallback;
     }
-    final weather = TrailWeather.fromPersistence(
-      Map<String, dynamic>.from(updated),
-    );
-    if (!_hasForecast(weather)) {
-      throw const FormatException('Checkpoint forecast is incomplete.');
-    }
-    yield weather;
   }
 
   /// Requires daily and hourly data before displaying a saved forecast.

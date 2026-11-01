@@ -27,6 +27,8 @@ const { getAuth } = require('firebase-admin/auth');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
 const {contentHash, conditionalPayload, reminderCooldown} = require('./mobile_cache_helpers');
+const {createMobileReadCacheService, projectOwnerResource, MAX_ACHIEVEMENT_ROWS, completeAchievementPayload,
+  payloadOnly: mobileReadPayload} = require('./mobile_read_cache');
 const crypto = require('crypto');
 const teamPolicy = require('./team_hike_policy');
 const teamHistory = require('./team_hike_history');
@@ -2606,7 +2608,7 @@ exports.loadUpcomingHikeJoinRequest = onCall({}, async (request) => {
   return { ...response, ...details, requesterName: details.profile.displayName };
 });
 
-exports.loadPublicHikerProfile = onCall({}, async (request) => {
+async function readLoadPublicHikerProfile(request) {
   authenticatedPhoneFor(request, 'Sign in to view hiker profiles.');
   const userId = String(request.data?.userId || '').trim();
   const phoneNumber = String(request.data?.phoneNumber || '').trim();
@@ -2619,7 +2621,8 @@ exports.loadPublicHikerProfile = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'The hiker profile is invalid.');
   }
   return publicHikerDetails(admin.firestore(), resolvedUserId);
-});
+}
+exports.loadPublicHikerProfile = onCall({}, serveHashedMobileRead(readLoadPublicHikerProfile));
 
 // resolveUpcomingHikeJoinRequest: Only the current host can resolve a pending request and update related team/chat membership.
 exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
@@ -3250,7 +3253,7 @@ exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
 });
 
 // loadAchievementLeaderboard: Return bounded public achievement rankings without private user modules.
-exports.loadAchievementLeaderboard = onCall({}, async (request) => {
+async function readLoadAchievementLeaderboard(request) {
   const { uid } = authenticatedPhoneFor(
     request,
     'Sign in to view the hiking leaderboard.'
@@ -3313,7 +3316,8 @@ exports.loadAchievementLeaderboard = onCall({}, async (request) => {
       };
     }),
   };
-});
+}
+exports.loadAchievementLeaderboard = onCall({}, serveHashedMobileRead(readLoadAchievementLeaderboard));
 
 // nameFormedHikeGroupChat: Keep a host-approved group name aligned with the formed hike chat.
 exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
@@ -3450,7 +3454,7 @@ function publicProfileFromUserDocument(document) {
 // Public profiles combine only the account, profile and achievement modules.
 // Private modules are never loaded or returned by this projection.
 // getPublicProfiles: Hydrate only account, profile, and achievement modules needed by public hiker cards.
-exports.getPublicProfiles = onCall({}, async (request) => {
+async function readGetPublicProfiles(request) {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
   if (
@@ -3501,7 +3505,8 @@ exports.getPublicProfiles = onCall({}, async (request) => {
     .map(publicProfileFromUserDocument)
     .filter((profile) => profile !== null);
   return { profiles };
-});
+}
+exports.getPublicProfiles = onCall({}, serveHashedMobileRead(readGetPublicProfiles));
 
 const teamHikeActionLimits = Object.freeze({
   create: [5, 60 * 60 * 1000],
@@ -3533,6 +3538,17 @@ function authenticatedPhoneFor(request, message) {
     throw new HttpsError('unauthenticated', message);
   }
   return { phoneNumber, uid };
+}
+
+// Ordinary reads and the reconnect batch use the same freshly authorised builders.
+function serveHashedMobileRead(handler) {
+  return async request => {
+    const data = {...request.data, forcePayload: true};
+    delete data.knownContentHash;
+    delete data.knownRevision;
+    const payload = mobileReadPayload(await handler({...request, data}));
+    return conditionalPayload(payload, request.data || {}, contentHash(payload));
+  };
 }
 
 function validFirestoreDocumentId(value) {
@@ -5954,7 +5970,7 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
 // Hike history is served through owner-authorized callables instead of broad
 // client queries. This keeps session IDs, route telemetry, and safety records
 // private even if another account learns a document ID.
-exports.listExpiredScheduledHikes = onCall({}, async (request) => {
+async function readListExpiredScheduledHikes(request) {
   const { uid, phoneNumber } = authenticatedPhoneFor(request, 'Sign in to view scheduled hike history.');
   const {START_WINDOW_MS, loadExpiredScheduledHikePage} = require('./expired_hike_history');
   const now = Date.now();
@@ -5974,20 +5990,15 @@ exports.listExpiredScheduledHikes = onCall({}, async (request) => {
   }
   return loadExpiredScheduledHikePage({query, ownerPhoneNumber: phoneNumber,
     now, limit, sanitize: sanitizedPlainValue});
-});
+}
+exports.listExpiredScheduledHikes = onCall({}, serveHashedMobileRead(readListExpiredScheduledHikes));
 
-// listMyHikeHistory: Use the owner revision hash to avoid rereading an unchanged history payload.
-exports.listMyHikeHistory = onCall({}, async (request) => {
+// listMyHikeHistory: Authorize and project current records before content-hash validation.
+async function readListMyHikeHistory(request) {
   const { uid, phoneNumber } = authenticatedPhoneFor(
     request,
     'Sign in to view your hike history.'
   );
-  const revision = await getFirestore().collection('mobileReadRevisions').doc(uid).get();
-  const revisionHash = String(revision.data()?.historyHash || 'initial');
-  if (request.data?.forcePayload !== true && request.data?.knownRevision === revisionHash
-    && /^[a-f0-9]{64}$/.test(String(request.data?.knownContentHash || ''))) {
-    return {notModified: true, contentHash: request.data.knownContentHash, revisionHash};
-  }
   const requestedLimit = Number(request.data?.limit || 100);
   const limit = Math.round(boundedNumber(requestedLimit, 1, 200, 100));
   const snapshot = await admin.firestore()
@@ -6010,21 +6021,16 @@ exports.listMyHikeHistory = onCall({}, async (request) => {
   });
   const hikes = [...new Map(rows.map(row => [row.sessionId, row])).values()]
     .sort((a,b) => String(b.endedAtLocal || '').localeCompare(String(a.endedAtLocal || ''))).slice(0,limit);
-  return conditionalPayload({hikes}, request.data || {}, revisionHash);
-});
+  return {hikes};
+}
+exports.listMyHikeHistory = onCall({}, serveHashedMobileRead(readListMyHikeHistory));
 
 // loadMyHikeHistoryDetail: Authorize the completed session before assembling private captures, footprints, check-ins, and team routes.
-exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
+async function readLoadMyHikeHistoryDetail(request) {
   const { phoneNumber, uid } = authenticatedPhoneFor(
     request,
     'Sign in to view this hike.'
   );
-  const revision = await getFirestore().collection('mobileReadRevisions').doc(uid).get();
-  const revisionHash = String(revision.data()?.historyHash || 'initial');
-  if (request.data?.forcePayload !== true && request.data?.knownRevision === revisionHash
-    && /^[a-f0-9]{64}$/.test(String(request.data?.knownContentHash || ''))) {
-    return {notModified: true, contentHash: request.data.knownContentHash, revisionHash};
-  }
   const sessionId = String(request.data?.sessionId || '').trim();
   if (!validFirestoreDocumentId(sessionId)) {
     throw new HttpsError('invalid-argument', 'The hike history entry is invalid.');
@@ -6034,7 +6040,7 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
     const teamId = sessionId.slice('team-history_'.length);
     if (!validFirestoreDocumentId(teamId)) throw new HttpsError('not-found', 'This team history is unavailable.');
     const detail = await teamHistory.loadDetail(db, teamId, phoneNumber, HttpsError, hikeHistoryDetailData);
-    return conditionalPayload({detail}, request.data || {}, revisionHash);
+    return {detail};
   }
   const sessionReference = db.collection('hikeSessions').doc(sessionId);
   const sessionSnapshot = await sessionReference.get();
@@ -6053,7 +6059,7 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
   const teamHikeSessionId = String(session.teamHikeSessionId || '').trim();
   if (validFirestoreDocumentId(teamHikeSessionId)) {
     const detail = await teamHistory.loadDetail(db, teamHikeSessionId, phoneNumber, HttpsError, hikeHistoryDetailData);
-    return conditionalPayload({detail}, request.data || {}, revisionHash);
+    return {detail};
   }
   const sourceUpcomingHikeId = String(session.sourceUpcomingHikeId || '').trim();
   const chatReferences = [
@@ -6120,7 +6126,7 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
       routePoints: teamCaptureSnapshots[index]?.data()?.routePoints || [],
     };
   });
-  return conditionalPayload({
+  return {
     detail: hikeHistoryDetailData({
       sessionId,
       session,
@@ -6131,8 +6137,81 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
       groupChatId,
       memberTracks,
     }),
-  }, request.data || {}, revisionHash);
+  };
+}
+exports.loadMyHikeHistoryDetail = onCall({}, serveHashedMobileRead(readLoadMyHikeHistoryDetail));
+
+// readOwnerMobileResource exposes fixed owner projections, never arbitrary module paths.
+async function readOwnerMobileResource(request, type, args) {
+  const {uid, phoneNumber} = authenticatedPhoneFor(request, 'Sign in to refresh your saved data.');
+  const db = getFirestore();
+  const modules = {
+    preferences: ['preferences', 'safety'], social: ['social'],
+    sos_preferences: ['sos'], profile: ['profile'],
+  };
+  if (Object.hasOwn(modules, type)) {
+    const user = await readUser(db.collection('users').doc(uid), modules[type]);
+    if (!user.exists || user.data().accountDisabled === true || user.data().status === 'disabled') {
+      throw new HttpsError('unauthenticated', 'Your account is unavailable.');
+    }
+    return projectOwnerResource(type, user.data());
+  }
+  if (type === 'my_upcoming_hikes') {
+    const {Filter} = require('firebase-admin/firestore');
+    const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const snapshot = await db.collection('upcomingHikes')
+      .where(Filter.or(Filter.where('creatorUserId', '==', uid),
+        Filter.where('participantPhones', 'array-contains', phoneNumber)))
+      .where('departureTimeLocal', '>=', cutoff)
+      .orderBy('departureTimeLocal').limit(args.limit || 200).get();
+    return {hikes: snapshot.docs.filter(doc => doc.data().isDeleted !== true)
+      .map(doc => ({...sanitizedPlainValue(doc.data()), hikeId: doc.id}))};
+  }
+  if (type === 'chat_list') {
+    const snapshot = await db.collection('groupChats')
+      .where('participantPhones', 'array-contains', phoneNumber)
+      .orderBy('createdAtLocal', 'desc').limit(args.limit || 200).get();
+    return {chats: snapshot.docs.filter(doc => doc.data().isDeleted !== true)
+      .map(doc => ({...sanitizedPlainValue(doc.data()), chatId: doc.id}))};
+  }
+  if (type === 'achievement_progress') {
+    const [definitions, awards] = await Promise.all([
+      db.collection('achievements').orderBy('sortOrder').limit(MAX_ACHIEVEMENT_ROWS + 1).get(),
+      db.collection('userAchievements').where('userId', '==', uid).limit(MAX_ACHIEVEMENT_ROWS + 1).get(),
+    ]);
+    return completeAchievementPayload(
+      definitions.docs.map(doc => ({...sanitizedPlainValue(doc.data()), achievementId: doc.id})),
+      awards.docs.map(doc => ({...sanitizedPlainValue(doc.data()), userAchievementId: doc.id})),
+      HttpsError,
+    );
+  }
+  if (type === 'my_feedback') {
+    const snapshot = await db.collection('appFeedback').where('uid', '==', uid)
+      .orderBy('createdAt', 'desc').limit(args.limit || 100).get();
+    const fields = ['uid', 'category', 'message', 'screenshotPath', 'platform', 'status', 'createdAt', 'createdAtLocal'];
+    return {reports: snapshot.docs.map(doc => ({reportId: doc.id,
+      ...Object.fromEntries(fields.filter(key => Object.hasOwn(doc.data(), key))
+        .map(key => [key, sanitizedPlainValue(doc.data()[key])]))}))};
+  }
+  throw new HttpsError('invalid-argument', 'Unsupported mobile resource.');
+}
+
+const mobileReadCache = createMobileReadCacheService({
+  HttpsError,
+  authorize: request => authenticatedPhoneFor(request, 'Sign in to refresh your saved data.'),
+  readOwnerResource: readOwnerMobileResource,
+  handlers: {
+    listMyHikeHistory: readListMyHikeHistory,
+    loadMyHikeHistoryDetail: readLoadMyHikeHistoryDetail,
+    listExpiredScheduledHikes: readListExpiredScheduledHikes,
+    getPublicProfiles: readGetPublicProfiles,
+    loadPublicHikerProfile: readLoadPublicHikerProfile,
+    loadAchievementLeaderboard: readLoadAchievementLeaderboard,
+  },
 });
+
+exports.readMobileResource = onCall({timeoutSeconds: 60}, mobileReadCache.readResource);
+exports.reconcileMobileReadCache = onCall({timeoutSeconds: 120, memory: '512MiB'}, mobileReadCache.reconcile);
 
 // appendHikeFootprints: Delegate chunk identity, ownership, and durable sample acknowledgements to the footprint transaction.
 exports.appendHikeFootprints = onCall({ timeoutSeconds: 60 }, async (request) => {

@@ -169,6 +169,7 @@ class _CirclePageState extends State<CirclePage> {
       });
     }
     _currentUserPhotoURL = widget.session.photoURL ?? '';
+    _screenModel.commandWatchCachedPreferences();
     unawaited(_loadCommunityPosts());
     unawaited(_loadCommunityPeople());
     unawaited(_loadCurrentUserPhoto());
@@ -2309,6 +2310,7 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
       readSession: () => widget.session,
     )..addListener(_renderScreenModel);
 
+    _screenModel.commandWatchCachedPreferences();
     unawaited(_loadGroupChatNotificationSetting());
   }
 
@@ -2326,6 +2328,7 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
       _groupChatNotificationsEnabled = enabled;
       _isSavingGroupChatSetting = true;
     });
+    _screenModel.commandBeginPreferenceWrite();
     try {
       await _CirclePageDataActions.setGroupChatNotificationsEnabled(
         widget.repository,
@@ -2347,6 +2350,7 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
           );
       }
     } finally {
+      _screenModel.commandEndPreferenceWrite();
       if (mounted) {
         setState(() {
           _isSavingGroupChatSetting = false;

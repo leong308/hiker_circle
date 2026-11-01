@@ -46,6 +46,7 @@ import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
 
 part 'community_post_repository.dart';
+part 'mobile_read_repository.dart';
 
 const Set<String> _upcomingHikePreviewFields = {
   'sessionId',
@@ -581,6 +582,7 @@ class HikerCircleFirebaseRepository {
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
     OpenMeteoService? openMeteoService,
+    ConditionalCloudCache? readCache,
     @visibleForTesting
     Future<String> Function(Map<String, dynamic>)? scheduleHikeRequest,
     @visibleForTesting
@@ -592,6 +594,7 @@ class HikerCircleFirebaseRepository {
        _firebaseBootstrapResult = firebaseBootstrapResult,
        _functions = functions,
        _authenticatedUid = authenticatedUid,
+       _providedReadCache = readCache,
        _scheduleHikeRequest = scheduleHikeRequest,
        _reminderPreferenceRequest = reminderPreferenceRequest;
 
@@ -599,6 +602,7 @@ class HikerCircleFirebaseRepository {
   final FirebaseStorage? _storage;
   final FirebaseFunctions? _functions;
   final String? Function()? _authenticatedUid;
+  final ConditionalCloudCache? _providedReadCache;
   final Future<String> Function(Map<String, dynamic>)? _scheduleHikeRequest;
   final Future<void> Function(String, HikeReminderPreference)?
   _reminderPreferenceRequest;
@@ -609,10 +613,9 @@ class HikerCircleFirebaseRepository {
   static final Map<String, Future<void>> _planningSyncs = {};
   final Map<String, String> _teamHikeCreationRetryKeys = {};
   final LocalSessionDatabase _localDatabase;
-  late final _conditionalCache = ConditionalCloudCache(
-    _localDatabase,
-    () => _resolvedFunctions,
-  );
+  late final _conditionalCache =
+      _providedReadCache ??
+      ConditionalCloudCache(_localDatabase, () => _resolvedFunctions);
   String? _trailCacheHash;
 
   final FirebaseBootstrapResult _firebaseBootstrapResult;
@@ -827,9 +830,8 @@ class HikerCircleFirebaseRepository {
     return _groupChats.doc(chatId).collection('messages');
   }
 
-  // loadTrails uses conditional cloud validation and local payloads for non-real-time trail
-  // browsing.
-  /// Loads trails.
+  /// Loads the server catalogue first, with a local fallback when unavailable.
+  /// A content hash avoids rewriting an unchanged local catalogue.
   Future<List<Trail>> loadTrails() async {
     final cached = await _loadCachedTrails();
     if (!_firebaseBootstrapResult.isAvailable) {
@@ -840,7 +842,7 @@ class HikerCircleFirebaseRepository {
       final snapshot = await _trails
           .orderBy('isVerifiedTrail', descending: true)
           .orderBy('ratingAverage', descending: true)
-          .get()
+          .get(const GetOptions(source: Source.server))
           .timeout(_firebaseReadTimeout);
       var liveTrails = snapshot.docs
           .map(
@@ -860,21 +862,17 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  /// Watches trails.
+  /// Try the server before using the local catalogue; live updates remain authoritative.
   Stream<List<Trail>> watchTrails() async* {
-    final cached = await _loadCachedTrails();
-    if (cached.isNotEmpty || !_firebaseBootstrapResult.isAvailable) {
-      yield cached;
-    }
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return;
-    }
+    yield await loadTrails();
+    if (!_firebaseBootstrapResult.isAvailable) return;
     yield* _trails
         .orderBy('isVerifiedTrail', descending: true)
         .orderBy('ratingAverage', descending: true)
-        .snapshots()
+        .snapshots(includeMetadataChanges: true)
+        .where((snapshot) => !snapshot.metadata.isFromCache)
         .asyncMap((snapshot) async {
-          var trails = snapshot.docs
+          final trails = snapshot.docs
               .map(
                 (doc) =>
                     _trailFromFirestore({'trailId': doc.id, ...doc.data()}),
@@ -946,6 +944,8 @@ class HikerCircleFirebaseRepository {
           final data = await _conditionalCache.read(
             owner: '',
             type: 'trail_weather',
+            policy: CacheReadPolicy.cloudFirst,
+            registerForReconciliation: false,
             id: '${trail.trailId}:${trail.latitude.toStringAsFixed(4)}:${trail.longitude.toStringAsFixed(4)}',
             callable: 'fetchWeatherForTrail',
             arguments: {'trailId': trail.trailId},
@@ -975,6 +975,8 @@ class HikerCircleFirebaseRepository {
     final data = await _conditionalCache.read(
       owner: '',
       type: 'trail_weather',
+      policy: CacheReadPolicy.cloudFirst,
+      registerForReconciliation: false,
       id: '${trail.trailId}:${trail.latitude.toStringAsFixed(4)}:${trail.longitude.toStringAsFixed(4)}',
       callable: 'fetchWeatherForTrail',
       arguments: {'trailId': trail.trailId},
@@ -1000,6 +1002,8 @@ class HikerCircleFirebaseRepository {
     final data = await _conditionalCache.read(
       owner: '',
       type: 'trail_weather',
+      policy: CacheReadPolicy.cloudFirst,
+      registerForReconciliation: false,
       id: trailId.trim(),
       callable: 'fetchWeatherForTrail',
       arguments: {
@@ -1133,28 +1137,61 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  /// Loads my upcoming hikes.
-  Future<List<UpcomingHike>> loadMyUpcomingHikes(String phoneNumber) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return const [];
-    }
+  /// Render the owner's saved read model first; launch/roster checks still use the server.
+  Future<List<UpcomingHike>> loadMyUpcomingHikes(
+    String phoneNumber, {
+    bool cacheOnly = false,
+  }) async {
     try {
-      final createdQuery = await _upcomingHikes
-          .where('creatorPhone', isEqualTo: phoneNumber)
-          .get();
-      final joinedQuery = await _upcomingHikes
-          .where('participantPhones', arrayContains: phoneNumber)
-          .get();
-      final seen = <String>{};
-      final results = <UpcomingHike>[];
-      for (final doc in [...createdQuery.docs, ...joinedQuery.docs]) {
-        if (seen.add(doc.id)) {
-          final hike = UpcomingHike.fromFirestore(doc.id, doc.data());
-          if (_shouldRenderUpcomingHike(hike)) {
-            results.add(hike);
-          }
+      var states = <LocalPlannedHikeState>[];
+      try {
+        states = await _localDatabase.loadPlannedHikeStates(
+          ownerPhoneNumber: phoneNumber,
+        );
+      } catch (_) {
+        /* A missing device cache does not prevent a cloud read. */
+      }
+      var data = await readMobileSnapshot(
+        owner: phoneNumber,
+        resourceType: 'my_upcoming_hikes',
+        cacheOnly: true,
+      );
+      if (!cacheOnly) {
+        if (data.containsKey('hikes') || states.isNotEmpty) {
+          unawaited(
+            readMobileSnapshot(
+              owner: phoneNumber,
+              resourceType: 'my_upcoming_hikes',
+            ).catchError((Object _) => data),
+          );
+        } else {
+          data = await readMobileSnapshot(
+            owner: phoneNumber,
+            resourceType: 'my_upcoming_hikes',
+          );
         }
       }
+      final consumed = {
+        for (final state in states)
+          if (state.isConsumed) state.upcomingHike.id,
+      };
+      final byId = {
+        for (final row in _snapshotRows(data, 'hikes'))
+          _stringFrom(row['hikeId']): UpcomingHike.fromFirestore(
+            _stringFrom(row['hikeId']),
+            row,
+          ),
+      };
+      for (final state in states) {
+        if (!state.isConsumed &&
+            (state.scheduleSyncPending || !data.containsKey('hikes'))) {
+          byId[state.upcomingHike.id] = state.upcomingHike;
+        }
+      }
+      final results = byId.values
+          .where((hike) => !consumed.contains(hike.id))
+          .where(_shouldRenderUpcomingHike)
+          .toList();
       results.sort((a, b) => b.departureTime.compareTo(a.departureTime));
       return results;
     } catch (_) {
@@ -1166,11 +1203,14 @@ class HikerCircleFirebaseRepository {
   Stream<List<UpcomingHike>> watchMyUpcomingHikes(
     String phoneNumber, {
     void Function(bool authoritative)? onSourceChanged,
-  }) {
+  }) async* {
+    final cached = await loadMyUpcomingHikes(phoneNumber);
+    onSourceChanged?.call(false);
+    yield cached;
     if (!_firebaseBootstrapResult.isAvailable) {
-      return Stream.value(const []);
+      return;
     }
-    return Stream<List<UpcomingHike>>.multi((controller) {
+    yield* Stream<List<UpcomingHike>>.multi((controller) {
       List<UpcomingHike>? created;
       List<UpcomingHike>? joined;
       var createdFromServer = false;
@@ -1216,10 +1256,24 @@ class HikerCircleFirebaseRepository {
                 .toList();
             emit();
           }, onError: controller.addError);
+      final cacheSubscription = cachedReadUpdates.listen((change) async {
+        if (change.owner != phoneNumber ||
+            change.type != 'mobile_my_upcoming_hikes') {
+          return;
+        }
+        try {
+          final rows = await loadMyUpcomingHikes(phoneNumber, cacheOnly: true);
+          onSourceChanged?.call(false);
+          controller.add(rows);
+        } catch (_) {
+          /* Live membership still has its independent server listener. */
+        }
+      });
 
       controller.onCancel = () {
         sub1.cancel();
         sub2.cancel();
+        cacheSubscription.cancel();
       };
     });
   }
@@ -1428,19 +1482,33 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  /// Loads user group chats.
+  /// Cached conversations are display data; message reads and membership remain server checked.
   Future<List<GroupChat>> loadUserGroupChats(String phoneNumber) async {
-    final cached = await _loadCachedGroupChats(phoneNumber);
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return cached;
-    }
     try {
-      final snapshot = await _groupChats
-          .where('participantPhones', arrayContains: phoneNumber)
-          .orderBy('createdAtLocal', descending: true)
-          .get();
-      final chats = snapshot.docs
-          .map((doc) => GroupChat.fromFirestore(doc.id, doc.data()))
+      var data = await readMobileSnapshot(
+        owner: phoneNumber,
+        resourceType: 'chat_list',
+        cacheOnly: true,
+      );
+      final legacy = await _loadCachedGroupChats(phoneNumber);
+      if (!data.containsKey('chats') && legacy.isNotEmpty) {
+        unawaited(
+          readMobileSnapshot(
+            owner: phoneNumber,
+            resourceType: 'chat_list',
+          ).catchError((Object _) => data),
+        );
+        return legacy;
+      }
+      data = await readMobileSnapshot(
+        owner: phoneNumber,
+        resourceType: 'chat_list',
+      );
+      if (!data.containsKey('chats')) return _loadCachedGroupChats(phoneNumber);
+      final chats = _snapshotRows(data, 'chats')
+          .map(
+            (row) => GroupChat.fromFirestore(_stringFrom(row['chatId']), row),
+          )
           .where(_shouldRenderGroupChat)
           .toList();
       chats.sort(
@@ -1448,11 +1516,29 @@ class HikerCircleFirebaseRepository {
           a.lastMessageAt ?? a.createdAt,
         ),
       );
-      final hydrated = await _hydrateGroupChatsWithPhotos(chats);
-      await _cacheGroupChats(phoneNumber, hydrated);
-      return hydrated;
+      return chats;
+    } on FirebaseFunctionsException catch (error) {
+      if (const {
+        'unauthenticated',
+        'permission-denied',
+        'not-found',
+      }.contains(error.code)) {
+        rethrow;
+      }
+      await readMobileSnapshot(
+        owner: phoneNumber,
+        resourceType: 'chat_list',
+        cacheOnly: true,
+      );
+      return _loadCachedGroupChats(phoneNumber);
     } catch (_) {
-      return cached;
+      // Recheck scope before using the older normalized cache after a failure.
+      await readMobileSnapshot(
+        owner: phoneNumber,
+        resourceType: 'chat_list',
+        cacheOnly: true,
+      );
+      return _loadCachedGroupChats(phoneNumber);
     }
   }
 
@@ -1479,7 +1565,7 @@ class HikerCircleFirebaseRepository {
 
   /// Computes user group chats stream.
   Stream<List<GroupChat>> userGroupChatsStream(String phoneNumber) async* {
-    final cached = await _loadCachedGroupChats(phoneNumber);
+    final cached = await loadUserGroupChats(phoneNumber);
     if (cached.isNotEmpty || !_firebaseBootstrapResult.isAvailable) {
       yield cached;
     }
@@ -1629,7 +1715,10 @@ class HikerCircleFirebaseRepository {
     try {
       final response = await _resolvedFunctions
           .httpsCallable('openDirectChat')
-          .call<Map<String, dynamic>>({'otherPhoneNumber': otherPhone});
+          .call<Map<String, dynamic>>({
+            'otherPhoneNumber': otherPhone,
+            'expectedOwner': session.phoneNumber,
+          });
       final payload = Map<String, dynamic>.from(response.data);
       final chatId = _stringFrom(payload['chatId']);
       final rawChat = payload['chat'];
@@ -1638,6 +1727,7 @@ class HikerCircleFirebaseRepository {
           'The chat server returned an invalid conversation.',
         );
       }
+      await _invalidateReadModel(session.phoneNumber, 'chat_list');
       return GroupChat.fromFirestore(
         chatId,
         Map<String, dynamic>.from(rawChat),
@@ -1740,63 +1830,39 @@ class HikerCircleFirebaseRepository {
     }).toList();
   }
 
-  /// Loads buddy phone numbers.
+  /// Loads the locally cached social read model before background hash validation.
   Future<Set<String>> loadBuddyPhoneNumbers({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return const {};
-    }
     try {
-      final snapshot = await _moduleFor(
-        session,
-        UserModule.social,
-      ).get().timeout(_firebaseReadTimeout);
-      final raw = snapshot.data()?['buddyPhoneNumbers'];
+      final raw = (await _readSocial(session))['buddyPhoneNumbers'];
       return raw is Iterable ? raw.whereType<String>().toSet() : <String>{};
     } catch (_) {
       return const {};
     }
   }
 
-  /// Loads outgoing buddy request phone numbers.
   Future<Set<String>> loadOutgoingBuddyRequestPhoneNumbers({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return const {};
-    }
     try {
-      final snapshot = await _moduleFor(
-        session,
-        UserModule.social,
-      ).get().timeout(_firebaseReadTimeout);
-      final raw = snapshot.data()?['buddyRequestsOutgoing'];
-      if (raw is! Map) {
-        return const {};
-      }
-      return raw.keys
-          .map((key) => key.toString())
-          .where((key) => key.isNotEmpty)
-          .toSet();
+      final raw = (await _readSocial(session))['buddyRequestsOutgoing'];
+      return raw is Map
+          ? raw.keys
+                .map((key) => key.toString())
+                .where((key) => key.isNotEmpty)
+                .toSet()
+          : <String>{};
     } catch (_) {
       return const {};
     }
   }
 
-  /// Loads buddy requests.
   Future<List<Map<String, dynamic>>> loadBuddyRequests({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return const [];
-    }
-    final snapshot = await _moduleFor(
-      session,
-      UserModule.social,
-    ).get().timeout(_firebaseReadTimeout);
-    final raw = snapshot.data()?['buddyRequestsIncoming'];
-    return _buddyRequestsFromRaw(raw);
+    final data = await _readSocial(session);
+    return _buddyRequestsFromRaw(data['buddyRequestsIncoming']);
   }
 
   /// Watches buddy requests.
@@ -1851,7 +1917,11 @@ class HikerCircleFirebaseRepository {
         _samePhone(session.phoneNumber, recipientPhone)) {
       return;
     }
-    await _manageBuddyRequest(action: 'send', phoneNumber: recipientPhone);
+    await _manageBuddyRequest(
+      action: 'send',
+      phoneNumber: recipientPhone,
+      owner: session.phoneNumber,
+    );
   }
 
   /// Accepts buddy request.
@@ -1866,7 +1936,11 @@ class HikerCircleFirebaseRepository {
     if (requesterPhone.isEmpty || requesterKey.isEmpty || ownKey.isEmpty) {
       return;
     }
-    await _manageBuddyRequest(action: 'accept', phoneNumber: requesterPhone);
+    await _manageBuddyRequest(
+      action: 'accept',
+      phoneNumber: requesterPhone,
+      owner: session.phoneNumber,
+    );
   }
 
   /// Cancels buddy request.
@@ -1877,7 +1951,11 @@ class HikerCircleFirebaseRepository {
     _throwIfFirebaseUnavailable();
     final phone = buddyPhoneNumber.trim();
     if (phone.isEmpty || _samePhone(session.phoneNumber, phone)) return;
-    await _manageBuddyRequest(action: 'cancel', phoneNumber: phone);
+    await _manageBuddyRequest(
+      action: 'cancel',
+      phoneNumber: phone,
+      owner: session.phoneNumber,
+    );
   }
 
   /// Declines buddy request.
@@ -1892,19 +1970,26 @@ class HikerCircleFirebaseRepository {
     if (requesterPhone.isEmpty || requesterKey.isEmpty || ownKey.isEmpty) {
       return;
     }
-    await _manageBuddyRequest(action: 'decline', phoneNumber: requesterPhone);
+    await _manageBuddyRequest(
+      action: 'decline',
+      phoneNumber: requesterPhone,
+      owner: session.phoneNumber,
+    );
   }
 
   /// Computes manage buddy request.
   Future<void> _manageBuddyRequest({
     required String action,
     required String phoneNumber,
+    required String owner,
   }) async {
     try {
       await _resolvedFunctions.httpsCallable('manageBuddyRequest').call({
         'action': action,
         'phoneNumber': phoneNumber,
+        'expectedOwner': owner,
       });
+      await _invalidateReadModel(owner, 'social');
     } on FirebaseFunctionsException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to update this buddy request.',
@@ -1912,16 +1997,14 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  /// Loads group chat notifications enabled.
   Future<bool> loadGroupChatNotificationsEnabled({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return true;
-    }
     try {
-      final snapshot = await _moduleFor(session, UserModule.preferences).get();
-      return snapshot.data()?['groupChatNotificationsEnabled'] != false;
+      return (await _readPreferences(
+            session,
+          ))['groupChatNotificationsEnabled'] !=
+          false;
     } catch (_) {
       return true;
     }
@@ -1940,16 +2023,12 @@ class HikerCircleFirebaseRepository {
           .toUtc()
           .toIso8601String(),
     }, SetOptions(merge: true));
+    await _refreshPreferenceSnapshot(session);
   }
 
-  /// Loads preferred time zone.
   Future<String?> loadPreferredTimeZone({required AppSession session}) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return null;
-    }
     try {
-      final snapshot = await _moduleFor(session, UserModule.preferences).get();
-      final value = snapshot.data()?['preferredTimeZone'];
+      final value = (await _readPreferences(session))['preferredTimeZone'];
       return value is String && PreferredTimeZone.isValid(value)
           ? value.trim()
           : null;
@@ -1976,6 +2055,7 @@ class HikerCircleFirebaseRepository {
           .toUtc()
           .toIso8601String(),
     }, SetOptions(merge: true));
+    await _refreshPreferenceSnapshot(session);
   }
 
   /// Saves team safety preferences.
@@ -1991,46 +2071,34 @@ class HikerCircleFirebaseRepository {
           .toUtc()
           .toIso8601String(),
     }, SetOptions(merge: true));
+    await _refreshPreferenceSnapshot(session);
   }
 
-  /// Loads team safety preferences.
   Future<Map<String, dynamic>?> loadTeamSafetyPreferences({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return null;
-    }
     try {
-      final snapshot = await _moduleFor(session, UserModule.safety).get();
-      final raw = snapshot.data()?['teamSafetyPreferences'];
-      if (raw is Map) {
-        return Map<String, dynamic>.from(raw);
-      }
-      return null;
+      final data = await readMobileSnapshot(
+        owner: session.phoneNumber,
+        resourceType: 'preferences',
+      );
+      final safety = data['safety'];
+      final raw = safety is Map ? safety['teamSafetyPreferences'] : null;
+      return raw is Map ? Map<String, dynamic>.from(raw) : null;
     } catch (_) {
       return null;
     }
   }
 
-  /// Loads group chat muted until.
   Future<DateTime?> loadGroupChatMutedUntil({
     required AppSession session,
     required String chatId,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable || chatId.trim().isEmpty) {
-      return null;
-    }
+    if (chatId.trim().isEmpty) return null;
     try {
-      final snapshot = await _moduleFor(session, UserModule.preferences).get();
-      final rawMap = snapshot.data()?['groupChatMutedUntil'];
-      if (rawMap is! Map) {
-        return null;
-      }
-      final mutedUntil = _dateFromValue(rawMap[chatId.trim()]);
-      if (mutedUntil == null || !mutedUntil.isAfter(DateTime.now())) {
-        return null;
-      }
-      return mutedUntil;
+      final raw = (await _readPreferences(session))['groupChatMutedUntil'];
+      final until = raw is Map ? _dateFromValue(raw[chatId.trim()]) : null;
+      return until != null && until.isAfter(DateTime.now()) ? until : null;
     } catch (_) {
       return null;
     }
@@ -2070,26 +2138,20 @@ class HikerCircleFirebaseRepository {
         'groupChatNotificationSettingsUpdatedAtLocal': now.toIso8601String(),
       }, SetOptions(merge: true));
     });
+    await _refreshPreferenceSnapshot(session);
   }
 
-  /// Loads pinned chats.
   Future<Set<String>> loadPinnedChats({required AppSession session}) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return {};
-    }
     try {
-      final snapshot = await _moduleFor(
-        session,
-        UserModule.preferences,
-      ).get().timeout(_firebaseReadTimeout);
-      final raw = snapshot.data()?['pinnedChats'];
-      if (raw is Map) {
-        return raw.keys
-            .where((k) => raw[k] == true || raw[k] is Timestamp)
-            .cast<String>()
-            .toSet();
-      }
-      return {};
+      final raw = (await _readPreferences(session))['pinnedChats'];
+      return raw is Map
+          ? raw.keys
+                .where(
+                  (key) => raw[key] == true || _dateFromValue(raw[key]) != null,
+                )
+                .map((key) => key.toString())
+                .toSet()
+          : <String>{};
     } catch (_) {
       return {};
     }
@@ -2113,6 +2175,7 @@ class HikerCircleFirebaseRepository {
             : FieldValue.delete(),
       },
     }, SetOptions(merge: true));
+    await _refreshPreferenceSnapshot(session);
   }
 
   /// Deletes chat for user.
@@ -2126,7 +2189,9 @@ class HikerCircleFirebaseRepository {
     try {
       await _resolvedFunctions.httpsCallable('deleteChatForUser').call({
         'chatId': chatId.trim(),
+        'expectedOwner': session.phoneNumber,
       });
+      await _invalidateReadModel(session.phoneNumber, 'chat_list');
     } on FirebaseFunctionsException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to leave this conversation right now.',
@@ -2233,9 +2298,7 @@ class HikerCircleFirebaseRepository {
     }
 
     try {
-      // A retry must address the same Firestore document. Using a random ID
-      // here could duplicate a message when the offline write was accepted by
-      // the SDK but the subsequent server acknowledgement was unavailable.
+      // A retry must address the same Firestore document
       final msgDoc = _groupChatMessagesFor(chatId).doc(firestoreMessageId);
       final msg = ChatMessage(
         id: msgDoc.id,
@@ -3171,7 +3234,12 @@ class HikerCircleFirebaseRepository {
     }
     return _teamHikeSessions
         .doc(teamHikeSessionId)
-        .snapshots()
+        .snapshots(includeMetadataChanges: true)
+        .where(
+          (snapshot) =>
+              !snapshot.metadata.isFromCache &&
+              !snapshot.metadata.hasPendingWrites,
+        )
         .map(_teamHikeSessionFromDocument);
   }
 
@@ -3185,7 +3253,12 @@ class HikerCircleFirebaseRepository {
     }
     return _teamHikeSessions
         .where('participantPhoneNumbers', arrayContains: normalizedPhone)
-        .snapshots()
+        .snapshots(includeMetadataChanges: true)
+        .where(
+          (snapshot) =>
+              !snapshot.metadata.isFromCache &&
+              !snapshot.metadata.hasPendingWrites,
+        )
         .map((snapshot) {
           final sessions = snapshot.docs
               .map(_teamHikeSessionFromDocument)
@@ -3214,7 +3287,7 @@ class HikerCircleFirebaseRepository {
     _throwIfFirebaseUnavailable();
     final snapshot = await _teamHikeSessions
         .where('participantPhoneNumbers', arrayContains: phoneNumber.trim())
-        .get()
+        .get(const GetOptions(source: Source.server))
         .timeout(_firebaseReadTimeout);
     return snapshot.docs
         .map(_teamHikeSessionFromDocument)
@@ -5503,84 +5576,45 @@ class HikerCircleFirebaseRepository {
     await _mergeAchievementRows(session: session, serverRows: rows);
   }
 
-  /// Loads achievement progress hash.
+  /// Reuse the same cached read model instead of a separate hash-only endpoint.
   Future<String> loadAchievementProgressHash({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return '';
-    }
     try {
-      final response = await _resolvedFunctions
-          .httpsCallable('getMyAchievementProgressHash')
-          .call()
-          .timeout(_firebaseReadTimeout);
-      final data = response.data;
-      if (data is! Map) {
-        return '';
-      }
-      return _stringFrom(data['hash']);
+      final data = await readMobileSnapshot(
+        owner: session.phoneNumber,
+        resourceType: 'achievement_progress',
+      );
+      return _stringFrom(data['contentHash']);
     } catch (_) {
       return '';
     }
   }
 
-  /// Loads user achievement progress.
+  /// Local progress stays available while the server-owned catalogue is hash validated.
   Future<List<Map<String, dynamic>>> loadUserAchievementProgress({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return _mergeAchievementRows(session: session);
-    }
-
     try {
-      await ensureAchievementSeeds();
-      try {
-        await _resolvedFunctions
-            .httpsCallable('syncMyAchievementProgress')
-            .call()
-            .timeout(_firebaseWriteTimeout);
-      } catch (_) {
-        // The catalog still loads if historical progress reconciliation is
-        // temporarily unavailable. Future hike events continue to count.
+      final data = await readMobileSnapshot(
+        owner: session.phoneNumber,
+        resourceType: 'achievement_progress',
+      );
+      final definitions = _snapshotRows(data, 'achievements');
+      final awards = _snapshotRows(data, 'awards');
+      if (!data.containsKey('achievements')) {
+        return _mergeAchievementRows(session: session);
       }
-      final userId = _userIdFor(session);
-      final results = await Future.wait([
-        _achievements.orderBy('sortOrder').get().timeout(_firebaseReadTimeout),
-        _userAchievements
-            .where('userId', isEqualTo: userId)
-            .get()
-            .timeout(_firebaseReadTimeout),
-      ]).timeout(_firebaseReadTimeout);
-      final achievementSnapshot = results[0];
-      final userAchievementSnapshot = results[1];
-      final achievements = achievementSnapshot.docs.map((document) {
-        return {...document.data(), 'achievementId': document.id};
-      }).toList();
-      final awardsByAchievementId = <String, Map<String, dynamic>>{};
-      for (final document in userAchievementSnapshot.docs) {
-        final data = document.data();
-        final achievementId = _stringFrom(data['achievementId']);
-        if (achievementId.isEmpty) {
-          continue;
-        }
-        awardsByAchievementId[achievementId] = {
-          ...data,
-          'userAchievementId': document.id,
-        };
-      }
-
+      final byId = <String, Map<String, dynamic>>{
+        for (final award in awards) _stringFrom(award['achievementId']): award,
+      };
       final rows = _achievementProgressFrom(
-        achievements: achievements.isEmpty
-            ? _achievementSeedRows()
-            : achievements,
-        userAwardsByAchievementId: awardsByAchievementId,
+        achievements: definitions,
+        userAwardsByAchievementId: byId,
       );
-      return _mergeAchievementRows(
-        session: session,
-        serverRows: rows,
-        fresh: true,
-      );
+      // Cached read models do not establish a new live notification baseline.
+      // The authoritative rule/award streams retain that responsibility.
+      return _mergeAchievementRows(session: session, serverRows: rows);
     } catch (_) {
       return _mergeAchievementRows(session: session);
     }
@@ -5642,11 +5676,26 @@ class HikerCircleFirebaseRepository {
       .distinct();
 
   /// Loads my hike history.
+  Future<String> _historyCacheOwner() async {
+    final owner =
+        (await _localDatabase.loadSession())?.phoneNumber.trim() ?? '';
+    if (owner.isEmpty) {
+      throw FirebaseFunctionsException(
+        code: 'unauthenticated',
+        message:
+            'A restored signed-in account is required to load hike history.',
+      );
+    }
+    return owner;
+  }
+
+  /// Loads my hike history.
   Future<List<HikeHistorySummary>> loadMyHikeHistory({
     int limit = 100,
     bool force = false,
+    bool cacheOnly = false,
   }) async {
-    final owner = (await _localDatabase.loadSession())?.phoneNumber ?? '';
+    final owner = await _historyCacheOwner();
     final bounded = limit.clamp(1, 200);
     final data = await _conditionalCache.read(
       owner: owner,
@@ -5657,6 +5706,7 @@ class HikerCircleFirebaseRepository {
       freshness: const Duration(minutes: 2),
       online: _firebaseBootstrapResult.isAvailable,
       force: force,
+      cacheOnly: cacheOnly,
     );
     return parseHikeHistoryList(data);
   }
@@ -5665,13 +5715,14 @@ class HikerCircleFirebaseRepository {
   Future<HikeHistoryDetail> loadMyHikeHistoryDetail(
     String sessionId, {
     bool force = false,
+    bool cacheOnly = false,
   }) async {
     if (sessionId.trim().isEmpty) {
       throw const HikerCircleFirebaseRepositoryException(
         'The hike history entry is invalid.',
       );
     }
-    final owner = (await _localDatabase.loadSession())?.phoneNumber ?? '';
+    final owner = await _historyCacheOwner();
     final data = await _conditionalCache.read(
       owner: owner,
       type: 'hike_history_detail',
@@ -5681,6 +5732,7 @@ class HikerCircleFirebaseRepository {
       freshness: const Duration(minutes: 10),
       online: _firebaseBootstrapResult.isAvailable,
       force: force,
+      cacheOnly: cacheOnly,
     );
     return parseHikeHistoryDetail(data);
   }

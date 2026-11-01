@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../app/Data/local_session_database.dart';
+import '../../core/services/network_reachability_service.dart';
 import '../Model/hike_session_models.dart';
 import 'active_hike_weather_service.dart';
 
@@ -32,9 +33,21 @@ class ActiveHikeWeatherController
     required this.ownerPhoneNumber,
     ActiveHikeWeatherService? service,
     DateTime Function()? now,
+    bool Function()? isNetworkAvailable,
+    Stream<bool>? networkChanges,
   }) : service = service ?? const ActiveHikeWeatherService(),
        _now = now ?? DateTime.now,
-       super(const ActiveHikeWeatherViewState());
+       _isNetworkAvailable = isNetworkAvailable ?? _networkMayBeAvailable,
+       super(const ActiveHikeWeatherViewState()) {
+    _networkSubscription =
+        (networkChanges ??
+                NetworkReachabilityService.instance.snapshots.map(
+                  (snapshot) => snapshot.isOnline,
+                ))
+            .listen((online) {
+              if (online && !_disposed) unawaited(refresh());
+            });
+  }
 
   static const refreshInterval = Duration(minutes: 15);
   static const cacheEntityType = 'active_hike_weather';
@@ -42,14 +55,25 @@ class ActiveHikeWeatherController
   final String ownerPhoneNumber;
   final ActiveHikeWeatherService service;
   final DateTime Function() _now;
+  final bool Function() _isNetworkAvailable;
+  late final StreamSubscription<bool> _networkSubscription;
   ActiveHikeSession? _hike;
   String? _key;
   DateTime? _lastAttempt;
+  ActiveHikeWeatherSnapshot? _fallbackSnapshot;
   Future<void>? _restore;
   Future<void>? _pending;
   Timer? _timer;
   int _generation = 0;
   bool _disposed = false;
+
+  static bool _networkMayBeAvailable() =>
+      NetworkReachabilityService.instance.latest.state !=
+      NetworkReachabilityState.offline;
+
+  bool get _refreshDue =>
+      _lastAttempt == null ||
+      _now().toUtc().difference(_lastAttempt!.toUtc()) >= refreshInterval;
 
   /// Computes cache key.
   static String cacheKey(ActiveHikeSession hike) =>
@@ -66,6 +90,7 @@ class ActiveHikeWeatherController
     _timer?.cancel();
     _pending = null;
     _lastAttempt = null;
+    _fallbackSnapshot = null;
     value = const ActiveHikeWeatherViewState(isLoading: true);
     final restoring = _restoreCache(key, generation);
     _restore = restoring;
@@ -97,15 +122,24 @@ class ActiveHikeWeatherController
           );
         }
       }
-      value = ActiveHikeWeatherViewState(
-        snapshot: snapshot,
-        error: cached?.payload['lastRefreshFailed'] == true
-            ? 'Latest refresh failed.'
-            : null,
-        nextRefreshAt: _lastAttempt?.add(refreshInterval),
-      );
+      _fallbackSnapshot = snapshot;
+      // A due refresh attempts the provider first. Retain this device copy
+      // privately until that attempt fails, or use it within its request window.
+      if (_refreshDue) {
+        value = const ActiveHikeWeatherViewState(isLoading: true);
+      } else {
+        value = ActiveHikeWeatherViewState(
+          snapshot: snapshot,
+          error: cached?.payload['lastRefreshFailed'] == true
+              ? 'Latest refresh failed.'
+              : null,
+          nextRefreshAt: _lastAttempt?.add(refreshInterval),
+        );
+      }
     } catch (_) {
-      if (_current(generation)) value = const ActiveHikeWeatherViewState();
+      if (_current(generation)) {
+        value = const ActiveHikeWeatherViewState(isLoading: true);
+      }
     }
   }
 
@@ -116,10 +150,18 @@ class ActiveHikeWeatherController
     await _restore;
     if (!_current(generation)) return;
     if (_pending != null) return _pending;
-    final lastAttempt = _lastAttempt;
-    if (lastAttempt != null &&
-        _now().difference(lastAttempt) < refreshInterval) {
+    if (!_refreshDue) {
       _schedule();
+      return;
+    }
+    if (!_isNetworkAvailable()) {
+      // No request was attempted, so do not consume the persisted interval.
+      // The shared connectivity event will retry as soon as the network returns.
+      _timer?.cancel();
+      value = ActiveHikeWeatherViewState(
+        snapshot: _cachedFallback(value.snapshot ?? _fallbackSnapshot),
+        error: 'No connection. Latest weather could not be checked.',
+      );
       return;
     }
     final request = _fetch(_hike!, _key!, generation);
@@ -136,16 +178,14 @@ class ActiveHikeWeatherController
   ) async {
     final attemptedAt = _now().toUtc();
     _lastAttempt = attemptedAt;
-    final previous = value.snapshot;
-    final previousFailed = value.error != null;
+    final previous = value.snapshot ?? _fallbackSnapshot;
     value = ActiveHikeWeatherViewState(
-      snapshot: previous,
       isLoading: true,
       nextRefreshAt: attemptedAt.add(refreshInterval),
     );
     // Persist the attempt too, so a failed request or page restart cannot cause
     // a rapid retry. This write never deletes the last successful readings.
-    await _persist(key, previous, attemptedAt, failed: previousFailed);
+    await _persist(key, previous, attemptedAt, failed: true);
     if (!_current(generation)) return;
     ActiveHikeWeatherSnapshot? snapshot = previous;
     String? error;
@@ -154,14 +194,17 @@ class ActiveHikeWeatherController
       if (!fetched.isCachedFallback) {
         snapshot = fetched;
       } else {
-        snapshot ??= fetched;
+        snapshot = _cachedFallback(snapshot) ?? fetched;
         error = 'Latest refresh failed.';
       }
     } catch (_) {
+      snapshot = _cachedFallback(snapshot);
       error = 'Latest refresh failed.';
     }
+    if (!_current(generation)) return;
     await _persist(key, snapshot, attemptedAt, failed: error != null);
     if (!_current(generation)) return;
+    _fallbackSnapshot = snapshot;
     value = ActiveHikeWeatherViewState(
       snapshot: snapshot,
       error: error,
@@ -169,6 +212,16 @@ class ActiveHikeWeatherController
     );
     _schedule();
   }
+
+  ActiveHikeWeatherSnapshot? _cachedFallback(
+    ActiveHikeWeatherSnapshot? snapshot,
+  ) => snapshot == null
+      ? null
+      : ActiveHikeWeatherSnapshot(
+          samples: snapshot.samples,
+          fetchedAt: snapshot.fetchedAt,
+          isCachedFallback: true,
+        );
 
   /// Persists.
   Future<void> _persist(
@@ -213,6 +266,7 @@ class ActiveHikeWeatherController
   void dispose() {
     _disposed = true;
     _timer?.cancel();
+    unawaited(_networkSubscription.cancel());
     super.dispose();
   }
 }

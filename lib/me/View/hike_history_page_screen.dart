@@ -61,6 +61,7 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
     )..addListener(_renderScreenModel);
 
     _historyFuture = _load();
+    _screenModel.watchCachedHistory();
     if (widget.loadHistory == null && widget.session != null) {
       _screenModel.watchSharedHistory(widget.session!.phoneNumber);
     }
@@ -80,6 +81,10 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
           summary: hike,
           loadDetail:
               widget.loadDetail ?? widget.repository.loadMyHikeHistoryDetail,
+          refreshDetail:
+              widget.loadDetail ??
+              (id) =>
+                  widget.repository.loadMyHikeHistoryDetail(id, force: true),
           repository: widget.repository,
           session: widget.session,
           enableInteractiveRoute: widget.enableInteractiveRoute,
@@ -117,24 +122,35 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
           children: [
             _completedHistory(),
             _ExpiredHikeHistoryList(
+              repository: widget.loadExpiredHikes == null
+                  ? widget.repository
+                  : null,
               onReschedule: widget.onRescheduleExpiredHike,
-              loader:
-                  widget.loadExpiredHikes ??
-                  (cursor) =>
-                      _HikeHistoryPageDataActions.loadPage(
-                        ExpiredHikesRepository(
-                          localDatabase: widget.repository.localDatabase,
-                        ),
-                      )(
-                        ownerPhoneNumber: widget.session?.phoneNumber ?? '',
-                        cursor: cursor,
-                      ),
+              loader: (cursor) => _loadExpiredPage(cursor),
+              refreshLoader: (cursor) => _loadExpiredPage(cursor, force: true),
+              cacheLoader: (cursor) =>
+                  _loadExpiredPage(cursor, cacheOnly: true),
             ),
           ],
         ),
       ),
     );
   }
+
+  Future<ExpiredHikesPage> _loadExpiredPage(
+    ExpiredHikesCursor? cursor, {
+    bool force = false,
+    bool cacheOnly = false,
+  }) =>
+      widget.loadExpiredHikes?.call(cursor) ??
+      _HikeHistoryPageDataActions.loadPage(
+        ExpiredHikesRepository(localDatabase: widget.repository.localDatabase),
+      )(
+        ownerPhoneNumber: widget.session?.phoneNumber ?? '',
+        cursor: cursor,
+        force: force,
+        cacheOnly: cacheOnly,
+      );
 
   /// Computes completed history.
   Widget _completedHistory() => FutureBuilder<List<HikeHistorySummary>>(
@@ -246,9 +262,18 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
 /// Displays the expired hike history list.
 class _ExpiredHikeHistoryList extends StatefulWidget {
   /// Creates expired hike history list.
-  const _ExpiredHikeHistoryList({required this.loader, this.onReschedule});
+  const _ExpiredHikeHistoryList({
+    required this.loader,
+    required this.refreshLoader,
+    required this.cacheLoader,
+    this.onReschedule,
+    this.repository,
+  });
   final ExpiredHikesPageLoader loader;
+  final ExpiredHikesPageLoader refreshLoader;
+  final ExpiredHikesPageLoader cacheLoader;
   final Future<void> Function(UpcomingHike)? onReschedule;
+  final HikerCircleFirebaseRepository? repository;
 
   /// Creates the presentation state for this widget.
   @override
@@ -289,14 +314,19 @@ class _ExpiredHikeHistoryListState extends State<_ExpiredHikeHistoryList> {
     super.initState();
     _screenModel = _ExpiredHikeHistoryListStateViewModel(
       readLoader: () => widget.loader,
+      readRefreshLoader: () => widget.refreshLoader,
+      readCacheLoader: () => widget.cacheLoader,
     )..addListener(_renderScreenModel);
+    if (widget.repository != null) {
+      _screenModel.watchCachedPages(widget.repository!);
+    }
 
-    unawaited(_load(refresh: true));
+    unawaited(_screenModel.commandLoad(refresh: true));
   }
 
   /// Keep expired-hike pagination separate from refresh so existing rows remain visible while loading more.
   Future<void> _load({bool refresh = false}) =>
-      _screenModel.commandLoad(refresh: refresh);
+      _screenModel.commandLoad(refresh: refresh, force: refresh);
 
   /// Builds this widget from its current presentation state.
   @override
@@ -443,6 +473,7 @@ class HikeHistoryDetailPage extends StatefulWidget {
     super.key,
     required this.summary,
     required this.loadDetail,
+    this.refreshDetail,
     this.repository,
     this.session,
     this.enableInteractiveRoute = true,
@@ -450,6 +481,7 @@ class HikeHistoryDetailPage extends StatefulWidget {
 
   final HikeHistorySummary summary;
   final HikeHistoryDetailLoader loadDetail;
+  final HikeHistoryDetailLoader? refreshDetail;
   final HikerCircleFirebaseRepository? repository;
   final AppSession? session;
   final bool enableInteractiveRoute;
@@ -481,10 +513,14 @@ class _HikeHistoryDetailPageState extends State<HikeHistoryDetailPage> {
     super.initState();
     _screenModel = _HikeHistoryDetailPageStateViewModel(
       readLoadDetail: () => widget.loadDetail,
+      readRefreshDetail: () => widget.refreshDetail ?? widget.loadDetail,
       readSummary: () => widget.summary,
     )..addListener(_renderScreenModel);
 
     _detailFuture = widget.loadDetail(widget.summary.sessionId);
+    if (widget.repository != null) {
+      _screenModel.watchCachedDetail(widget.repository!);
+    }
   }
 
   /// Delegates refresh to the ViewModel.

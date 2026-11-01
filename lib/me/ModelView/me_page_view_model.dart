@@ -35,6 +35,54 @@ class _MePageStateViewModel extends ChangeNotifier {
   List<_ProfileHistoryItem> stateCircleHistoryItems = const [];
 
   List<_ProfileHistoryItem> stateBuddyHistoryItems = const [];
+  StreamSubscription<CacheResourceUpdate>? _cachedReadSubscription;
+  final Set<String> _revokedReadTypes = {};
+  int _profileReadRevision = 0;
+  int _collectionReadRevision = 0;
+
+  void commandWatchCachedReads() {
+    _cachedReadSubscription = stateFirebaseRepository.cachedReadUpdates.listen((
+      change,
+    ) async {
+      if (!mounted || change.owner != readSession().phoneNumber) {
+        return;
+      }
+      if (change.revoked) {
+        _revokedReadTypes.add(change.type);
+        if (change.type == 'profile') _profileReadRevision++;
+        if (change.type == 'mobile_chat_list' ||
+            change.type == 'mobile_social') {
+          _collectionReadRevision++;
+        }
+        _publish(() {
+          if (change.type == 'profile') stateFirestoreProfile = null;
+          if (change.type == 'mobile_achievement_progress') {
+            stateAchievementsFuture = Future.value(const []);
+          }
+          if (change.type == 'mobile_chat_list') {
+            stateCircleHistoryItems = const [];
+          }
+          if (change.type == 'mobile_social') stateBuddyHistoryItems = const [];
+        });
+        return;
+      }
+      if (change.invalidated) return;
+      _revokedReadTypes.remove(change.type);
+      try {
+        if (change.type == 'profile') {
+          await commandLoadFirestoreProfile();
+        } else if (change.type == 'mobile_achievement_progress') {
+          await commandFetchProfileAchievements();
+          await commandReloadLocalProfileAchievements();
+        } else if (change.type == 'mobile_chat_list' ||
+            change.type == 'mobile_social') {
+          await commandLoadProfileCollections();
+        }
+      } catch (_) {
+        // Keep the visible local view if its refreshed projection cannot load.
+      }
+    });
+  }
 
   final List<_ProfileHistoryItem> stateTrailHistoryItems = const [];
 
@@ -60,19 +108,28 @@ class _MePageStateViewModel extends ChangeNotifier {
 
   /// Computes reload local profile achievements.
   Future<void> commandReloadLocalProfileAchievements() async {
+    if (_revokedReadTypes.contains('mobile_achievement_progress')) return;
     final cached = await stateFirebaseRepository.loadCachedAchievementProgress(
       session: readSession(),
     );
-    if (mounted && cached != null) {
+    if (mounted &&
+        cached != null &&
+        !_revokedReadTypes.contains('mobile_achievement_progress')) {
       _publish(() => stateAchievementsFuture = Future.value(cached.rows));
     }
   }
 
   /// Fetches profile achievements.
   Future<List<Map<String, dynamic>>> commandFetchProfileAchievements() async {
+    if (_revokedReadTypes.contains('mobile_achievement_progress')) {
+      return const [];
+    }
     final rows = await stateFirebaseRepository.loadUserAchievementProgress(
       session: readSession(),
     );
+    if (_revokedReadTypes.contains('mobile_achievement_progress')) {
+      return const [];
+    }
     await stateFirebaseRepository.saveCachedAchievementProgress(
       session: readSession(),
       contentHash: achievementProgressContentHash(rows),
@@ -84,12 +141,11 @@ class _MePageStateViewModel extends ChangeNotifier {
   /// Refreshes profile achievements.
   Future<void> commandRefreshProfileAchievements(String hash) async {
     try {
-      final remote = await stateFirebaseRepository.loadAchievementProgressHash(
-        session: readSession(),
-      );
-      if (remote.isEmpty || remote == hash) return;
       final rows = await commandFetchProfileAchievements();
-      if (mounted) _publish(() => stateAchievementsFuture = Future.value(rows));
+      if (mounted &&
+          !_revokedReadTypes.contains('mobile_achievement_progress')) {
+        _publish(() => stateAchievementsFuture = Future.value(rows));
+      }
     } catch (_) {
       // Keep the saved summary available when the network is unavailable.
     }
@@ -97,11 +153,16 @@ class _MePageStateViewModel extends ChangeNotifier {
 
   /// Loads firestore profile.
   Future<void> commandLoadFirestoreProfile() async {
+    final session = readSession();
+    final revision = ++_profileReadRevision;
     try {
-      final profile = await stateOnboardingRepository.loadProfile(
-        readSession(),
-      );
-      if (!mounted) return;
+      final profile = await stateOnboardingRepository.loadProfile(session);
+      if (!mounted ||
+          revision != _profileReadRevision ||
+          session.phoneNumber != readSession().phoneNumber ||
+          _revokedReadTypes.contains('profile')) {
+        return;
+      }
       final username = profile.username.trim();
       _publish(() {
         stateFirestoreProfile = MeProfile(
@@ -139,13 +200,13 @@ class _MePageStateViewModel extends ChangeNotifier {
 
   /// Load posts, group chats and buddy profiles independently from the account's editable profile fields.
   Future<void> commandLoadProfileCollections() async {
+    final session = readSession();
+    final revision = ++_collectionReadRevision;
     try {
       final results = await Future.wait<Object>([
-        stateFirebaseRepository.loadCommunityPostsForUser(
-          session: readSession(),
-        ),
-        stateFirebaseRepository.loadUserGroupChats(readSession().phoneNumber),
-        stateFirebaseRepository.loadBuddyPhoneNumbers(session: readSession()),
+        stateFirebaseRepository.loadCommunityPostsForUser(session: session),
+        stateFirebaseRepository.loadUserGroupChats(session.phoneNumber),
+        stateFirebaseRepository.loadBuddyPhoneNumbers(session: session),
       ]);
       final ownPhone = readSession().phoneNumber.trim();
       final posts = (results[0] as List<Map<String, dynamic>>)
@@ -199,11 +260,19 @@ class _MePageStateViewModel extends ChangeNotifier {
             ),
           )
           .toList(growable: false);
-      if (!mounted) return;
+      if (!mounted ||
+          revision != _collectionReadRevision ||
+          session.phoneNumber != readSession().phoneNumber) {
+        return;
+      }
       _publish(() {
         statePostHistoryItems = posts;
-        stateCircleHistoryItems = chats;
-        stateBuddyHistoryItems = buddies;
+        stateCircleHistoryItems = _revokedReadTypes.contains('mobile_chat_list')
+            ? const []
+            : chats;
+        stateBuddyHistoryItems = _revokedReadTypes.contains('mobile_social')
+            ? const []
+            : buddies;
       });
     } catch (_) {
       // The sections stay empty while Firebase is unavailable.
@@ -268,6 +337,7 @@ class _MePageStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _cachedReadSubscription?.cancel();
     super.dispose();
   }
 
@@ -334,6 +404,55 @@ class _AdvancedAppSettingsPageStateViewModel extends ChangeNotifier {
   bool stateIsLoadingTimeZone = true;
 
   String stateTimeZoneStatus = 'Loading your saved SOS timezone…';
+  StreamSubscription<CacheResourceUpdate>? _cachedPreferences;
+  int _timeZoneReadRevision = 0;
+  bool stateIsSavingTimeZone = false;
+
+  void commandSetTimeZoneSaving(bool saving) {
+    stateIsSavingTimeZone = saving;
+    _timeZoneReadRevision++;
+  }
+
+  void commandWatchCachedPreferences() {
+    _cachedPreferences = readFirebaseRepository().cachedReadUpdates.listen((
+      change,
+    ) async {
+      if (!mounted ||
+          stateIsSavingTimeZone ||
+          change.invalidated ||
+          change.owner != readSession().phoneNumber ||
+          change.type != 'mobile_preferences') {
+        return;
+      }
+      final revision = ++_timeZoneReadRevision;
+      final owner = readSession().phoneNumber;
+      try {
+        final data = await readFirebaseRepository().readMobileSnapshot(
+          owner: owner,
+          resourceType: 'preferences',
+          cacheOnly: true,
+        );
+        final preferences = data['preferences'];
+        final saved = preferences is Map
+            ? preferences['preferredTimeZone']
+            : null;
+        if (!mounted ||
+            owner != readSession().phoneNumber ||
+            revision != _timeZoneReadRevision ||
+            stateIsSavingTimeZone ||
+            saved is! String ||
+            !PreferredTimeZone.isValid(saved)) {
+          return;
+        }
+        stateSettings.setPreferredTimeZone(saved);
+        _publish(() {
+          stateTimeZoneStatus = 'Using your saved timezone for SOS messages.';
+        });
+      } catch (_) {
+        // Keep the phone's last setting if its downloaded view is unavailable.
+      }
+    });
+  }
 
   /// Handles settings changed.
   void commandHandleSettingsChanged() {
@@ -344,27 +463,32 @@ class _AdvancedAppSettingsPageStateViewModel extends ChangeNotifier {
 
   /// Loads preferred time zone.
   Future<void> commandLoadPreferredTimeZone() async {
+    final revision = ++_timeZoneReadRevision;
+    final session = readSession();
     try {
       final saved = await readFirebaseRepository().loadPreferredTimeZone(
-        session: readSession(),
+        session: session,
       );
+      if (!mounted ||
+          session.phoneNumber != readSession().phoneNumber ||
+          revision != _timeZoneReadRevision ||
+          stateIsSavingTimeZone) {
+        return;
+      }
       if (saved != null) {
         stateSettings.setPreferredTimeZone(saved);
-      } else {
-        await readFirebaseRepository().savePreferredTimeZone(
-          session: readSession(),
-          preferredTimeZone: stateSettings.preferredTimeZone,
-        );
       }
       if (!mounted) return;
       _publish(() {
-        stateTimeZoneStatus = 'Synced with Firebase for outgoing SOS messages.';
+        stateTimeZoneStatus = saved != null
+            ? 'Using your saved timezone for SOS messages.'
+            : 'Using this phone\'s timezone setting. Choose a timezone to update it.';
       });
     } catch (_) {
       if (!mounted) return;
       _publish(() {
         stateTimeZoneStatus =
-            'Could not reach Firebase. SOS messages fall back to GMT+8.';
+            'Could not refresh your timezone. Using this phone\'s saved setting.';
       });
     } finally {
       if (mounted) {
@@ -379,6 +503,7 @@ class _AdvancedAppSettingsPageStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_cachedPreferences?.cancel());
     super.dispose();
   }
 
@@ -525,12 +650,6 @@ class _AchievementsPageStateViewModel extends ChangeNotifier {
   /// Refreshes the user's progress without allowing an earlier request to restore an archived card.
   Future<void> commandRevalidateAchievementCache(String cachedHash) async {
     final generation = ++_revision;
-    if (!readSession().isAdmin) {
-      final remoteHash = await readRepository().loadAchievementProgressHash(
-        session: readSession(),
-      );
-      if (remoteHash.isEmpty || remoteHash == cachedHash) return;
-    }
     final rows = await readRepository().loadUserAchievementProgress(
       session: readSession(),
     );

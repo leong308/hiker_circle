@@ -15,6 +15,7 @@ import '../app/Data/hiker_circle_firebase_repository.dart';
 import '../app/Model/app_session.dart';
 import '../core/widgets/loading_toast.dart';
 import '../home/Model/hike_session_models.dart';
+import 'Data/chat_preference_cache_observer.dart';
 import 'View/circle_page.dart';
 import 'View/widgets/shared_community_post_card.dart';
 part 'View/group_chat_detail_page_screen.dart';

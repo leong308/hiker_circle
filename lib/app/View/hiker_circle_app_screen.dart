@@ -222,6 +222,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
     if (_checkingLaunchLock) return const _StartupPage();
     if (_launchLocked && _appViewModel.session != null) {
       return PrivateScreenUnlockPage(
+        key: ValueKey('unlock:${_appViewModel.session!.phoneNumber}'),
         onUnlocked: () => setState(() => _launchLocked = false),
         onSignOut: () {
           setState(() => _launchLocked = false);
@@ -235,11 +236,13 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
         ? PhoneSignInPage(onSignedIn: _appViewModel.completeSignIn)
         : _appViewModel.session!.requiresOnboarding
         ? FirstTimeOnboardingFlow(
+            key: ValueKey('onboarding:${_appViewModel.session!.phoneNumber}'),
             session: _appViewModel.session!,
             onCompleted: _appViewModel.completeOnboarding,
             firebaseBootstrapResult: widget.firebaseBootstrapResult,
           )
         : HikerHomePage(
+            key: ValueKey('home:${_appViewModel.session!.phoneNumber}'),
             session: _appViewModel.session!,
             onSignOut: _appViewModel.signOut,
             firebaseBootstrapResult: widget.firebaseBootstrapResult,

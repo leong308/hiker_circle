@@ -45,12 +45,46 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
   StreamSubscription<List<ConnectivityResult>>? stateConnectivitySubscription;
 
   UpcomingHike? stateUpcomingHike;
+  StreamSubscription<List<UpcomingHike>>? _upcomingHikeSubscription;
+  int _upcomingHikeGeneration = 0;
 
   bool stateIsOnline = true;
 
   bool stateGroupChatNotificationsEnabled = true;
 
   DateTime? stateMutedUntil;
+  ChatPreferenceCacheObserver? _preferenceCache;
+  int _preferenceReadGeneration = 0;
+
+  void commandWatchCachedPreferences() {
+    _preferenceCache?.dispose();
+    final owner = readSession().phoneNumber;
+    _preferenceCache = ChatPreferenceCacheObserver(
+      owner: owner,
+      readOwner: () => readSession().phoneNumber,
+      changes: readRepository().cachedReadUpdates,
+      readCached: () => readRepository().readMobileSnapshot(
+        owner: owner,
+        resourceType: 'preferences',
+        cacheOnly: true,
+      ),
+      onChanged: (preferences) {
+        if (!mounted) return;
+        _preferenceReadGeneration++;
+        _publish(() {
+          stateGroupChatNotificationsEnabled = preferences.notificationsEnabled;
+          stateMutedUntil = preferences.mutedUntilFor(readChat().id);
+        });
+      },
+    );
+  }
+
+  void commandBeginPreferenceWrite() {
+    _preferenceReadGeneration++;
+    _preferenceCache?.beginWrite();
+  }
+
+  void commandEndPreferenceWrite() => _preferenceCache?.endWrite();
 
   String stateSearchQuery = '';
 
@@ -80,6 +114,9 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
 
   /// Loads notification settings.
   Future<void> commandLoadNotificationSettings() async {
+    final generation = ++_preferenceReadGeneration;
+    final owner = readSession().phoneNumber;
+    final chatId = readChat().id;
     try {
       final results = await Future.wait<Object?>([
         readRepository().loadGroupChatNotificationsEnabled(
@@ -90,7 +127,10 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
           chatId: readChat().id,
         ),
       ]);
-      if (!mounted) {
+      if (!mounted ||
+          generation != _preferenceReadGeneration ||
+          owner != readSession().phoneNumber ||
+          chatId != readChat().id) {
         return;
       }
       _publish(() {
@@ -235,18 +275,38 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
 
   /// Loads upcoming hike.
   Future<void> commandLoadUpcomingHike() async {
-    UpcomingHike? hike;
-    try {
-      hike = await readRepository().loadUpcomingHikeForChat(
-        readChat().hikeSessionId,
-      );
-    } catch (_) {
+    final generation = ++_upcomingHikeGeneration;
+    await _upcomingHikeSubscription?.cancel();
+    if (!mounted || generation != _upcomingHikeGeneration) return;
+    final owner = readSession().phoneNumber;
+    final hikeId = readChat().hikeSessionId;
+    if (hikeId.trim().isEmpty) {
+      _publish(() => stateUpcomingHike = null);
       return;
     }
-    if (!mounted) return;
-    _publish(() {
-      stateUpcomingHike = hike;
-    });
+    _upcomingHikeSubscription = readRepository()
+        .watchMyUpcomingHikes(owner)
+        .listen(
+          (hikes) {
+            if (!mounted ||
+                generation != _upcomingHikeGeneration ||
+                owner != readSession().phoneNumber ||
+                hikeId != readChat().hikeSessionId) {
+              return;
+            }
+            UpcomingHike? selected;
+            for (final hike in hikes) {
+              if (hike.id == hikeId) {
+                selected = hike;
+                break;
+              }
+            }
+            _publish(() => stateUpcomingHike = selected);
+          },
+          onError: (_) {
+            // Keep the downloaded banner while live plan updates are unavailable.
+          },
+        );
   }
 
   /// Listens for to messages.
@@ -453,6 +513,9 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _upcomingHikeGeneration++;
+    unawaited(_upcomingHikeSubscription?.cancel());
+    _preferenceCache?.dispose();
     super.dispose();
   }
 }

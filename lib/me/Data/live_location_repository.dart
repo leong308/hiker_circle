@@ -11,6 +11,7 @@ import '../../app/Data/firebase_user_repository.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart'
     show LiveLocationContactNotificationResult;
 import '../../app/Data/local_session_database.dart';
+import '../../app/Data/conditional_cloud_cache.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/live_location_models.dart';
 
@@ -39,6 +40,7 @@ class LiveLocationRepository {
     FirebaseFirestore? firestore,
     FirebaseFunctions? functions,
     LocalSessionDatabase? localDatabase,
+    ConditionalCloudCache? readCache,
     Duration cloudTimeout = const Duration(seconds: 5),
     Duration activationTimeout = const Duration(seconds: 30),
     FirebaseBootstrapResult firebaseBootstrapResult =
@@ -46,6 +48,7 @@ class LiveLocationRepository {
   }) : _firestore = firestore,
        _functions = functions,
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
+       _providedReadCache = readCache,
        _cloudTimeout = cloudTimeout,
        _activationTimeout = activationTimeout,
        _firebaseBootstrapResult = firebaseBootstrapResult;
@@ -56,6 +59,13 @@ class LiveLocationRepository {
   static final Map<String, int> _stopGenerations = {};
   final FirebaseFunctions? _functions;
   final LocalSessionDatabase _localDatabase;
+  final ConditionalCloudCache? _providedReadCache;
+  late final _readCache =
+      _providedReadCache ??
+      ConditionalCloudCache(
+        _localDatabase,
+        () => _functions ?? FirebaseFunctions.instance,
+      );
   final Duration _cloudTimeout;
   final Duration _activationTimeout;
 
@@ -77,14 +87,43 @@ class LiveLocationRepository {
   }
 
   /// Loads auto share on hike start.
+  Stream<CacheResourceUpdate> get cachedReadUpdates => _readCache.updates;
+
+  /// Reads only the downloaded preference; never activates or renews a share.
+  Future<bool?> loadCachedAutoShareOnHikeStart({
+    required String phoneNumber,
+  }) async {
+    final data = await _readCache.read(
+      owner: phoneNumber,
+      type: 'mobile_preferences',
+      id: 'current',
+      callable: 'readMobileResource',
+      arguments: const {'resourceType': 'preferences'},
+      freshness: const Duration(minutes: 2),
+      cacheOnly: true,
+    );
+    final preferences = data['preferences'];
+    final value = preferences is Map
+        ? preferences['autoShareLiveLocationOnHikeStart']
+        : null;
+    return value is bool ? value : null;
+  }
+
+  /// Loads auto share on hike start.
   Future<bool> loadAutoShareOnHikeStart({required String phoneNumber}) async {
-    _throwIfFirebaseUnavailable();
     try {
-      final snapshot = await userModuleDocument(
-        _users.doc(_userIdFor(phoneNumber)),
-        UserModule.preferences,
-      ).get().timeout(_cloudTimeout);
-      return snapshot.data()?['autoShareLiveLocationOnHikeStart'] == true;
+      final data = await _readCache.read(
+        owner: phoneNumber,
+        type: 'mobile_preferences',
+        id: 'current',
+        callable: 'readMobileResource',
+        arguments: const {'resourceType': 'preferences'},
+        freshness: const Duration(minutes: 2),
+        online: _firebaseBootstrapResult.isAvailable,
+      );
+      final preferences = data['preferences'];
+      return preferences is Map &&
+          preferences['autoShareLiveLocationOnHikeStart'] == true;
     } on FirebaseException catch (error) {
       throw LiveLocationRepositoryException(
         'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
@@ -112,6 +151,15 @@ class LiveLocationRepository {
                 .toIso8601String(),
           }, SetOptions(merge: true))
           .timeout(_cloudTimeout);
+      try {
+        await _readCache.invalidate(
+          owner: phoneNumber,
+          type: 'mobile_preferences',
+          id: 'current',
+        );
+      } catch (_) {
+        // The preference write is already confirmed by the server.
+      }
     } on FirebaseException catch (error) {
       throw LiveLocationRepositoryException(
         'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/app_settings_controller.dart';
+import '../../app/Data/conditional_cloud_cache.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart'
     show LiveLocationContactNotificationResult;
 import '../../home/Data/location_update_interval_controller.dart';
@@ -55,6 +56,8 @@ class LiveLocationSharingService extends ChangeNotifier {
   bool _isPublishing = false;
   String? _errorMessage;
   bool _autoShareOnHikeStart = false;
+  StreamSubscription<CacheResourceUpdate>? _preferenceChanges;
+  int _preferenceRevision = 0;
   int _manualStopRevision = 0;
   int _manualStartRevision = 0;
   SosTriggerLocation? _latestHikeLocation;
@@ -220,9 +223,15 @@ class LiveLocationSharingService extends ChangeNotifier {
 
     try {
       await _loadUpdateInterval(phoneNumber);
+      final preferenceRevision = _preferenceRevision;
       final autoShareOnHikeStart = await repository.loadAutoShareOnHikeStart(
         phoneNumber: phoneNumber,
       );
+      if (!_isCurrentConfiguration(generation, repository, phoneNumber)) return;
+      if (preferenceRevision == _preferenceRevision && !_isPreferenceBusy) {
+        _autoShareOnHikeStart = autoShareOnHikeStart;
+        notifyListeners();
+      }
       final existingShare = await repository.loadForUser(
         phoneNumber: phoneNumber,
       );
@@ -236,7 +245,6 @@ class LiveLocationSharingService extends ChangeNotifier {
         }
         return;
       }
-      _autoShareOnHikeStart = autoShareOnHikeStart;
       if (existingShare != null) {
         _share = existingShare;
         _isActive = true;
@@ -282,6 +290,7 @@ class LiveLocationSharingService extends ChangeNotifier {
 
     final repository = _repository!;
     final generation = _configurationGeneration;
+    _preferenceRevision += 1;
     _isPreferenceBusy = true;
     _errorMessage = null;
     notifyListeners();
@@ -789,6 +798,9 @@ class LiveLocationSharingService extends ChangeNotifier {
     final shouldDeactivate =
         _isActive && repository != null && phoneNumber != null;
     _configurationGeneration += 1;
+    _preferenceRevision += 1;
+    unawaited(_preferenceChanges?.cancel());
+    _preferenceChanges = null;
     _publishTimer?.cancel();
     _publishTimer = null;
     _repository = null;
@@ -858,7 +870,46 @@ class LiveLocationSharingService extends ChangeNotifier {
 
     _phoneNumber = phoneNumber;
     _repository = _repositoryFactory(firebaseBootstrapResult);
+    _listenForPreferenceUpdates(_repository!, phoneNumber);
     unawaited(_loadUpdateInterval(phoneNumber));
+  }
+
+  void _listenForPreferenceUpdates(
+    LiveLocationRepository repository,
+    String phoneNumber,
+  ) {
+    unawaited(_preferenceChanges?.cancel());
+    final generation = _configurationGeneration;
+    try {
+      _preferenceChanges = repository.cachedReadUpdates.listen((change) async {
+        if (change.owner != phoneNumber ||
+            change.type != 'mobile_preferences' ||
+            change.invalidated ||
+            _isPreferenceBusy ||
+            !_isCurrentConfiguration(generation, repository, phoneNumber)) {
+          return;
+        }
+        final revision = ++_preferenceRevision;
+        try {
+          final enabled = await repository.loadCachedAutoShareOnHikeStart(
+            phoneNumber: phoneNumber,
+          );
+          if (enabled == null ||
+              revision != _preferenceRevision ||
+              _isPreferenceBusy ||
+              !_isCurrentConfiguration(generation, repository, phoneNumber)) {
+            return;
+          }
+          _autoShareOnHikeStart = enabled;
+          notifyListeners();
+        } catch (_) {
+          // Retain the last preference if its local projection is unavailable.
+        }
+      });
+    } catch (_) {
+      // Repositories used without a read cache can still restore live shares.
+      _preferenceChanges = null;
+    }
   }
 
   /// Guard late asynchronous results against account switches and reconfiguration.
@@ -988,6 +1039,7 @@ class LiveLocationSharingService extends ChangeNotifier {
   @override
   void dispose() {
     _configurationGeneration += 1;
+    unawaited(_preferenceChanges?.cancel());
     _clearContactNotifications();
     _publishTimer?.cancel();
     _intervalController.removeListener(_updateIntervalChanged);

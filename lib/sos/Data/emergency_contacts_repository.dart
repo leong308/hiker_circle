@@ -3,6 +3,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import '../../app/Data/conditional_cloud_cache.dart';
+import '../../core/services/content_hash.dart';
 import '../../app/Data/user_module_paths.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
@@ -40,11 +43,13 @@ class EmergencyContactsRepository {
   const EmergencyContactsRepository({
     FirebaseFirestore? firestore,
     LocalSessionDatabase? localDatabase,
+    ConditionalCloudCache? readCache,
     Duration cloudTimeout = const Duration(seconds: 5),
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
        _localDatabase = localDatabase,
+       _providedReadCache = readCache,
        _cloudTimeout = cloudTimeout,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
@@ -90,6 +95,7 @@ class EmergencyContactsRepository {
 
   final FirebaseFirestore? _firestore;
   final LocalSessionDatabase? _localDatabase;
+  final ConditionalCloudCache? _providedReadCache;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
   /// Returns resolved firestore.
@@ -99,6 +105,30 @@ class EmergencyContactsRepository {
   /// Returns resolved local database.
   LocalSessionDatabase get _resolvedLocalDatabase =>
       _localDatabase ?? _defaultLocalDatabase;
+
+  ConditionalCloudCache get _readCache =>
+      _providedReadCache ??
+      ConditionalCloudCache(
+        _resolvedLocalDatabase,
+        () => FirebaseFunctions.instance,
+      );
+
+  Future<Map<String, dynamic>> _readPreferences(
+    AppSession session, {
+    bool force = false,
+    bool cacheOnly = false,
+    bool registerOnly = false,
+  }) => _readCache.read(
+    owner: session.phoneNumber,
+    type: 'mobile_sos_preferences',
+    id: 'current',
+    callable: 'readMobileResource',
+    arguments: const {'resourceType': 'sos_preferences'},
+    freshness: const Duration(minutes: 2),
+    online: _firebaseBootstrapResult.isAvailable && !registerOnly,
+    force: force,
+    cacheOnly: cacheOnly,
+  );
 
   /// Returns users.
   CollectionReference<Map<String, dynamic>> get _users {
@@ -132,6 +162,75 @@ class EmergencyContactsRepository {
   Future<List<EmergencyContact>> loadEmergencyContacts({
     required AppSession session,
   }) async {
+    final local = await loadCachedEmergencyContacts(session: session);
+    // Keep the device list available immediately, including a deliberately empty list.
+    if (_firebaseBootstrapResult.isAvailable) {
+      unawaited(
+        _refreshEmergencyContacts(session).catchError((Object _) => local),
+      );
+    }
+    return local;
+  }
+
+  /// Reconnection replays contact edits before the single read-hash batch.
+  Future<void> flushPendingEmergencyContacts({
+    required AppSession session,
+  }) async {
+    await _readPreferences(session, registerOnly: true);
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    final pending = await _resolvedLocalDatabase.loadLocalPreference(
+      ownerPhoneNumber: session.phoneNumber,
+      key: pendingPreferenceKey,
+    );
+    if (pending is Map && pending['contacts'] is List) {
+      await _pushPending(session, pending, _parseContacts(pending['contacts']));
+    }
+  }
+
+  /// Apply only the downloaded read model; a newer local edit always wins.
+  Future<void> applyCachedCloudPreferences({
+    required AppSession session,
+  }) async {
+    final revision = _revisions[session.phoneNumber] ?? 0;
+    final data = await _readPreferences(session, cacheOnly: true);
+    if (data['contacts'] is! List) return;
+    await _applyRefreshedContacts(
+      session,
+      _parseContacts(data['contacts']),
+      revision,
+    );
+  }
+
+  Future<void> _applyRefreshedContacts(
+    AppSession session,
+    List<EmergencyContact> contacts,
+    int revision,
+  ) async {
+    final owner = session.phoneNumber;
+    await _withLocalLock(owner, () async {
+      final pending = await _resolvedLocalDatabase.loadLocalPreference(
+        ownerPhoneNumber: owner,
+        key: pendingPreferenceKey,
+      );
+      if ((_revisions[owner] ?? 0) != revision || pending is Map) {
+        return;
+      }
+      final current = await loadCachedEmergencyContacts(session: session);
+      if (stableContentHash(current.map((c) => c.toFirestore()).toList()) ==
+          stableContentHash(contacts.map((c) => c.toFirestore()).toList())) {
+        return;
+      }
+      await _resolvedLocalDatabase.saveEmergencyContacts(
+        phoneNumber: owner,
+        contacts: contacts,
+      );
+      _emit(owner, contacts);
+    });
+  }
+
+  Future<List<EmergencyContact>> _refreshEmergencyContacts(
+    AppSession session,
+  ) async {
     final owner = session.phoneNumber;
     final revision = _revisions[owner] ?? 0;
     final pending = await _resolvedLocalDatabase.loadLocalPreference(
@@ -161,17 +260,8 @@ class EmergencyContactsRepository {
     try {
       final contacts = await fetchCloudContacts(session).timeout(_cloudTimeout);
       if (contacts == null) return localContacts;
-      return await _withLocalLock(owner, () async {
-        if ((_revisions[owner] ?? 0) != revision) {
-          return loadCachedEmergencyContacts(session: session);
-        }
-        await _resolvedLocalDatabase.saveEmergencyContacts(
-          phoneNumber: owner,
-          contacts: contacts,
-        );
-        _emit(owner, contacts);
-        return contacts;
-      });
+      await _applyRefreshedContacts(session, contacts, revision);
+      return loadCachedEmergencyContacts(session: session);
     } catch (_) {
       return loadCachedEmergencyContacts(session: session);
     }
@@ -197,8 +287,13 @@ class EmergencyContactsRepository {
   /// Fetches cloud contacts.
   @protected
   Future<List<EmergencyContact>?> fetchCloudContacts(AppSession session) async {
-    final data = (await _userDocumentFor(session).get()).data();
-    final raw = data?['sos_contacts'];
+    final paused = _readCache.isRevalidationPausedFor(session.phoneNumber);
+    final data = await _readPreferences(
+      session,
+      force: !paused,
+      registerOnly: paused,
+    );
+    final raw = data['contacts'];
     return raw is Iterable ? _parseContacts(raw) : null;
   }
 
@@ -228,6 +323,11 @@ class EmergencyContactsRepository {
     );
     if (current is! Map || current['revision'] != pending['revision']) return;
     await pushCloudContacts(session, contacts).timeout(_cloudTimeout);
+    await _readCache.invalidate(
+      owner: session.phoneNumber,
+      type: 'mobile_sos_preferences',
+      id: 'current',
+    );
     await _withLocalLock(session.phoneNumber, () async {
       final latest = await _resolvedLocalDatabase.loadLocalPreference(
         ownerPhoneNumber: session.phoneNumber,

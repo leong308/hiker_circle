@@ -59,6 +59,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
       readSession: () => widget.session,
       effectSaveProfile: _saveProfile,
       effectShowChoiceEditor: _showChoiceEditor,
+      readIsSaving: () => _isSaving,
     )..addListener(_renderScreenModel);
     _screenModel.effectPresentEditResidentialCityEffect1 =
         _presentEditResidentialCityEffect1;
@@ -76,13 +77,18 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
     _profileFuture = _ProfileDetailsPageDataActions.loadProfile(_repository)(
       widget.session,
     );
+    _screenModel.commandWatchCachedProfile();
   }
 
   /// Delegates retry to the ViewModel.
   void _retry() => _screenModel.commandRetry();
 
   /// Preview and crop the selected image before persisting it as the account profile photo.
-  Future<void> _changePhoto(OnboardingProfile profile) async {
+  Future<void> _changePhoto(OnboardingProfile profile) => _screenModel
+      .commandWithProfileEditor(() => _changePhotoFromDevice(profile));
+
+  Future<void> _changePhotoFromDevice(OnboardingProfile profile) async {
+    if (!_screenModel.canEditProfile) return;
     try {
       final file = await _imagePicker.pickImage(
         source: ImageSource.gallery,
@@ -90,7 +96,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
         maxWidth: 1024,
         maxHeight: 1024,
       );
-      if (file == null || !mounted) return;
+      if (file == null || !mounted || !_screenModel.canEditProfile) return;
       if (await file.length() > 10 * 1024 * 1024) {
         throw const HikerCircleFirebaseRepositoryException(
           'Profile photos must be 10 MB or smaller.',
@@ -99,7 +105,9 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
       final bytes = await file.readAsBytes();
       if (!mounted) return;
       final croppedBytes = await _presentChangePhotoEffect1(bytes);
-      if (croppedBytes == null || !mounted) return;
+      if (croppedBytes == null || !mounted || !_screenModel.canEditProfile) {
+        return;
+      }
       setState(() => _isSaving = true);
       final url =
           await _ProfileDetailsPageDataActions.uploadProfilePhoto(
@@ -110,7 +118,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
             fileName: 'profile_photo.png',
             contentType: 'image/png',
           );
-      if (!mounted) return;
+      if (!mounted || !_screenModel.canEditProfile) return;
       final updated = profile.copyWith(photoURL: url);
       await _ProfileDetailsPageDataActions.saveProfile(_repository)(
         session: widget.session,
@@ -143,15 +151,21 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
 
   /// Delegates edit experience to the ViewModel.
   Future<void> _editExperience(OnboardingProfile profile) =>
-      _screenModel.commandEditExperience(profile);
+      _screenModel.commandWithProfileEditor(
+        () => _screenModel.commandEditExperience(profile),
+      );
 
   /// Delegates edit frequency to the ViewModel.
   Future<void> _editFrequency(OnboardingProfile profile) =>
-      _screenModel.commandEditFrequency(profile);
+      _screenModel.commandWithProfileEditor(
+        () => _screenModel.commandEditFrequency(profile),
+      );
 
   /// Delegates edit residential city to the ViewModel.
   Future<void> _editResidentialCity(OnboardingProfile profile) =>
-      _screenModel.commandEditResidentialCity(profile);
+      _screenModel.commandWithProfileEditor(
+        () => _screenModel.commandEditResidentialCity(profile),
+      );
 
   /// Shows choice editor.
   Future<String?> _showChoiceEditor({
@@ -199,7 +213,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
 
   /// Saves profile.
   Future<OnboardingProfile?> _saveProfile(OnboardingProfile profile) async {
-    if (_isSaving) {
+    if (_isSaving || !_screenModel.canEditProfile) {
       return null;
     }
     setState(() {
@@ -210,7 +224,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
         session: widget.session,
         profile: profile,
       );
-      if (!mounted) {
+      if (!mounted || !_screenModel.canEditProfile) {
         return null;
       }
       setState(() {

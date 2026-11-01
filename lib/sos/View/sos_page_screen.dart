@@ -105,7 +105,10 @@ class _SosPageState extends State<SosPage> {
   int _handledManualSosRequestId = 0;
   int _handledImmediateSosRequestId = 0;
 
-  Map<SosAlertMode, String> _customWhatsAppNotes = _defaultWhatsAppNotes();
+  Map<SosAlertMode, String> get _customWhatsAppNotes => {
+    ..._defaultWhatsAppNotes(),
+    ...viewModel.customWhatsAppNotes,
+  };
 
   Timer? _nearbySosRefreshTimer;
   StreamSubscription<NetworkReachabilitySnapshot>? _networkSubscription;
@@ -240,15 +243,6 @@ class _SosPageState extends State<SosPage> {
   /// Loads custom whats app notes.
   Future<void> _loadCustomWhatsAppNotes() async {
     await viewModel.loadCustomWhatsAppNotes();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _customWhatsAppNotes = {
-        ..._defaultWhatsAppNotes(),
-        ...viewModel.customWhatsAppNotes,
-      };
-    });
   }
 
   /// Delegates load emergency contacts and flush queue to the ViewModel.
@@ -545,12 +539,6 @@ class _SosPageState extends State<SosPage> {
                       latestResult: viewModel.latestSosAlertResult,
                       customWhatsAppNotes: _customWhatsAppNotes,
                       onCustomWhatsAppNoteChanged: (mode, note) {
-                        setState(() {
-                          _customWhatsAppNotes = {
-                            ..._customWhatsAppNotes,
-                            mode: note,
-                          };
-                        });
                         unawaited(
                           viewModel
                               .saveCustomWhatsAppNote(mode: mode, note: note)

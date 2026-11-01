@@ -1,5 +1,6 @@
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../Model/hike_session_models.dart';
+import '../../core/services/content_hash.dart';
 
 /// Serializes active-hike configuration writes and resolves the draft at execution
 /// time. A newer choice is reconciled before a pending request releases the queue.
@@ -22,7 +23,7 @@ class ActiveHikeCloudSyncCoordinator {
   final void Function(ActiveHikeSession) onSynchronized;
 
   Future<void> _tail = Future<void>.value();
-  ({String sessionId, bool sharing, int seconds})? _lastSynchronized;
+  String? _lastSynchronized;
 
   /// Computes invalidate.
   void invalidate() => _lastSynchronized = null;
@@ -66,10 +67,7 @@ class ActiveHikeCloudSyncCoordinator {
       if (current == null || current.sessionId != expectedSessionId) {
         return null;
       }
-      if (current.draft.shareLiveLocation !=
-              submitted.draft.shareLiveLocation ||
-          current.draft.locationRecordingInterval !=
-              submitted.draft.locationRecordingInterval) {
+      if (_configurationHash(current) != _configurationHash(submitted)) {
         // Keep ownership of the queue until the latest choice is acknowledged.
         continue;
       }
@@ -80,11 +78,13 @@ class ActiveHikeCloudSyncCoordinator {
   }
 
   /// Computes key.
-  ({String sessionId, bool sharing, int seconds}) _key(
-    ActiveHikeSession hike,
-  ) => (
-    sessionId: hike.sessionId,
-    sharing: hike.draft.shareLiveLocation,
-    seconds: hike.draft.locationRecordingInterval.inSeconds,
-  );
+  String _configurationHash(ActiveHikeSession hike) => stableContentHash({
+    'sharing': hike.draft.shareLiveLocation,
+    'seconds': hike.draft.locationRecordingInterval.inSeconds,
+  });
+
+  String _key(ActiveHikeSession hike) => stableContentHash({
+    'sessionId': hike.sessionId,
+    'configuration': _configurationHash(hike),
+  });
 }

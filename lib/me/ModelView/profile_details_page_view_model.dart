@@ -7,8 +7,10 @@ class _ProfileDetailsPageStateViewModel extends ChangeNotifier {
     required this.readSession,
     required this.effectSaveProfile,
     required this.effectShowChoiceEditor,
+    required this.readIsSaving,
   });
   final AppSession Function() readSession;
+  final bool Function() readIsSaving;
   final Future<OnboardingProfile?> Function(OnboardingProfile profile)
   effectSaveProfile;
   final Future<String?> Function({
@@ -31,11 +33,98 @@ class _ProfileDetailsPageStateViewModel extends ChangeNotifier {
   late final OnboardingRepository stateRepository;
 
   late Future<OnboardingProfile> stateProfileFuture;
+  StreamSubscription<CacheResourceUpdate>? _cacheChanges;
+  int _editorDepth = 0;
+  int _cacheReadRevision = 0;
+  bool _needsCacheRefresh = false;
+  bool _profileRevoked = false;
+  bool get canEditProfile => mounted && !_profileRevoked;
+
+  void commandWatchCachedProfile() {
+    _cacheChanges = stateRepository.cachedReadUpdates.listen((change) {
+      if (!mounted ||
+          change.owner != readSession().phoneNumber ||
+          change.type != 'profile') {
+        return;
+      }
+      if (change.revoked) {
+        _profileRevoked = true;
+        _cacheReadRevision++;
+        _needsCacheRefresh = false;
+        final unavailable = Future<OnboardingProfile>.error(
+          const OnboardingRepositoryException(
+            'Your profile is unavailable. Reconnect and retry, or sign in again.',
+          ),
+        );
+        // FutureBuilder will display it on the next frame; mark it handled now.
+        unavailable.ignore();
+        _publish(() => stateProfileFuture = unavailable);
+        return;
+      }
+      if (change.invalidated) return;
+      _profileRevoked = false;
+      _needsCacheRefresh = true;
+      unawaited(_applyCachedProfile());
+    });
+  }
+
+  Future<T> commandWithProfileEditor<T>(Future<T> Function() action) async {
+    _editorDepth++;
+    _cacheReadRevision++;
+    try {
+      return await action();
+    } finally {
+      _editorDepth--;
+      if (mounted && _needsCacheRefresh) unawaited(_applyCachedProfile());
+    }
+  }
+
+  Future<void> _applyCachedProfile() async {
+    if (!mounted ||
+        _profileRevoked ||
+        !_needsCacheRefresh ||
+        _editorDepth > 0 ||
+        readIsSaving()) {
+      return;
+    }
+    _needsCacheRefresh = false;
+    final session = readSession();
+    final revision = ++_cacheReadRevision;
+    try {
+      final profile = await stateRepository.loadProfile(
+        session,
+        cacheOnly: true,
+      );
+      if (!mounted ||
+          session.phoneNumber != readSession().phoneNumber ||
+          revision != _cacheReadRevision ||
+          _profileRevoked ||
+          _editorDepth > 0 ||
+          readIsSaving()) {
+        return;
+      }
+      _publish(() => stateProfileFuture = Future.value(profile));
+    } catch (_) {
+      // Keep the visible profile when its downloaded copy is unavailable.
+    }
+  }
 
   /// Retries.
   void commandRetry() {
+    final session = readSession();
+    final revision = ++_cacheReadRevision;
+    final refreshed = () async {
+      final profile = await stateRepository.loadProfile(session, force: true);
+      if (mounted &&
+          session.phoneNumber == readSession().phoneNumber &&
+          revision == _cacheReadRevision) {
+        _profileRevoked = false;
+      }
+      return profile;
+    }();
+    refreshed.ignore();
     _publish(() {
-      stateProfileFuture = stateRepository.loadProfile(readSession());
+      stateProfileFuture = refreshed;
     });
   }
 
@@ -49,7 +138,7 @@ class _ProfileDetailsPageStateViewModel extends ChangeNotifier {
         ('experienced', 'Experienced hiker'),
       ],
     );
-    if (value != null) {
+    if (value != null && mounted && !_profileRevoked) {
       await effectSaveProfile(profile.copyWith(hikerExperience: value));
     }
   }
@@ -66,7 +155,7 @@ class _ProfileDetailsPageStateViewModel extends ChangeNotifier {
         ('weekly', 'Weekly or more'),
       ],
     );
-    if (value != null) {
+    if (value != null && mounted && !_profileRevoked) {
       await effectSaveProfile(profile.copyWith(hikeFrequency: value));
     }
   }
@@ -75,6 +164,7 @@ class _ProfileDetailsPageStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_cacheChanges?.cancel());
     super.dispose();
   }
 
@@ -86,7 +176,7 @@ class _ProfileDetailsPageStateViewModel extends ChangeNotifier {
   /// Computes edit residential city.
   Future<void> commandEditResidentialCity(OnboardingProfile profile) async {
     final selection = await effectPresentEditResidentialCityEffect1(profile);
-    if (selection == null || !mounted) {
+    if (selection == null || !mounted || _profileRevoked) {
       return;
     }
     await effectSaveProfile(

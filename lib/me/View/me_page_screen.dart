@@ -121,6 +121,7 @@ class _MePageState extends State<MePage> {
     onboardingRepository = OnboardingRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    _screenModel.commandWatchCachedReads();
     achievementsFuture = _loadProfileAchievements();
     _achievementChanges = AchievementNotificationEvents.changes.listen((owner) {
       if (owner == widget.session.phoneNumber) {
@@ -1050,7 +1051,9 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
   final SosDeviceAlertService _deviceAlertService =
       const SosDeviceAlertService();
 
-  bool _isSavingTimeZone = false;
+  bool get _isSavingTimeZone => _screenModel.stateIsSavingTimeZone;
+  set _isSavingTimeZone(bool value) =>
+      _screenModel.commandSetTimeZoneSaving(value);
 
   /// Delegates set private unlock to the ViewModel.
   Future<void> _setPrivateUnlock(bool enabled) =>
@@ -1076,6 +1079,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
         _confirmDisableHapticFeedback;
 
     _settings.addListener(_handleSettingsChanged);
+    _screenModel.commandWatchCachedPreferences();
     unawaited(
       LocationUpdateIntervalController.instance.loadForUser(
         widget.session.phoneNumber,

@@ -6,6 +6,8 @@ abstract final class _HikeHistoryPageDataActions {
   static Future<ExpiredHikesPage> Function({
     ExpiredHikesCursor? cursor,
     int limit,
+    bool force,
+    bool cacheOnly,
     required String ownerPhoneNumber,
   })
   loadPage(ExpiredHikesRepository receiver) => receiver.loadPage;

@@ -226,6 +226,24 @@
       "collectionGroup": "upcomingHikes",
       "queryScope": "COLLECTION",
       "fields": [
+        {"fieldPath": "creatorUserId", "order": "ASCENDING"},
+        {"fieldPath": "departureTimeLocal", "order": "ASCENDING"},
+        {"fieldPath": "__name__", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "upcomingHikes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "participantPhones", "arrayConfig": "CONTAINS"},
+        {"fieldPath": "departureTimeLocal", "order": "ASCENDING"},
+        {"fieldPath": "__name__", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "upcomingHikes",
+      "queryScope": "COLLECTION",
+      "fields": [
         {
           "fieldPath": "creatorUserId",
           "order": "ASCENDING"

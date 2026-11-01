@@ -189,6 +189,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     unawaited(_markChatAsRead());
     _monitorConnectivity();
     _loadPending();
+    _screenModel.commandWatchCachedPreferences();
     unawaited(_loadNotificationSettings());
     _timeRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
@@ -391,6 +392,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     setState(() {
       _isSavingNotificationSettings = true;
     });
+    _screenModel.commandBeginPreferenceWrite();
     try {
       await _GroupChatDetailPageDataActions.setGroupChatMutedUntil(
         widget.repository,
@@ -429,6 +431,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
           );
       }
     } finally {
+      _screenModel.commandEndPreferenceWrite();
       if (mounted) {
         setState(() {
           _isSavingNotificationSettings = false;

@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/loading_toast.dart';
@@ -69,7 +68,7 @@ class _FeedbackInboxPageState extends State<FeedbackInboxPage> {
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: FeedbackStyle.background(context),
     body: SafeArea(
-      child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      child: StreamBuilder<List<FeedbackReport>>(
         key: ValueKey(_model.revision),
         stream: _model.reports,
         builder: (context, snapshot) {

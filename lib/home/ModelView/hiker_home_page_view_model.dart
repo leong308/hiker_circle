@@ -746,68 +746,112 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
       return;
     }
     stateIsReconnectSyncRunning = true;
+    final requestedSession = readSession();
     try {
-      await Future.wait<void>([
-        commandRunReconnectStep(
-          'upcoming hike plans',
-          () => stateHikerCircleRepository.flushPendingUpcomingHikes(
-            session: readSession(),
-          ),
-        ),
-        commandRunReconnectStep(
-          'emergency contacts',
-          commandLoadEmergencyContacts,
-        ),
-        commandRunReconnectStep(
-          'pending sharing stop',
-          LiveLocationSharingService.instance.retryPendingStop,
-        ),
-        commandRunReconnectStep(
-          'SOS message notes',
-          () => stateSosAlertRepository.flushPendingCustomWhatsAppNotes(
-            session: readSession(),
-          ),
-        ),
-        commandRunReconnectStep('nearby SOS forwarding', () async {
-          final events = await stateNearbySosEventRepository.load(
-            ownerPhoneNumber: readSession().phoneNumber,
-            limit: 50,
-          );
-          final now = DateTime.now().toUtc();
-          for (final event in events.where(
-            (event) => event.ageAt(now) <= const Duration(hours: 1),
-          )) {
-            if (!mounted) {
-              return;
-            }
-            await stateHikerCircleRepository.forwardNearbySosIncident(
-              event: event,
-            );
+      await stateHikerCircleRepository.reconcileCachedReadsAfter(
+        session: requestedSession,
+        synchronizePending: () async {
+          await Future.wait<void>([
+            commandRunReconnectStep(
+              'upcoming hike plans',
+              () => stateHikerCircleRepository.flushPendingUpcomingHikes(
+                session: requestedSession,
+              ),
+            ),
+            commandRunReconnectStep(
+              'achievement event reconciliation',
+              () => stateHikerCircleRepository
+                  .synchronizeHistoricalAchievementProgress(
+                    session: requestedSession,
+                  ),
+            ),
+            commandRunReconnectStep(
+              'emergency contacts',
+              () => stateEmergencyContactsRepository
+                  .flushPendingEmergencyContacts(session: requestedSession),
+            ),
+            commandRunReconnectStep(
+              'pending sharing stop',
+              LiveLocationSharingService.instance.retryPendingStop,
+            ),
+            commandRunReconnectStep(
+              'SOS message notes',
+              () => stateSosAlertRepository.flushPendingCustomWhatsAppNotes(
+                session: requestedSession,
+              ),
+            ),
+            commandRunReconnectStep('nearby SOS forwarding', () async {
+              final events = await stateNearbySosEventRepository.load(
+                ownerPhoneNumber: requestedSession.phoneNumber,
+                limit: 50,
+              );
+              final now = DateTime.now().toUtc();
+              for (final event in events.where(
+                (event) => event.ageAt(now) <= const Duration(hours: 1),
+              )) {
+                if (!mounted ||
+                    readSession().phoneNumber != requestedSession.phoneNumber) {
+                  return;
+                }
+                await stateHikerCircleRepository.forwardNearbySosIncident(
+                  event: event,
+                );
+              }
+            }),
+            commandRunReconnectStep(
+              'chat messages',
+              () => stateHikerCircleRepository.flushPendingMessages(
+                ownerPhoneNumber: requestedSession.phoneNumber,
+              ),
+            ),
+            commandRunReconnectStep(
+              'offline changes',
+              () => stateHikerCircleRepository.flushSyncOutbox(
+                session: requestedSession,
+              ),
+            ),
+            commandRunReconnectStep(
+              'ended hikes',
+              () => stateHikerCircleRepository.flushPendingHikeEnds(
+                session: requestedSession,
+              ),
+            ),
+          ]);
+        },
+        recoverLive: () async {
+          if (!mounted ||
+              readSession().phoneNumber != requestedSession.phoneNumber) {
+            return;
           }
-        }),
-        commandRunReconnectStep(
-          'chat messages',
-          () => stateHikerCircleRepository.flushPendingMessages(
-            ownerPhoneNumber: readSession().phoneNumber,
-          ),
-        ),
-        commandRunReconnectStep(
-          'offline changes',
-          () => stateHikerCircleRepository.flushSyncOutbox(
-            session: readSession(),
-          ),
-        ),
-        commandRunReconnectStep(
-          'ended hikes',
-          () => stateHikerCircleRepository.flushPendingHikeEnds(
-            session: readSession(),
-          ),
-        ),
-        commandRunReconnectStep(
-          'active hike recovery',
-          effectRecoverActiveHikeAfterReconnect,
-        ),
-      ]);
+          await commandRunReconnectStep(
+            'active hike recovery',
+            effectRecoverActiveHikeAfterReconnect,
+          );
+        },
+      );
+      if (!mounted ||
+          readSession().phoneNumber != requestedSession.phoneNumber) {
+        return;
+      }
+      await commandRunReconnectStep("cached emergency preferences", () async {
+        await stateEmergencyContactsRepository.applyCachedCloudPreferences(
+          session: requestedSession,
+        );
+        await stateSosAlertRepository.loadCustomWhatsAppNotes(
+          session: requestedSession,
+          cacheOnly: true,
+        );
+        final contacts = await stateEmergencyContactsRepository
+            .loadCachedEmergencyContacts(session: requestedSession);
+        if (mounted &&
+            readSession().phoneNumber == requestedSession.phoneNumber) {
+          _publish(() => stateEmergencyContacts = contacts);
+        }
+      });
+    } catch (error) {
+      debugPrint(
+        'Reconnect cache validation remains pending: ${error.runtimeType}',
+      );
     } finally {
       stateIsReconnectSyncRunning = false;
     }
@@ -863,7 +907,9 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
     Future<dynamic> Function() action,
   ) async {
     try {
-      await action().timeout(const Duration(seconds: 15));
+      // Repositories bound individual network attempts. Do not let an outer
+      // queue timeout release read validation while its writes are still running.
+      await action();
     } catch (error) {
       debugPrint('Reconnect $label synchronization will retry: $error');
     }

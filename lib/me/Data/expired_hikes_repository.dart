@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../app/Data/conditional_cloud_cache.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../Model/expired_hike_eligibility.dart';
@@ -101,15 +102,30 @@ class ExpiredHikesRepository {
   ExpiredHikesRepository({
     FirebaseFunctions? functions,
     LocalSessionDatabase? localDatabase,
+    ConditionalCloudCache? cache,
+    String? Function()? currentOwner,
     Duration cloudTimeout = const Duration(seconds: 8),
     DateTime Function()? now,
   }) : _functions = functions,
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
+       _providedCache = cache,
+       _currentOwner = currentOwner,
        _cloudTimeout = cloudTimeout,
        _now = now ?? DateTime.now;
 
   final FirebaseFunctions? _functions;
   final LocalSessionDatabase _localDatabase;
+  final ConditionalCloudCache? _providedCache;
+  final String? Function()? _currentOwner;
+  late final ConditionalCloudCache _cache =
+      _providedCache ??
+      ConditionalCloudCache(
+        _localDatabase,
+        () => _functions ?? FirebaseFunctions.instance,
+        currentOwner: _currentOwner,
+        request: (_, request) =>
+            fetchCloudPage(Map<String, dynamic>.from(request)),
+      );
   final Duration _cloudTimeout;
   final DateTime Function() _now;
 
@@ -118,9 +134,31 @@ class ExpiredHikesRepository {
     required String ownerPhoneNumber,
     ExpiredHikesCursor? cursor,
     int limit = 30,
+    bool force = false,
+    bool cacheOnly = false,
   }) async {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty) return const ExpiredHikesPage(hikes: []);
+    final arguments = <String, Object?>{
+      'limit': limit.clamp(1, 200),
+      if (cursor != null) 'cursor': cursor.toMap(),
+    };
+    final pageKey = jsonEncode({
+      'limit': limit.clamp(1, 200),
+      'cursor': cursor?.toMap(),
+    });
+    Future<Map<String, dynamic>> read({bool onlyLocal = false}) => _cache.read(
+      owner: owner,
+      type: 'expired_hike_history_page',
+      id: pageKey,
+      callable: 'listExpiredScheduledHikes',
+      arguments: arguments,
+      freshness: const Duration(minutes: 2),
+      force: force && !onlyLocal && !cacheOnly,
+      cacheOnly: cacheOnly || onlyLocal,
+    );
+    // The cache checks the current account even for a local-only read.
+    final cached = await read(onlyLocal: true);
     final localExpired = <UpcomingHike>[];
     final consumedIds = <String>{};
     try {
@@ -170,54 +208,26 @@ class ExpiredHikesRepository {
       );
     }
 
-    final pageKey = jsonEncode({
-      'limit': limit.clamp(1, 200),
-      'cursor': cursor?.toMap(),
-    });
-    LocalCachedEntity? cached;
     try {
-      cached = await _localDatabase.loadCachedEntity(
-        ownerPhoneNumber: owner,
-        entityType: 'expired_hike_history_page',
-        entityId: pageKey,
-        includeExpired: true,
-      );
-    } catch (_) {
-      // An unavailable local cache must not prevent loading cloud history.
-    }
-    try {
-      final data = await fetchCloudPage({
-        'limit': limit.clamp(1, 200),
-        if (cursor != null) 'cursor': cursor.toMap(),
-      }).timeout(_cloudTimeout);
+      final data = await read();
       if (data['ownerPhoneNumber'] != owner) {
         throw const FormatException('The history belongs to another account.');
       }
-      final page = ExpiredHikesPage.fromMap(data, now: _now());
-      try {
-        await _localDatabase.saveCachedEntity(
-          LocalCachedEntity(
-            ownerPhoneNumber: owner,
-            entityType: 'expired_hike_history_page',
-            entityId: pageKey,
-            parentId: '',
-            payload: data,
-            cachedAt: DateTime.now().toUtc(),
-          ),
-        );
-      } catch (_) {
-        // Successfully loaded history is still usable if caching fails.
-      }
+      final page = ExpiredHikesPage.fromMap(
+        data,
+        now: _now(),
+        isFromCache:
+            cacheOnly ||
+            (cached.isNotEmpty && data['contentHash'] == cached['contentHash']),
+      );
       return mergeLocal(page);
     } catch (_) {
-      if (cached != null) {
+      // Recheck owner after the failed request before returning any device copy.
+      final fallback = await read(onlyLocal: true);
+      if (fallback.isNotEmpty && fallback['ownerPhoneNumber'] == owner) {
         try {
           return mergeLocal(
-            ExpiredHikesPage.fromMap(
-              cached.payload,
-              isFromCache: true,
-              now: _now(),
-            ),
+            ExpiredHikesPage.fromMap(fallback, isFromCache: true, now: _now()),
           );
         } catch (_) {}
       }

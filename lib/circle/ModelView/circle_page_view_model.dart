@@ -70,6 +70,28 @@ class _CirclePageStateViewModel extends ChangeNotifier {
   StreamSubscription<List<GroupChat>>? stateChatsSubscription;
 
   StreamSubscription<BuddyRelationships>? stateBuddyRequestsSubscription;
+  ChatPreferenceCacheObserver? _preferenceCache;
+  int _pinReadGeneration = 0;
+
+  void commandWatchCachedPreferences() {
+    _preferenceCache?.dispose();
+    final owner = readSession().phoneNumber;
+    _preferenceCache = ChatPreferenceCacheObserver(
+      owner: owner,
+      readOwner: () => readSession().phoneNumber,
+      changes: readHikerCircleRepository().cachedReadUpdates,
+      readCached: () => readHikerCircleRepository().readMobileSnapshot(
+        owner: owner,
+        resourceType: 'preferences',
+        cacheOnly: true,
+      ),
+      onChanged: (preferences) {
+        if (!mounted) return;
+        _pinReadGeneration++;
+        _publish(() => statePinnedChatIds = Set.of(preferences.pinnedChatIds));
+      },
+    );
+  }
 
   /// Returns command is admin.
   bool get commandIsAdmin => readSession().isAdmin;
@@ -198,11 +220,18 @@ class _CirclePageStateViewModel extends ChangeNotifier {
 
   /// Loads pinned chats.
   Future<void> commandLoadPinnedChats() async {
+    final generation = ++_pinReadGeneration;
+    final owner = readSession().phoneNumber;
     try {
       final pinned = await readHikerCircleRepository().loadPinnedChats(
         session: readSession(),
       );
-      if (!mounted) return;
+      if (!mounted ||
+          owner != readSession().phoneNumber ||
+          generation != _pinReadGeneration ||
+          statePinUpdateGeneration.isNotEmpty) {
+        return;
+      }
       _publish(() => statePinnedChatIds = pinned);
     } catch (_) {
       // Pin state can be retried by reopening Circle.
@@ -211,6 +240,8 @@ class _CirclePageStateViewModel extends ChangeNotifier {
 
   /// Computes pin chat.
   void commandPinChat(GroupChat chat) {
+    _pinReadGeneration++;
+    _preferenceCache?.beginWrite();
     final isPinned = statePinnedChatIds.contains(chat.id);
     final desiredPinned = !isPinned;
     final generation = (statePinUpdateGeneration[chat.id] ?? 0) + 1;
@@ -257,6 +288,7 @@ class _CirclePageStateViewModel extends ChangeNotifier {
         statePinUpdateGeneration.remove(chat.id);
         statePinWriteChains.remove(chat.id);
       }
+      _preferenceCache?.endWrite();
     }
   }
 
@@ -473,6 +505,7 @@ class _CirclePageStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _preferenceCache?.dispose();
     super.dispose();
   }
 
@@ -846,14 +879,50 @@ class _CircleSettingsPageStateViewModel extends ChangeNotifier {
   bool stateGroupChatNotificationsEnabled = true;
 
   bool stateIsLoadingGroupChatSetting = true;
+  ChatPreferenceCacheObserver? _preferenceCache;
+  int _preferenceReadGeneration = 0;
+
+  void commandWatchCachedPreferences() {
+    _preferenceCache?.dispose();
+    final owner = readSession().phoneNumber;
+    _preferenceCache = ChatPreferenceCacheObserver(
+      owner: owner,
+      readOwner: () => readSession().phoneNumber,
+      changes: readRepository().cachedReadUpdates,
+      readCached: () => readRepository().readMobileSnapshot(
+        owner: owner,
+        resourceType: 'preferences',
+        cacheOnly: true,
+      ),
+      onChanged: (preferences) {
+        if (!mounted) return;
+        _preferenceReadGeneration++;
+        _publish(() {
+          stateGroupChatNotificationsEnabled = preferences.notificationsEnabled;
+          stateIsLoadingGroupChatSetting = false;
+        });
+      },
+    );
+  }
+
+  void commandBeginPreferenceWrite() {
+    _preferenceReadGeneration++;
+    _preferenceCache?.beginWrite();
+  }
+
+  void commandEndPreferenceWrite() => _preferenceCache?.endWrite();
 
   /// Loads group chat notification setting.
   Future<void> commandLoadGroupChatNotificationSetting() async {
+    final generation = ++_preferenceReadGeneration;
+    final owner = readSession().phoneNumber;
     try {
       final enabled = await readRepository().loadGroupChatNotificationsEnabled(
         session: readSession(),
       );
-      if (!mounted) {
+      if (!mounted ||
+          owner != readSession().phoneNumber ||
+          generation != _preferenceReadGeneration) {
         return;
       }
       _publish(() {
@@ -862,7 +931,7 @@ class _CircleSettingsPageStateViewModel extends ChangeNotifier {
     } catch (_) {
       // Keep the safe enabled default when the setting cannot be loaded.
     } finally {
-      if (mounted) {
+      if (mounted && generation == _preferenceReadGeneration) {
         _publish(() {
           stateIsLoadingGroupChatSetting = false;
         });
@@ -874,6 +943,7 @@ class _CircleSettingsPageStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _preferenceCache?.dispose();
     super.dispose();
   }
 }
