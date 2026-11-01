@@ -1,5 +1,10 @@
 // AdminPage routes administrator management, analytics and device debugging sections.
 import '../core/widgets/section_label.dart';
+import 'Data/admin_safety_repository.dart';
+import 'ModelView/admin_safety_view_model.dart';
+import 'View/admin_safety_section.dart';
+import '../achievements/View/achievement_editor_sheet.dart';
+import '../achievements/Model/achievement_catalog.dart';
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -17,6 +22,7 @@ import '../sos/Data/location_snapshot_service.dart';
 import 'View/button_debugging_page.dart';
 import 'View/admin_ui.dart';
 import 'View/admin_analytics_dashboard.dart';
+import 'View/recorded_trail_requests_page.dart';
 import '../app/Data/local_session_database.dart';
 
 part 'View/admin_page_screen.dart';

@@ -69,7 +69,7 @@ class _AdminPageState extends State<AdminPage> {
         firebaseBootstrapResult: widget.firebaseBootstrapResult,
       );
 
-  List<Map<String, dynamic>> _hazardReports = const [];
+  late final AdminSafetyViewModel _safetyModel;
   List<Map<String, dynamic>> _achievements = const [];
   bool _isLoading = false;
 
@@ -118,6 +118,12 @@ class _AdminPageState extends State<AdminPage> {
   /// Selects section.
   void _selectSection(AdminSection section) {
     if (_pageScroll.hasClients) _pageScroll.jumpTo(0);
+    _safetyModel.setQuery('');
+    if (section == AdminSection.hazards &&
+        !_safetyModel.hasData &&
+        !_safetyModel.loading) {
+      unawaited(_safetyModel.refresh());
+    }
     setState(() {
       _selectedSection = section;
       _search = '';
@@ -136,6 +142,8 @@ class _AdminPageState extends State<AdminPage> {
   @override
   void dispose() {
     _pageScroll.dispose();
+    _safetyModel.removeListener(_renderScreenModel);
+    _safetyModel.dispose();
 
     _screenModel.removeListener(_renderScreenModel);
     _screenModel.dispose();
@@ -151,6 +159,9 @@ class _AdminPageState extends State<AdminPage> {
       effectShowSnack: _showSnack,
     )..addListener(_renderScreenModel);
 
+    _safetyModel = AdminSafetyViewModel(
+      repository: FirebaseAdminSafetyRepository(_repository, widget.session),
+    )..addListener(_renderScreenModel);
     _selectedSection = widget.initialSection;
     if (widget.session.isAdmin) unawaited(_loadAdminData());
   }
@@ -160,7 +171,7 @@ class _AdminPageState extends State<AdminPage> {
   Future<void> _loadAdminData() async {
     if (!widget.session.isAdmin) return;
     final revision = ++_adminDataRevision;
-    const sections = {AdminSection.hazards, AdminSection.rewards};
+    const sections = {AdminSection.rewards};
     setState(() {
       _isLoading = true;
       _loadingSections.addAll(sections);
@@ -168,14 +179,8 @@ class _AdminPageState extends State<AdminPage> {
     });
     await Future.wait<void>([
       _loadAnalytics(forceRefresh: _analytics != null),
-      _loadSection(
-        AdminSection.hazards,
-        revision,
-        () => _AdminPageDataActions.loadAdminHazardReports(_repository)(
-          session: widget.session,
-        ),
-        (data) => _hazardReports = data,
-      ),
+      if (_selectedSection == AdminSection.hazards || _safetyModel.hasData)
+        _safetyModel.refresh(),
       _loadSection(
         AdminSection.rewards,
         revision,
@@ -254,6 +259,15 @@ class _AdminPageState extends State<AdminPage> {
           ? 'Statistics have not loaded yet.'
           : 'Statistics loaded from the server.';
     }
+    if (_selectedSection == AdminSection.hazards) {
+      return _safetyModel.loading
+          ? 'Connecting to safety reports…'
+          : _safetyModel.error != null
+          ? 'Live updates unavailable · retry below'
+          : _safetyModel.hasData
+          ? 'Community reports · expiry updates automatically'
+          : 'Safety reports have not loaded yet';
+    }
     if (_selectedSection == AdminSection.tools) {
       return 'Administrator workspace';
     }
@@ -269,25 +283,6 @@ class _AdminPageState extends State<AdminPage> {
     return loaded == null
         ? 'Records have not loaded yet'
         : 'Updated at ${loaded.hour.toString().padLeft(2, '0')}:${loaded.minute.toString().padLeft(2, '0')}';
-  }
-
-  /// Computes review hazard.
-  Future<void> _reviewHazard(
-    Map<String, dynamic> report, {
-    required bool approved,
-  }) async {
-    await _runAdminAction(
-      successMessage: approved
-          ? 'Hazard report approved.'
-          : 'Hazard report rejected.',
-      action: () async {
-        await _AdminPageDataActions.reviewHazardReport(_repository)(
-          session: widget.session,
-          report: report,
-          approved: approved,
-        );
-      },
-    );
   }
 
   /// Wait for the mutation and refreshed server state before showing an administrator success message.
@@ -315,6 +310,19 @@ class _AdminPageState extends State<AdminPage> {
               : _AdminColors.green,
         ),
       );
+  }
+
+  /// Opens the existing protected trail review page from dashboard findings.
+  Future<void> _openTrailSubmissions() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordedTrailRequestsPage(
+          session: widget.session,
+          repository: _repository,
+        ),
+      ),
+    );
+    if (mounted) unawaited(_loadAnalytics(forceRefresh: true));
   }
 
   /// Opens diagnostics.
@@ -346,7 +354,6 @@ class _AdminPageState extends State<AdminPage> {
         'footprints',
         'checkIns',
         'upcomingHikes',
-        'teams',
         'teamHikeSessions',
         'fcmOutbox',
         'sosWhatsAppDispatches',
@@ -462,23 +469,6 @@ class _AdminPageState extends State<AdminPage> {
     }
   }
 
-  /// Adds achievement.
-  Future<void> _addAchievement() async {
-    final values = await _showAchievementEditor();
-    if (values == null || !mounted) {
-      return;
-    }
-    await _runAdminAction(
-      successMessage: 'Achievement added.',
-      action: () async {
-        await _AdminPageDataActions.saveAchievementByAdmin(_repository)(
-          session: widget.session,
-          achievement: values,
-        );
-      },
-    );
-  }
-
   /// Computes edit achievement.
   Future<void> _editAchievement(Map<String, dynamic> achievement) async {
     final values = await _showAchievementEditor(initial: achievement);
@@ -522,7 +512,7 @@ class _AdminPageState extends State<AdminPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _AchievementEditorSheet(initial: initial),
+      builder: (context) => AchievementEditorSheet(initial: initial),
     );
   }
 
@@ -570,7 +560,9 @@ class _AdminPageState extends State<AdminPage> {
           'isLoading': _isLoading,
           'isSaving': _isSaving,
           'isDebugLoading': _isDebugLoading,
-          'loadedHazardReports': _hazardReports,
+          'loadedHazardReports': _safetyModel.reports
+              .map((report) => report.data)
+              .toList(),
           'loadedAchievements': _achievements,
           'adminError': _errorMessage,
           'debugError': _debugError,
@@ -609,13 +601,14 @@ class _AdminPageState extends State<AdminPage> {
 
     final title = switch (_selectedSection) {
       AdminSection.overview => 'Dashboard',
-      AdminSection.hazards => 'Hazard Reports',
+      AdminSection.hazards => 'Trail safety',
       AdminSection.rewards => 'Rewards',
       AdminSection.tools => 'Admin tools',
     };
     final subtitle = switch (_selectedSection) {
-      AdminSection.overview => 'HikerCircle administration',
-      AdminSection.hazards => 'Verify or reject community safety reports.',
+      AdminSection.overview => 'System analysis and operations',
+      AdminSection.hazards =>
+        'Follow trail cautions from report to resolution.',
       AdminSection.rewards => 'Create rewards and milestones for your hikers.',
       AdminSection.tools => 'Support hikers and inspect app activity.',
     };
@@ -626,24 +619,16 @@ class _AdminPageState extends State<AdminPage> {
         error: _analyticsError,
         onRetry: () => unawaited(_loadAnalytics(forceRefresh: true)),
         onTools: () => _selectSection(AdminSection.tools),
+        onTrailRequests: _openTrailSubmissions,
+        onFeedback: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const FeedbackInboxPage(admin: true),
+          ),
+        ),
         onSafety: () => _selectSection(AdminSection.hazards),
         onRewards: () => _selectSection(AdminSection.rewards),
       ),
-      AdminSection.hazards => _managementContent(
-        AdminSection.hazards,
-        _HazardReportsSection(
-          hazardReports: _hazardReports
-              .where(
-                (row) => row.values.join(' ').toLowerCase().contains(_search),
-              )
-              .toList(),
-          isSaving: _isSaving,
-          onApprove: (report) =>
-              unawaited(_reviewHazard(report, approved: true)),
-          onReject: (report) =>
-              unawaited(_reviewHazard(report, approved: false)),
-        ),
-      ),
+      AdminSection.hazards => AdminSafetySection(model: _safetyModel),
       AdminSection.rewards => _managementContent(
         AdminSection.rewards,
         _AchievementManagementSection(
@@ -653,7 +638,6 @@ class _AdminPageState extends State<AdminPage> {
               )
               .toList(),
           isSaving: _isSaving,
-          onAdd: () => unawaited(_addAchievement()),
           onEdit: (achievement) => unawaited(_editAchievement(achievement)),
           onToggleActive: (achievement) =>
               unawaited(_toggleAchievement(achievement)),
@@ -804,9 +788,14 @@ class _AdminPageState extends State<AdminPage> {
                               key: ValueKey(
                                 'admin-search-${_selectedSection.name}',
                               ),
-                              onChanged: (value) => setState(
-                                () => _search = value.trim().toLowerCase(),
-                              ),
+                              onChanged: (value) {
+                                setState(
+                                  () => _search = value.trim().toLowerCase(),
+                                );
+                                if (_selectedSection == AdminSection.hazards) {
+                                  _safetyModel.setQuery(value);
+                                }
+                              },
                               decoration: InputDecoration(
                                 hintText:
                                     'Search ${switch (_selectedSection) {
@@ -1107,352 +1096,6 @@ class _AdminTileGrid extends StatelessWidget {
   );
 }
 
-/// Displays the achievement editor sheet.
-class _AchievementEditorSheet extends StatefulWidget {
-  /// Creates achievement editor sheet.
-  const _AchievementEditorSheet({this.initial});
-
-  final Map<String, dynamic>? initial;
-
-  /// Creates the presentation state for this widget.
-  @override
-  State<_AchievementEditorSheet> createState() =>
-      _AchievementEditorSheetState();
-}
-
-/// Manages the achievement editor sheet presentation and lifecycle.
-class _AchievementEditorSheetState extends State<_AchievementEditorSheet> {
-  late final _AchievementEditorSheetStateViewModel _screenModel;
-
-  /// Rebuilds the view after its ViewModel changes.
-  void _renderScreenModel() {
-    if (mounted) setState(() {});
-  }
-
-  static const _metrics = <String, String>{
-    'hike_started': 'Hike started',
-    'hike_completed': 'Hike completed',
-    'checklist_completed': 'Gear checklist completed',
-    'check_in_completed': 'Safety check-in completed',
-    'manual_pin_added': 'Location pinned',
-    'hazard_report_approved': 'Hazard report approved',
-    'team_hike_completed': 'Team hike completed',
-    'community_post_created': 'Community post created',
-    'distinct_trail_completed': 'Different trail completed',
-    'malaysia_state_hiked': 'Malaysian state visited by hike',
-  };
-
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _titleController;
-  late final TextEditingController _conditionController;
-  late final TextEditingController _categoryController;
-  late final TextEditingController _pointsController;
-  late final TextEditingController _targetController;
-  late final TextEditingController _sortController;
-  late String _rewardType;
-  late String _metricKey;
-  late bool _isActive;
-
-  /// Initializes bindings and starts the screen lifecycle.
-  @override
-  void initState() {
-    super.initState();
-    _screenModel = _AchievementEditorSheetStateViewModel()
-      ..addListener(_renderScreenModel);
-
-    final initial = widget.initial ?? const <String, dynamic>{};
-    _titleController = TextEditingController(
-      text: _stringFrom(initial['title']),
-    );
-    _conditionController = TextEditingController(
-      text: _stringFrom(initial['condition']),
-    );
-    _categoryController = TextEditingController(
-      text: _stringFrom(initial['category']).isEmpty
-          ? 'Hiking'
-          : _stringFrom(initial['category']),
-    );
-    _pointsController = TextEditingController(
-      text:
-          (_intFrom(initial['rewardPoints']) == 0
-                  ? 100
-                  : _intFrom(initial['rewardPoints']))
-              .toString(),
-    );
-    _targetController = TextEditingController(
-      text:
-          (_intFrom(initial['targetCount']) == 0
-                  ? 1
-                  : _intFrom(initial['targetCount']))
-              .toString(),
-    );
-    _sortController = TextEditingController(
-      text:
-          (_intFrom(initial['sortOrder']) == 0
-                  ? 100
-                  : _intFrom(initial['sortOrder']))
-              .toString(),
-    );
-    _rewardType = _stringFrom(initial['rewardType']) == 'cumulative'
-        ? 'cumulative'
-        : 'one_time';
-    final initialMetric = _stringFrom(initial['metricKey']);
-    _metricKey = _metrics.containsKey(initialMetric)
-        ? initialMetric
-        : _metrics.keys.first;
-    _isActive = initial['isActive'] != false;
-  }
-
-  /// Releases resources owned by this instance.
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _conditionController.dispose();
-    _categoryController.dispose();
-    _pointsController.dispose();
-    _targetController.dispose();
-    _sortController.dispose();
-
-    _screenModel.removeListener(_renderScreenModel);
-    _screenModel.dispose();
-    super.dispose();
-  }
-
-  /// Saves.
-  void _save() {
-    if (_formKey.currentState?.validate() != true) {
-      return;
-    }
-    Navigator.of(context).pop(<String, dynamic>{
-      'title': _titleController.text.trim(),
-      'condition': _conditionController.text.trim(),
-      'category': _categoryController.text.trim(),
-      'iconName': _stringFrom(widget.initial?['iconName']).isEmpty
-          ? 'emoji_events'
-          : _stringFrom(widget.initial?['iconName']),
-      'rewardPoints': int.parse(_pointsController.text),
-      'rewardType': _rewardType,
-      'metricKey': _metricKey,
-      'targetCount': _rewardType == 'one_time'
-          ? 1
-          : int.parse(_targetController.text),
-      'sortOrder': int.parse(_sortController.text),
-      'accentColorValue': _intFrom(widget.initial?['accentColorValue']) == 0
-          ? 0xFF34A853
-          : _intFrom(widget.initial?['accentColorValue']),
-      'isActive': _isActive,
-    });
-  }
-
-  /// Delegates positive integer validator to the ViewModel.
-  String? _positiveIntegerValidator(String? value) =>
-      _screenModel.commandPositiveIntegerValidator(value);
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          14,
-          12,
-          14,
-          14 + MediaQuery.viewInsetsOf(context).bottom,
-        ),
-        child: _InsetGroup(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(18),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    widget.initial == null
-                        ? 'Add achievement'
-                        : 'Edit achievement',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: _AdminColors.textFor(context),
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _titleController,
-                    decoration: const InputDecoration(labelText: 'Title'),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? 'Enter an achievement title.'
-                        : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _conditionController,
-                    minLines: 2,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'User-facing requirement',
-                    ),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? 'Describe how this is earned.'
-                        : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _categoryController,
-                    decoration: const InputDecoration(labelText: 'Category'),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: _rewardType,
-                    decoration: const InputDecoration(labelText: 'Reward type'),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'one_time',
-                        child: Text('One-time reward'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'cumulative',
-                        child: Text('Accumulation based'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() => _rewardType = value);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: _metricKey,
-                    decoration: const InputDecoration(
-                      labelText: 'Tracked activity',
-                    ),
-                    items: _metrics.entries
-                        .map(
-                          (entry) => DropdownMenuItem(
-                            value: entry.key,
-                            child: Text(entry.value),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => _metricKey = value);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _pointsController,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Reward points',
-                          ),
-                          validator: _positiveIntegerValidator,
-                        ),
-                      ),
-                      if (_rewardType == 'cumulative') ...[
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _targetController,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Target count',
-                            ),
-                            validator: _positiveIntegerValidator,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _sortController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Sort order'),
-                    validator: _positiveIntegerValidator,
-                  ),
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Active'),
-                    subtitle: const Text(
-                      'Inactive achievements remain in historical records but cannot progress.',
-                    ),
-                    value: _isActive,
-                    onChanged: (value) => setState(() => _isActive = value),
-                  ),
-                  const SizedBox(height: 8),
-                  FilledButton.icon(
-                    onPressed: _save,
-                    icon: const Icon(Icons.save_rounded),
-                    label: const Text('Save achievement'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Displays the admin text block.
-class _AdminTextBlock extends StatelessWidget {
-  /// Creates admin text block.
-  const _AdminTextBlock({
-    required this.title,
-    required this.subtitle,
-    required this.body,
-  });
-
-  final String title;
-  final String subtitle;
-  final String body;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title.isEmpty ? 'Untitled' : title,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            color: _AdminColors.textFor(context),
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          subtitle,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: _AdminColors.secondaryTextFor(context),
-            letterSpacing: 0,
-          ),
-        ),
-        if (body.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(
-            body,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: _AdminColors.textFor(context),
-              letterSpacing: 0,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
 /// Displays the admin notice.
 class _AdminNotice extends StatelessWidget {
   /// Creates admin notice.
@@ -1486,28 +1129,6 @@ class _AdminNotice extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// Displays the circle icon.
-class _CircleIcon extends StatelessWidget {
-  /// Creates circle icon.
-  const _CircleIcon({required this.icon});
-
-  final IconData icon;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: _AdminColors.greenSoftFor(context),
-        shape: BoxShape.circle,
-      ),
-      child: Icon(icon, color: _AdminColors.green, size: 20),
     );
   }
 }

@@ -10,29 +10,12 @@ abstract final class _AdminPageDataActions {
   loadAdminDashboardAnalytics(HikerCircleFirebaseRepository receiver) =>
       receiver.loadAdminDashboardAnalytics;
 
-  /// Binds load admin hazard reports to the selected data source.
-  static Future<List<Map<String, dynamic>>> Function({
-    required AppSession session,
-  })
-  loadAdminHazardReports(HikerCircleFirebaseRepository receiver) =>
-      receiver.loadAdminHazardReports;
-
   /// Binds load admin achievements to the selected data source.
   static Future<List<Map<String, dynamic>>> Function({
     required AppSession session,
   })
   loadAdminAchievements(HikerCircleFirebaseRepository receiver) =>
       receiver.loadAdminAchievements;
-
-  /// Binds review hazard report to the selected data source.
-  static Future<void> Function({
-    String adminNote,
-    required bool approved,
-    required Map<String, dynamic> report,
-    required AppSession session,
-  })
-  reviewHazardReport(HikerCircleFirebaseRepository receiver) =>
-      receiver.reviewHazardReport;
 
   /// Binds dump all tables to the selected data source.
   static Future<Map<String, List<Map<String, dynamic>>>> Function()

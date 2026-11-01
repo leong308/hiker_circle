@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../core/widgets/loading_toast.dart';
+import '../core/widgets/section_label.dart';
+import 'Model/security_methods_presentation.dart';
 import '../core/widgets/verification_code_input.dart';
 
 import 'Data/multi_factor_auth_service.dart';
@@ -17,3 +19,5 @@ part 'View/security_methods_page_screen.dart';
 part 'ModelView/security_methods_page_view_model.dart';
 
 part 'ModelView/security_methods_page_actions.dart';
+
+part 'View/widgets/security_methods_page_widgets.dart';

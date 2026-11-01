@@ -16,11 +16,15 @@ class FallSensitivitySetting extends StatelessWidget {
     required this.onChanged,
     this.enabled = true,
     this.showImpactThreshold = false,
+    this.showHeading = true,
   });
   final double value;
   final ValueChanged<double> onChanged;
   final bool enabled;
   final bool showImpactThreshold;
+
+  /// Hides the inner title when a surrounding settings drawer already labels it.
+  final bool showHeading;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -33,12 +37,15 @@ class FallSensitivitySetting extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.sensors_rounded, color: colors.primary),
-          title: const Text('Fall sensor sensitivity'),
-          subtitle: Text('${settings.sensitivityLabel} · ${value.round()}/10'),
-        ),
+        if (showHeading)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.sensors_rounded, color: colors.primary),
+            title: const Text('Fall sensor sensitivity'),
+            subtitle: Text(
+              '${settings.sensitivityLabel} · ${value.round()}/10',
+            ),
+          ),
         Slider(
           key: const ValueKey('fall-sensitivity-slider'),
           value: value.clamp(1, 10),

@@ -20,6 +20,23 @@ class _SecurityMethodsPageStateViewModel extends ChangeNotifier {
 
   late Future<MfaStatus> stateStatusFuture;
 
+  /// Describes enrollment state while retaining the platform capability gate.
+  SecurityMethodsPresentation commandPresentation(MfaStatus status) =>
+      SecurityMethodsPresentation(
+        status,
+        passkeysEnabled: nativePasskeysEnabledForBuild(),
+      );
+
+  /// Lets pull-to-refresh errors render through the existing status future.
+  Future<void> commandRefresh() async {
+    commandReload();
+    try {
+      await stateStatusFuture;
+    } catch (_) {
+      // The status card displays the error and offers a retry.
+    }
+  }
+
   /// Computes reload.
   void commandReload() {
     if (!mounted) return;

@@ -7,8 +7,10 @@ class _Header extends StatelessWidget {
     required this.requestCount,
     required this.onOpenFriendRequests,
     required this.onOpenSettings,
+    this.onBack,
   });
 
+  final VoidCallback? onBack;
   final int requestCount;
   final VoidCallback onOpenFriendRequests;
   final VoidCallback onOpenSettings;
@@ -21,7 +23,8 @@ class _Header extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
       child: PageHeader(
         title: 'Circle',
-        subtitle: 'Community, buddies, teams',
+        onBack: onBack,
+        subtitle: 'Stories, buddies and chats',
         actions: [
           Badge(
             isLabelVisible: requestCount > 0,
@@ -66,6 +69,7 @@ class _CommunitySection extends StatefulWidget {
     required this.isAdmin,
     required this.onModeratePost,
     required this.onDeletePost,
+    required this.onEditPost,
     required this.onLikePost,
     required this.buddyPhones,
     required this.outgoingBuddyRequestPhones,
@@ -98,6 +102,7 @@ class _CommunitySection extends StatefulWidget {
   final bool isAdmin;
   final void Function(_CommunityPost, String) onModeratePost;
   final ValueChanged<_CommunityPost> onDeletePost;
+  final ValueChanged<_CommunityPost> onEditPost;
   final ValueChanged<_CommunityPost> onLikePost;
   final Set<String> buddyPhones;
   final Set<String> outgoingBuddyRequestPhones;
@@ -374,6 +379,11 @@ class _CommunitySectionState extends State<_CommunitySection> {
               onModerate: widget.isAdmin
                   ? (status) => widget.onModeratePost(post, status)
                   : null,
+              onEdit:
+                  post.isOwnPost ||
+                      post.authorPhoneNumber == widget.currentUserPhone
+                  ? () => widget.onEditPost(post)
+                  : null,
               onDelete:
                   post.isOwnPost ||
                       post.authorPhoneNumber == widget.currentUserPhone
@@ -496,6 +506,7 @@ class _CommunityPostCard extends StatefulWidget {
     this.likeBusy = false,
     this.expanded = false,
     this.onDelete,
+    this.onEdit,
     this.deleteBusy = false,
     this.isAdmin = false,
     this.onModerate,
@@ -509,6 +520,7 @@ class _CommunityPostCard extends StatefulWidget {
   final bool likeBusy;
   final bool expanded;
   final VoidCallback? onDelete;
+  final VoidCallback? onEdit;
   final bool deleteBusy;
   final bool isAdmin;
   final ValueChanged<String>? onModerate;
@@ -583,6 +595,13 @@ class _CommunityPostCardState extends State<_CommunityPostCard> {
                             ),
                             const SizedBox(width: 6),
                             _LevelBadge(level: post.level),
+                            if (post.authorIsAdmin) ...[
+                              const SizedBox(width: 6),
+                              const _StatusPill(
+                                label: 'Admin',
+                                color: _CircleColors.green,
+                              ),
+                            ],
                           ],
                         ),
                         const SizedBox(height: 3),
@@ -598,6 +617,8 @@ class _CommunityPostCardState extends State<_CommunityPostCard> {
                 ),
                 CommunityPostOptions(
                   isAdmin: widget.isAdmin,
+                  isOwnPost: widget.isOwnPost,
+                  onEdit: widget.onEdit,
                   busy: widget.deleteBusy,
                   onDelete: widget.onDelete,
                   onHide: widget.onModerate == null
@@ -607,24 +628,6 @@ class _CommunityPostCardState extends State<_CommunityPostCard> {
                       ? null
                       : () => widget.onModerate!('removed'),
                 ),
-                if (post.kind == 'hike')
-                  Tooltip(
-                    message: post.hikeState == 'active'
-                        ? 'Hike in progress'
-                        : 'Hike story',
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: _CircleColors.greenSoftFor(context),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.hiking_rounded,
-                        color: _CircleColors.green,
-                        size: 18,
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -1042,377 +1045,6 @@ class _CommentRow extends StatelessWidget {
   }
 }
 
-/// Displays the teams section.
-class _TeamsSection extends StatelessWidget {
-  /// Creates teams section.
-  const _TeamsSection({
-    required this.buddies,
-    required this.teams,
-    required this.onCreateTeam,
-  });
-
-  final List<_CommunityPerson> buddies;
-  final List<_TeamPlan> teams;
-  final VoidCallback onCreateTeam;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _TeamBuilderCard(buddies: buddies, onCreateTeam: onCreateTeam),
-        const SizedBox(height: 22),
-        SectionLabel(label: 'Team Hikes'),
-        const SizedBox(height: 8),
-        for (final team in teams) ...[
-          _TeamPlanCard(team: team),
-          const SizedBox(height: 12),
-        ],
-        const SizedBox(height: 10),
-        SectionLabel(label: 'Team Flow'),
-        const SizedBox(height: 8),
-        const _InsetGroup(
-          child: Column(
-            children: [
-              _TeamFlowRow(
-                icon: Icons.route_rounded,
-                title: 'Plan route',
-                subtitle: 'Pick trail, time, checkpoints, and meetup place.',
-              ),
-              _HorizontalSeparator(),
-              _TeamFlowRow(
-                icon: Icons.group_add_rounded,
-                title: 'Invite buddies',
-                subtitle:
-                    'Buddies accept, decline, or request a different time.',
-              ),
-              _HorizontalSeparator(),
-              _TeamFlowRow(
-                icon: Icons.location_searching_rounded,
-                title: 'Track together',
-                subtitle: 'During a hike, compare check-ins and stale updates.',
-              ),
-              _HorizontalSeparator(),
-              _TeamFlowRow(
-                icon: Icons.verified_user_rounded,
-                title: 'Close safely',
-                subtitle: 'Finish with team confirmation and shared recap.',
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Displays the team builder card.
-class _TeamBuilderCard extends StatelessWidget {
-  /// Creates team builder card.
-  const _TeamBuilderCard({required this.buddies, required this.onCreateTeam});
-
-  final List<_CommunityPerson> buddies;
-  final VoidCallback onCreateTeam;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    final isDark = _CircleColors.isDark(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: _CircleColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _CircleColors.green.withValues(alpha: 0.15)),
-        boxShadow: [
-          BoxShadow(
-            color: _CircleColors.green.withValues(alpha: isDark ? 0.08 : 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: _CircleColors.greenSoftFor(context),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.groups_2_rounded,
-                    color: _CircleColors.green,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Build a hiking team',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: _CircleColors.textFor(context),
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.3,
-                            ),
-                      ),
-                      Text(
-                        '${buddies.length} buddies available for invites',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _CircleColors.secondaryTextFor(context),
-                          letterSpacing: 0,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (buddies.isEmpty)
-                  const _StatusPill(
-                    label: 'Add buddies from Community first',
-                    color: _CircleColors.orange,
-                  )
-                else
-                  for (final buddy in buddies.take(5))
-                    _StatusPill(label: buddy.name, color: _CircleColors.green),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _CircleColors.green,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                    ),
-                    onPressed: onCreateTeam,
-                    icon: const Icon(Icons.home_rounded, size: 18),
-                    label: const Text('How to Start'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _CircleColors.green,
-                      side: BorderSide(
-                        color: _CircleColors.green.withValues(alpha: 0.3),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                    ),
-                    onPressed: null,
-                    icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-                    label: const Text('Join Code Later'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Displays the team plan card.
-class _TeamPlanCard extends StatelessWidget {
-  /// Creates team plan card.
-  const _TeamPlanCard({required this.team});
-
-  final _TeamPlan team;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _CircleColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: _CircleColors.shadowFor(context),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (context) => _TeamDetailPage(team: team),
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: _CircleColors.greenSoftFor(context),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.flag_rounded,
-                        color: _CircleColors.green,
-                        size: 22,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            team.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(
-                                  color: _CircleColors.textFor(context),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -0.3,
-                                ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            team.trail,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: _CircleColors.secondaryTextFor(
-                                    context,
-                                  ),
-                                  letterSpacing: 0,
-                                  fontSize: 13,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    _StatusPill(label: team.status, color: _CircleColors.green),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: _CircleColors.isDark(context)
-                        ? const Color(0xFF1B261F)
-                        : const Color(0xFFF5F7F5),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: _InfoLine(label: 'Start', value: team.dateLabel),
-                      ),
-                      SizedBox(
-                        height: 24,
-                        child: VerticalDivider(
-                          width: 1,
-                          color: _CircleColors.separatorFor(
-                            context,
-                          ).withValues(alpha: 0.5),
-                        ),
-                      ),
-                      Expanded(
-                        child: _InfoLine(
-                          label: 'Members',
-                          value: '${team.members.length} invited',
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: LinearProgressIndicator(
-                          value: team.readiness / 100,
-                          minHeight: 8,
-                          color: team.readiness >= 80
-                              ? _CircleColors.green
-                              : team.readiness >= 50
-                              ? _CircleColors.orange
-                              : _CircleColors.red,
-                          backgroundColor: _CircleColors.green.withValues(
-                            alpha: 0.1,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      '${team.readiness}%',
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: _CircleColors.textFor(context),
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Tap to manage roles, invites, and check-ins',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: _CircleColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// Displays the profile info row.
 class _ProfileInfoRow extends StatelessWidget {
   /// Creates profile info row.
@@ -1546,172 +1178,6 @@ class _SettingsSwitchTile extends StatelessWidget {
               ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// Displays the roster row.
-class _RosterRow extends StatelessWidget {
-  /// Creates roster row.
-  const _RosterRow({required this.name, required this.role});
-
-  final String name;
-  final String role;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    final isLeader = role == 'Leader';
-    final isSweep = role == 'Sweep';
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      child: Row(
-        children: [
-          _Avatar(
-            label: _circleInitial(name),
-            color: isLeader ? _CircleColors.green : _CircleColors.blue,
-            size: 38,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: _CircleColors.textFor(context),
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                if (isLeader)
-                  Text(
-                    'Team leader',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: _CircleColors.green,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0,
-                      fontSize: 11,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: isLeader
-                  ? _CircleColors.green.withValues(alpha: 0.1)
-                  : isSweep
-                  ? _CircleColors.orange.withValues(alpha: 0.1)
-                  : _CircleColors.blue.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  isLeader
-                      ? Icons.star_rounded
-                      : isSweep
-                      ? Icons.gps_fixed_rounded
-                      : Icons.person_rounded,
-                  size: 13,
-                  color: isLeader
-                      ? _CircleColors.green
-                      : isSweep
-                      ? _CircleColors.orange
-                      : _CircleColors.blue,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  role,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: isLeader
-                        ? _CircleColors.green
-                        : isSweep
-                        ? _CircleColors.orange
-                        : _CircleColors.blue,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Displays the team flow row.
-class _TeamFlowRow extends StatelessWidget {
-  /// Creates team flow row.
-  const _TeamFlowRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: _CircleColors.greenSoftFor(context),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: _CircleColors.green, size: 20),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: _CircleColors.textFor(context),
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _CircleColors.secondaryTextFor(context),
-                    letterSpacing: 0,
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Icon(
-            Icons.chevron_right_rounded,
-            color: _CircleColors.secondaryTextFor(
-              context,
-            ).withValues(alpha: 0.5),
-            size: 18,
-          ),
-        ],
       ),
     );
   }
@@ -2028,7 +1494,7 @@ class _ChatsSection extends StatelessWidget {
         padding: EdgeInsets.only(top: 32),
         child: HikerCircleLoadingView(
           message: 'Loading group chats…',
-          detail: 'Getting your hike teams and recent messages.',
+          detail: 'Getting your conversations and recent messages.',
           compact: true,
         ),
       );

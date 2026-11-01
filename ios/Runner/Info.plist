@@ -51,7 +51,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Use Face ID to unlock HikerCircle when you enable private-screen unlock.</string>
+	<string>Use Face ID to unlock HikerCircle when you enable App biometric unlock.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>HikerCircle uses the camera for trail photos, buddy QR scanning, and the flashlight for manual SOS alerts.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>

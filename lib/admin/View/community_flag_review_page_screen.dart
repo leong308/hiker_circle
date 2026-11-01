@@ -157,243 +157,195 @@ class _CommunityFlagReviewPageState extends State<CommunityFlagReviewPage> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving,
     child: Scaffold(
-      backgroundColor: AdminUi.background(context),
-      appBar: PageHeaderAppBar(
-        title: const Text('Review flag'),
-        leading: IconButton(
-          tooltip: 'Back',
-          onPressed: _saving ? null : () => Navigator.maybePop(context),
-          icon: const Icon(Icons.arrow_back_rounded),
-        ),
-      ),
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF0C120F)
+          : const Color(0xFFF2F2F7),
       body: FutureBuilder<_ReviewContent>(
         future: _content,
         builder: (context, snapshot) {
           final loaded = snapshot.connectionState == ConnectionState.done;
           final source = snapshot.data?.source;
-          return Column(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  key: const ValueKey('flag-review-scroll'),
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 720),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _detectionCard(context),
-                          const SizedBox(height: 16),
-                          if (!loaded)
-                            const AdminPanel(
-                              child: Column(
-                                children: [
-                                  LinearProgressIndicator(),
-                                  SizedBox(height: 16),
-                                  Text('Loading original content…'),
-                                ],
+          return SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+                  child: PageHeader(
+                    title: 'Review flag',
+                    subtitle:
+                        '${widget.flag.contentTypeLabel} · ${widget.flag.sourceLabel}',
+                    leading: PageHeaderAction(
+                      tooltip: 'Back',
+                      icon: Icons.arrow_back_rounded,
+                      onPressed: _saving
+                          ? null
+                          : () => Navigator.maybePop(context),
+                      color: Theme.of(context).colorScheme.primary,
+                      surface: Theme.of(context).colorScheme.surface,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    key: const ValueKey('flag-review-scroll'),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _detectionCard(context),
+                            const SizedBox(height: 16),
+                            if (!loaded)
+                              const AdminPanel(
+                                child: Column(
+                                  children: [
+                                    LinearProgressIndicator(),
+                                    SizedBox(height: 16),
+                                    Text('Loading original content…'),
+                                  ],
+                                ),
+                              )
+                            else if (snapshot.hasError)
+                              _unavailableCard(
+                                context,
+                                title: 'Content could not load',
+                                message:
+                                    'Load the original content before making a decision.',
+                              )
+                            else if (source == null)
+                              _unavailableCard(
+                                context,
+                                title: 'Content is no longer available',
+                                message:
+                                    'You can clear this outdated flag from the review queue. No content will be hidden or removed.',
+                              )
+                            else ...[
+                              _ContentCard(
+                                title: widget.flag.isComment
+                                    ? 'Flagged comment'
+                                    : 'Flagged post',
+                                data: source,
+                                isComment: widget.flag.isComment,
                               ),
-                            )
-                          else if (snapshot.hasError)
-                            _unavailableCard(
-                              context,
-                              title: 'Content could not load',
-                              message:
-                                  'Load the original content before making a decision.',
-                            )
-                          else if (source == null)
-                            _unavailableCard(
-                              context,
-                              title: 'Content is no longer available',
-                              message:
-                                  'You can clear this outdated flag from the review queue. No content will be hidden or removed.',
-                            )
-                          else ...[
-                            _ContentCard(
-                              title: widget.flag.isComment
-                                  ? 'Flagged comment'
-                                  : 'Flagged post',
-                              data: source,
-                              isComment: widget.flag.isComment,
-                            ),
-                            if (widget.flag.isComment) ...[
-                              const SizedBox(height: 16),
-                              if (snapshot.data?.parent != null)
-                                _ContentCard(
-                                  title: 'Parent post · context',
-                                  data: snapshot.data!.parent!,
-                                  isComment: false,
-                                  compact: true,
-                                )
-                              else
-                                AdminPanel(
-                                  child: Text(
-                                    snapshot.data?.parentUnavailable == true
-                                        ? 'The parent post could not load. The comment is shown above.'
-                                        : 'The parent post is unavailable.',
-                                    style: TextStyle(
-                                      color: AdminUi.muted(context),
+                              if (widget.flag.isComment) ...[
+                                const SizedBox(height: 16),
+                                if (snapshot.data?.parent != null)
+                                  _ContentCard(
+                                    title: 'Parent post · context',
+                                    data: snapshot.data!.parent!,
+                                    isComment: false,
+                                    compact: true,
+                                  )
+                                else
+                                  AdminPanel(
+                                    child: Text(
+                                      snapshot.data?.parentUnavailable == true
+                                          ? 'The parent post could not load. The comment is shown above.'
+                                          : 'The parent post is unavailable.',
+                                      style: TextStyle(
+                                        color: AdminUi.muted(context),
+                                      ),
                                     ),
                                   ),
-                                ),
+                              ],
                             ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              _decisionBar(
-                context,
-                enabled: loaded && !snapshot.hasError && source != null,
-                clearMissing: loaded && !snapshot.hasError && source == null,
-              ),
-            ],
+                _decisionBar(
+                  context,
+                  enabled: loaded && !snapshot.hasError && source != null,
+                  clearMissing: loaded && !snapshot.hasError && source == null,
+                ),
+              ],
+            ),
           );
         },
       ),
     ),
   );
 
-  /// Computes detection card.
+  /// Keeps the reason visible while placing detailed rule evidence in a drawer.
   Widget _detectionCard(BuildContext context) {
     final flag = widget.flag;
-    final color = flag.source == CommunityFlagSource.gemini
-        ? AdminUi.blue(context)
-        : AdminUi.green(context);
-    final severityColor = switch (flag.severity) {
-      'critical' || 'high' => Theme.of(context).colorScheme.error,
-      'medium' =>
-        AdminUi.dark(context)
-            ? const Color(0xFFF5C46E)
-            : const Color(0xFF916008),
-      _ => AdminUi.muted(context),
-    };
-    final date = flag.flaggedAt?.toLocal();
-    final local = MaterialLocalizations.of(context);
-    final categories = flag.categoryLabels
-        .where((label) => label != flag.title)
-        .toList();
-    final notes = flag.reasons
-        .where((reason) => reason != flag.title && !categories.contains(reason))
-        .toList();
-    final evidence = flag.evidenceLabels
-        .where(
-          (label) => !flag.matchedKeywords.any(
-            (word) => label == 'Matched phrase “$word”',
-          ),
-        )
-        .toList();
     return AdminPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      padding: EdgeInsets.zero,
+      child: ExpansionTile(
+        key: ValueKey('flag-evidence-${flag.id}'),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: Icon(
+          Icons.rule_rounded,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        title: Text(
+          flag.title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            height: 1.4,
+          ),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            'Why it was flagged · ${flag.sourceLabel}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context)),
+          ),
+        ),
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              AdminTag(
-                label: flag.sourceLabel,
-                icon: switch (flag.source) {
-                  CommunityFlagSource.gemini => Icons.auto_awesome_outlined,
-                  CommunityFlagSource.keywords => Icons.find_in_page_outlined,
-                  CommunityFlagSource.pattern => Icons.manage_search_rounded,
-                  CommunityFlagSource.integrity => Icons.fact_check_outlined,
-                  _ => Icons.info_outline_rounded,
-                },
-                color: color,
-              ),
-              AdminTag(
-                label: flag.contentTypeLabel,
-                icon: flag.isComment
-                    ? Icons.chat_bubble_outline_rounded
-                    : Icons.article_outlined,
-                color: AdminUi.muted(context),
-              ),
-              if (flag.severity != 'unknown')
-                AdminTag(
-                  label: '${flag.severityLabel} priority',
-                  color: severityColor,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  flag.sourceDescription,
+                  style: TextStyle(color: AdminUi.muted(context), height: 1.5),
                 ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(
-            flag.title,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w800,
-              height: 1.25,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            flag.sourceDescription,
-            style: TextStyle(color: AdminUi.muted(context), height: 1.45),
-          ),
-          if (categories.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            const _SectionLabel('Flag categories'),
-            const SizedBox(height: 7),
-            Wrap(
-              spacing: 7,
-              runSpacing: 7,
-              children: [
-                for (final label in categories)
-                  AdminTag(label: label, color: AdminUi.muted(context)),
+                if (flag.categoryLabels.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const _SectionLabel('Review categories'),
+                  const SizedBox(height: 6),
+                  Text(
+                    flag.categoryLabels.join(' · '),
+                    style: const TextStyle(height: 1.5),
+                  ),
+                ],
+                if (flag.evidenceLabels.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const _SectionLabel('Matched rules'),
+                  const SizedBox(height: 6),
+                  for (final label in flag.evidenceLabels)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 5),
+                      child: Text(label, style: const TextStyle(height: 1.5)),
+                    ),
+                ],
+                if (flag.reasons.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const _SectionLabel('Review notes'),
+                  const SizedBox(height: 6),
+                  for (final reason in flag.reasons)
+                    Text(reason, style: const TextStyle(height: 1.5)),
+                ],
+                const SizedBox(height: 16),
+                Text(
+                  'A flag needs human review. It is not a confirmed violation.',
+                  style: TextStyle(color: AdminUi.muted(context), height: 1.5),
+                ),
               ],
             ),
-          ],
-          if (flag.matchedKeywords.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            const _SectionLabel('Matched keywords'),
-            const SizedBox(height: 7),
-            Wrap(
-              spacing: 7,
-              runSpacing: 7,
-              children: [
-                for (final word in flag.matchedKeywords)
-                  AdminTag(label: '“$word”', color: color),
-              ],
-            ),
-          ],
-          if (evidence.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            const _SectionLabel('Detection details'),
-            const SizedBox(height: 6),
-            for (final label in evidence)
-              Padding(
-                padding: const EdgeInsets.only(top: 3),
-                child: Text('• $label', style: const TextStyle(height: 1.4)),
-              ),
-          ],
-          if (notes.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            const _SectionLabel('Review notes'),
-            const SizedBox(height: 6),
-            for (final reason in notes)
-              Padding(
-                padding: const EdgeInsets.only(top: 3),
-                child: Text(reason, style: const TextStyle(height: 1.4)),
-              ),
-          ],
-          const Divider(height: 28),
-          Text(
-            'A flag is a reason to review, not a confirmed violation.',
-            style: TextStyle(color: AdminUi.muted(context), height: 1.4),
           ),
-          if (date != null || flag.model.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              [
-                if (date != null)
-                  '${local.formatMediumDate(date)} · ${local.formatTimeOfDay(TimeOfDay.fromDateTime(date))}',
-                if (flag.model.isNotEmpty) 'Model: ${flag.model}',
-              ].join('\n'),
-              style: TextStyle(color: AdminUi.muted(context), fontSize: 12),
-            ),
-          ],
         ],
       ),
     );
@@ -472,7 +424,7 @@ class _CommunityFlagReviewPageState extends State<CommunityFlagReviewPage> {
                           final vertical =
                               constraints.maxWidth < 350 ||
                               MediaQuery.textScalerOf(context).scale(14) > 20;
-                          final keep = OutlinedButton.icon(
+                          final keep = FilledButton.icon(
                             key: const ValueKey('keep-flag-content'),
                             onPressed: (enabled || clearMissing) && !_saving
                                 ? () => _review('dismiss')
@@ -481,7 +433,7 @@ class _CommunityFlagReviewPageState extends State<CommunityFlagReviewPage> {
                             label: Text(
                               clearMissing ? 'Clear flag' : 'Keep content',
                             ),
-                            style: OutlinedButton.styleFrom(
+                            style: FilledButton.styleFrom(
                               minimumSize: const Size(0, 48),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
@@ -489,14 +441,16 @@ class _CommunityFlagReviewPageState extends State<CommunityFlagReviewPage> {
                               ),
                             ),
                           );
-                          final hide = FilledButton.icon(
+                          final hide = OutlinedButton.icon(
                             key: const ValueKey('hide-flag-content'),
                             onPressed: enabled && !_saving
                                 ? () => _review('hide')
                                 : null,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: colors.error,
-                              foregroundColor: colors.onError,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: colors.error,
+                              side: BorderSide(
+                                color: colors.error.withValues(alpha: 0.5),
+                              ),
                               minimumSize: const Size(0, 48),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,

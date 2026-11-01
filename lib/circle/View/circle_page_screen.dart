@@ -1,5 +1,8 @@
 part of '../circle_page_feature.dart';
 
+/// Circle offers community discovery and existing conversations for every role.
+enum _CircleSection { community, chats }
+
 /// Displays the circle page.
 class CirclePage extends StatefulWidget {
   /// Creates circle page.
@@ -8,6 +11,7 @@ class CirclePage extends StatefulWidget {
     required this.session,
     required this.hikerCircleRepository,
     this.activeHike,
+    this.initialPostId,
     this.buddyRequestsOpenId = 0,
     this.onBuddyRequestsOpenHandled,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
@@ -16,6 +20,7 @@ class CirclePage extends StatefulWidget {
   final AppSession session;
   final HikerCircleFirebaseRepository hikerCircleRepository;
   final ActiveHikeSession? activeHike;
+  final String? initialPostId;
   final int buddyRequestsOpenId;
   final VoidCallback? onBuddyRequestsOpenHandled;
   final FirebaseBootstrapResult firebaseBootstrapResult;
@@ -113,12 +118,10 @@ class _CirclePageState extends State<CirclePage> {
     if (mounted) setState(() {});
   }
 
-  int _selectedSection = 0;
+  _CircleSection _selectedSection = _CircleSection.community;
 
   /// Returns is admin.
   bool get _isAdmin => _screenModel.commandIsAdmin;
-
-  final List<_TeamPlan> _teams = const [];
 
   bool _composerOpen = false;
 
@@ -143,6 +146,28 @@ class _CirclePageState extends State<CirclePage> {
     _screenModel.effectPresentOpenCommunityModerationEffect1 =
         _presentOpenCommunityModerationEffect1;
 
+    _screenModel.effectPresentEditPost = (original) =>
+        showModalBottomSheet<Map<String, dynamic>>(
+          context: context,
+          isScrollControlled: true,
+          useSafeArea: true,
+          isDismissible: false,
+          enableDrag: false,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          builder: (_) => CommunityPostEditorSheet(
+            repository: widget.hikerCircleRepository,
+            session: widget.session,
+            original: original,
+          ),
+        );
+    if (widget.initialPostId case final postId?) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final post = await _screenModel.commandLoadLinkedPost(postId);
+        if (mounted && post != null) _openPostDetail(post);
+      });
+    }
     _currentUserPhotoURL = widget.session.photoURL ?? '';
     unawaited(_loadCommunityPosts());
     unawaited(_loadCommunityPeople());
@@ -442,37 +467,15 @@ class _CirclePageState extends State<CirclePage> {
     );
   }
 
-  /// Computes share post to group chat.
-  Future<void> _sharePostToGroupChat(_CommunityPost post) async {
-    final groupChats = _groupChats.where((chat) => !chat.isDirect).toList();
-    if (groupChats.isEmpty) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Join or create a group chat before sharing.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+  /// Presents chat selection and delegates durable sharing to the ViewModel.
+  Future<void> _sharePostToChat(_CommunityPost post) async {
+    if (_groupChats.isEmpty) {
+      _showCircleMessage('Start a conversation before sharing.');
       return;
     }
-    final chat = await _presentSharePostToGroupChatEffect1(groupChats);
-    if (chat == null || !mounted) return;
-    try {
-      await _CirclePageDataActions.sendGroupChatMessage(
-        widget.hikerCircleRepository,
-      )(
-        chatId: chat.id,
-        senderPhone: widget.session.phoneNumber,
-        senderName: widget.session.username,
-        text:
-            'Shared ${post.author}’s community post:\n${post.body}\nTrail: ${post.trail}',
-        localId: 'share_${DateTime.now().microsecondsSinceEpoch}',
-        sentAt: DateTime.now(),
-      );
-      _showCircleMessage('Post shared to ${chat.trailName}.');
-    } catch (_) {
-      _showCircleMessage('Unable to share the post right now.');
+    final chat = await _presentSharePostToChatEffect1(_groupChats);
+    if (chat != null && mounted) {
+      await _screenModel.commandSharePost(post, chat);
     }
   }
 
@@ -626,9 +629,10 @@ class _CirclePageState extends State<CirclePage> {
                 ? widget.session.photoBytes
                 : null,
             onOpenProfile: () => _showCommunityProfile(post),
-            onShare: () => _sharePostToGroupChat(post),
+            onShare: _sharePostToChat,
             onToggleLike: _togglePostLike,
             onDeletePost: _deleteCommunityPost,
+            onEditPost: _screenModel.commandEditCommunityPost,
             onModeratePost: _moderateCommunityPost,
             onCommentCountChanged: (count) {
               if (!mounted) return;
@@ -649,9 +653,6 @@ class _CirclePageState extends State<CirclePage> {
     );
   }
 
-  /// Delegates create team to the ViewModel.
-  void _createTeam() => _screenModel.commandCreateTeam();
-
   /// Delegates open group chat to the ViewModel.
   Future<void> _openGroupChat(GroupChat chat) =>
       _screenModel.commandOpenGroupChat(chat);
@@ -669,11 +670,12 @@ class _CirclePageState extends State<CirclePage> {
   }
 
   /// Builds segment.
-  Widget _buildSegment(int value, String label, IconData icon) {
+  Widget _buildSegment(_CircleSection value, String label, IconData icon) {
     final isSelected = _selectedSection == value;
     final stacked = MediaQuery.textScalerOf(context).scale(13) > 18;
     return Expanded(
       child: GestureDetector(
+        key: ValueKey('circle-tab-${value.name}'),
         onTap: () {
           setState(() {
             _selectedSection = value;
@@ -738,16 +740,12 @@ class _CirclePageState extends State<CirclePage> {
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
-    final buddies = _people
-        .where((person) => _buddyPhones.contains(person.phoneNumber))
-        .toList();
-
     return ColoredBox(
       color: _CircleColors.backgroundFor(context),
       child: SafeArea(
         child: RefreshIndicator(
           color: _CircleColors.green,
-          onRefresh: _selectedSection == 0
+          onRefresh: _selectedSection == _CircleSection.community
               ? () async {
                   await Future.wait([
                     _loadCommunityPosts(),
@@ -765,6 +763,9 @@ class _CirclePageState extends State<CirclePage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _Header(
+                      onBack: widget.initialPostId == null
+                          ? null
+                          : () => Navigator.of(context).pop(),
                       requestCount: _buddyRequests.length,
                       onOpenFriendRequests: _openBuddyRequests,
                       onOpenSettings: _openSettings,
@@ -783,11 +784,13 @@ class _CirclePageState extends State<CirclePage> {
                       ),
                       child: Row(
                         children: [
-                          _buildSegment(0, 'Community', Icons.people_rounded),
-                          if (_isAdmin)
-                            _buildSegment(1, 'Teams', Icons.groups_2_rounded),
                           _buildSegment(
-                            _isAdmin ? 2 : 1,
+                            _CircleSection.community,
+                            'Community',
+                            Icons.people_rounded,
+                          ),
+                          _buildSegment(
+                            _CircleSection.chats,
                             'Chats',
                             Icons.chat_rounded,
                           ),
@@ -795,7 +798,8 @@ class _CirclePageState extends State<CirclePage> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    if (_isAdmin && _selectedSection == 0) ...[
+                    if (_isAdmin &&
+                        _selectedSection == _CircleSection.community) ...[
                       CommunityModerationToolbar(
                         isAdmin: _isAdmin,
                         onManagePosts: () =>
@@ -811,7 +815,7 @@ class _CirclePageState extends State<CirclePage> {
                           : const Duration(milliseconds: 180),
                       child: KeyedSubtree(
                         key: ValueKey(_selectedSection),
-                        child: _selectedSection == 0
+                        child: _selectedSection == _CircleSection.community
                             ? _CommunitySection(
                                 activeHike: widget.activeHike,
                                 people: _people,
@@ -830,6 +834,9 @@ class _CirclePageState extends State<CirclePage> {
                                 isAdmin: _isAdmin,
                                 onModeratePost: (post, status) => unawaited(
                                   _moderateCommunityPost(post, status),
+                                ),
+                                onEditPost: (post) => unawaited(
+                                  _screenModel.commandEditCommunityPost(post),
                                 ),
                                 onDeletePost: (post) =>
                                     unawaited(_deleteCommunityPost(post)),
@@ -856,16 +863,10 @@ class _CirclePageState extends State<CirclePage> {
                                   _showCommunityPersonProfile(person),
                                 ),
                                 onOpenProfile: _showCommunityProfile,
-                                onSharePost: _sharePostToGroupChat,
+                                onSharePost: _sharePostToChat,
                                 onCreatePost: () =>
                                     unawaited(_openCommunityComposer()),
                                 onOpenPost: _openPostDetail,
-                              )
-                            : _isAdmin && _selectedSection == 1
-                            ? _TeamsSection(
-                                buddies: buddies,
-                                teams: _teams,
-                                onCreateTeam: _createTeam,
                               )
                             : _ChatsSection(
                                 chats: _groupChats,
@@ -1039,12 +1040,15 @@ class _CirclePageState extends State<CirclePage> {
   );
 
   /// Presents the share post to group chat effect1 UI.
-  Future<GroupChat?> _presentSharePostToGroupChatEffect1(
+  Future<GroupChat?> _presentSharePostToChatEffect1(
     List<GroupChat> groupChats,
   ) => showModalBottomSheet<GroupChat>(
     context: context,
     backgroundColor: Colors.transparent,
-    builder: (context) => _SharePostToChatSheet(chats: groupChats),
+    builder: (context) => _SharePostToChatSheet(
+      chats: groupChats,
+      currentPhone: widget.session.phoneNumber,
+    ),
   );
 
   /// Presents the open group chat effect1 UI.
@@ -1070,21 +1074,8 @@ class _CommunityFlagReviewPage extends StatelessWidget {
 
   /// Builds this widget from its current presentation state.
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: _CircleColors.backgroundFor(context),
-    appBar: PageHeaderAppBar(title: const Text('Flagged content')),
-    body: session.isAdmin
-        ? SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 720),
-                child: const CommunityIntegrityPanel(),
-              ),
-            ),
-          )
-        : const Center(child: Text('Admin privilege is required.')),
-  );
+  Widget build(BuildContext context) =>
+      CommunityFlaggedContentPage(isAdmin: session.isAdmin);
 }
 
 /// Displays the buddy discovery action.
@@ -1380,6 +1371,7 @@ class _CommunityPostDetailPage extends StatefulWidget {
     required this.onShare,
     required this.onToggleLike,
     required this.onDeletePost,
+    required this.onEditPost,
     required this.onModeratePost,
     required this.onCommentCountChanged,
   });
@@ -1389,10 +1381,11 @@ class _CommunityPostDetailPage extends StatefulWidget {
   final String currentUserPhotoURL;
   final Uint8List? currentUserPhotoBytes;
   final VoidCallback onOpenProfile;
-  final VoidCallback onShare;
+  final ValueChanged<_CommunityPost> onShare;
   final Future<_CommunityPost> Function(_CommunityPost post) onToggleLike;
   final ValueChanged<int> onCommentCountChanged;
   final Future<bool> Function(_CommunityPost post) onDeletePost;
+  final Future<_CommunityPost?> Function(_CommunityPost post) onEditPost;
   final Future<bool> Function(_CommunityPost post, String status)
   onModeratePost;
 
@@ -1546,6 +1539,19 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
     }
   }
 
+  /// Replaces detail content only after the author confirms an edit.
+  Future<void> _editStory() async {
+    if (_deleting || _moderating || _likeBusy) return;
+    setState(() => _moderating = true);
+    final updated = await widget.onEditPost(_post);
+    if (mounted) {
+      setState(() {
+        if (updated != null) _post = updated;
+        _moderating = false;
+      });
+    }
+  }
+
   /// Deletes story.
   Future<void> _deleteStory() async {
     if (_deleting || _moderating) return;
@@ -1660,13 +1666,19 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                         _post.authorPhoneNumber == widget.session.phoneNumber,
                     onOpenPost: () => _commentFocus.requestFocus(),
                     onOpenProfile: widget.onOpenProfile,
-                    onShare: widget.onShare,
+                    onShare: () => widget.onShare(_post),
                     onLike: _toggleLike,
                     likeBusy: _likeBusy || _moderating || _deleting,
                     expanded: true,
                     deleteBusy: _deleting || _moderating,
                     isAdmin: widget.session.isAdmin,
                     onModerate: widget.session.isAdmin ? _moderateStory : null,
+                    onEdit:
+                        _post.isOwnPost ||
+                            _post.authorPhoneNumber ==
+                                widget.session.phoneNumber
+                        ? _editStory
+                        : null,
                     onDelete:
                         _post.isOwnPost ||
                             _post.authorPhoneNumber ==
@@ -1903,264 +1915,6 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
       ],
     ),
   );
-}
-
-/// Displays the team detail page.
-class _TeamDetailPage extends StatelessWidget {
-  /// Creates team detail page.
-  const _TeamDetailPage({required this.team});
-
-  final _TeamPlan team;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _CircleColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DetailHeader(
-                    title: team.name,
-                    subtitle: team.trail,
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: _CircleColors.surfaceFor(context),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: _CircleColors.separatorFor(
-                          context,
-                        ).withValues(alpha: 0.5),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: _CircleColors.shadowFor(context),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _InfoLine(
-                                label: 'Start',
-                                value: team.dateLabel,
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: team.readiness >= 80
-                                    ? _CircleColors.green.withValues(alpha: 0.1)
-                                    : _CircleColors.orange.withValues(
-                                        alpha: 0.1,
-                                      ),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                team.status,
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: team.readiness >= 80
-                                          ? _CircleColors.green
-                                          : _CircleColors.orange,
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: 0,
-                                    ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: LinearProgressIndicator(
-                            value: team.readiness / 100,
-                            minHeight: 8,
-                            color: team.readiness >= 80
-                                ? _CircleColors.green
-                                : team.readiness >= 50
-                                ? _CircleColors.orange
-                                : _CircleColors.red,
-                            backgroundColor: _CircleColors.green.withValues(
-                              alpha: 0.1,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '${team.readiness}% team readiness',
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: _CircleColors.secondaryTextFor(context),
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 0,
-                              ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: FilledButton.icon(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: _CircleColors.green,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 13,
-                                  ),
-                                ),
-                                onPressed: null,
-                                icon: const Icon(
-                                  Icons.check_circle_rounded,
-                                  size: 18,
-                                ),
-                                label: const Text('Check-ins'),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: _CircleColors.green,
-                                  side: BorderSide(
-                                    color: _CircleColors.green.withValues(
-                                      alpha: 0.3,
-                                    ),
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 13,
-                                  ),
-                                ),
-                                onPressed: null,
-                                icon: const Icon(
-                                  Icons.group_add_rounded,
-                                  size: 18,
-                                ),
-                                label: const Text('Invite'),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  SectionLabel(label: 'Roster'),
-                  const SizedBox(height: 8),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: _CircleColors.surfaceFor(context),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: _CircleColors.separatorFor(
-                          context,
-                        ).withValues(alpha: 0.5),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: _CircleColors.shadowFor(context),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        for (
-                          var index = 0;
-                          index < team.members.length;
-                          index++
-                        ) ...[
-                          _RosterRow(
-                            name: team.members[index],
-                            role: index == 0
-                                ? 'Leader'
-                                : index == team.members.length - 1
-                                ? 'Sweep'
-                                : 'Member',
-                          ),
-                          if (index != team.members.length - 1)
-                            const _HorizontalSeparator(),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  SectionLabel(label: 'Team Safety Logic'),
-                  const SizedBox(height: 8),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: _CircleColors.surfaceFor(context),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: _CircleColors.separatorFor(
-                          context,
-                        ).withValues(alpha: 0.5),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: _CircleColors.shadowFor(context),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: const Column(
-                      children: [
-                        _TeamFlowRow(
-                          icon: Icons.social_distance_rounded,
-                          title: 'Separation watch',
-                          subtitle:
-                              'Warn when a member is too far ahead or behind.',
-                        ),
-                        _HorizontalSeparator(),
-                        _TeamFlowRow(
-                          icon: Icons.timer_rounded,
-                          title: 'Stale update watch',
-                          subtitle:
-                              'Flag members who miss expected location updates.',
-                        ),
-                        _HorizontalSeparator(),
-                        _TeamFlowRow(
-                          icon: Icons.route_rounded,
-                          title: 'Route boundary watch',
-                          subtitle:
-                              'Compare team progress with planned checkpoints.',
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// Displays the community profile sheet.
@@ -2418,11 +2172,12 @@ class _CommunityProfileSheet extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                   ],
-                  FilledButton.icon(
-                    onPressed: onMessage,
-                    icon: const Icon(Icons.chat_rounded),
-                    label: const Text('Start conversation'),
-                  ),
+                  if (!isOwnProfile)
+                    FilledButton.icon(
+                      onPressed: onMessage,
+                      icon: const Icon(Icons.chat_rounded),
+                      label: const Text('Start conversation'),
+                    ),
                 ],
               ),
             ),
@@ -2436,9 +2191,13 @@ class _CommunityProfileSheet extends StatelessWidget {
 /// Displays the share post to chat sheet.
 class _SharePostToChatSheet extends StatelessWidget {
   /// Creates share post to chat sheet.
-  const _SharePostToChatSheet({required this.chats});
+  const _SharePostToChatSheet({
+    required this.chats,
+    required this.currentPhone,
+  });
 
   final List<GroupChat> chats;
+  final String currentPhone;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -2446,7 +2205,10 @@ class _SharePostToChatSheet extends StatelessWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
-        child: _InsetGroup(
+        child: Material(
+          color: _CircleColors.surfaceFor(context),
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: Column(
@@ -2456,29 +2218,43 @@ class _SharePostToChatSheet extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
                   child: Text(
-                    'Share to group chat',
+                    'Share to Chat',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       color: _CircleColors.textFor(context),
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                 ),
-                for (final chat in chats)
-                  ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: _CircleColors.greenSoftFor(context),
-                      child: const Icon(
-                        Icons.groups_rounded,
-                        color: _CircleColors.green,
-                      ),
+                Flexible(
+                  child: Scrollbar(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: chats.length,
+                      itemBuilder: (context, index) {
+                        final chat = chats[index];
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: _CircleColors.greenSoftFor(
+                              context,
+                            ),
+                            child: const Icon(
+                              Icons.chat_bubble_outline_rounded,
+                              color: _CircleColors.green,
+                            ),
+                          ),
+                          title: Text(chat.displayNameFor(currentPhone)),
+                          subtitle: Text(
+                            chat.isDirect
+                                ? 'Direct chat'
+                                : '${chat.participantPhones.length} participants',
+                          ),
+                          trailing: const Icon(Icons.send_rounded),
+                          onTap: () => Navigator.of(context).pop(chat),
+                        );
+                      },
                     ),
-                    title: Text(chat.trailName),
-                    subtitle: Text(
-                      '${chat.participantPhones.length} participants',
-                    ),
-                    trailing: const Icon(Icons.send_rounded),
-                    onTap: () => Navigator.of(context).pop(chat),
                   ),
+                ),
               ],
             ),
           ),
@@ -2595,7 +2371,7 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
                 children: [
                   _DetailHeader(
                     title: 'Circle Settings',
-                    subtitle: 'Community and team controls',
+                    subtitle: 'Community and chat controls',
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
@@ -2612,14 +2388,6 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
                     title: 'Nearby trail posts',
                     subtitle: 'Coming later with personalized community feeds.',
                     value: false,
-                    onChanged: null,
-                    unavailable: true,
-                  ),
-                  const SizedBox(height: 8),
-                  _SettingsSwitchTile(
-                    title: 'Team invite alerts',
-                    subtitle: 'Managed by the mobile notification permission.',
-                    value: true,
                     onChanged: null,
                     unavailable: true,
                   ),
@@ -2711,44 +2479,6 @@ class _CircleAnimatedToggle extends StatelessWidget {
       animationDuration: const Duration(milliseconds: 260),
       animationCurve: Curves.easeOutCubic,
       onChanged: onChanged,
-    );
-  }
-}
-
-/// Displays the info line.
-class _InfoLine extends StatelessWidget {
-  /// Creates info line.
-  const _InfoLine({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: _CircleColors.secondaryTextFor(context),
-            fontWeight: FontWeight.w500,
-            letterSpacing: 0,
-            fontSize: 11,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: _CircleColors.textFor(context),
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
-            fontSize: 14,
-          ),
-        ),
-      ],
     );
   }
 }
@@ -2887,68 +2617,6 @@ class _HorizontalSeparator extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Computes community post from firestore.
-_CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
-  final authorPhone = _stringFrom(data['authorPhoneNumber']);
-  final authorName = _stringFrom(data['authorName']).isEmpty
-      ? 'Hiker ${authorPhone.length >= 4 ? authorPhone.substring(authorPhone.length - 4) : ''}'
-      : _stringFrom(data['authorName']);
-  final handle = _stringFrom(data['authorHandle']).isEmpty
-      ? _handleForPhone(authorPhone)
-      : _stringFrom(data['authorHandle']);
-  final trailName = _stringFrom(data['trailName']).isEmpty
-      ? 'Community'
-      : _stringFrom(data['trailName']);
-  final caption = _stringFrom(data['caption']);
-  final routePreviewPoints = _listOfMaps(
-    data['routePreviewPoints'],
-  ).map(HikeCoordinate.tryFromFirestore).nonNulls.toList();
-
-  return _CommunityPost(
-    postId: _stringFrom(data['postId']),
-    updatedAtMillis: data['updatedAtMillis'] is num
-        ? (data['updatedAtMillis'] as num).toInt()
-        : null,
-    authorId: _stringFrom(data['authorId']),
-    authorPhoneNumber: authorPhone,
-    author: authorName,
-    handle: handle,
-    levelBadge: _stringFrom(data['authorLevelBadge']).isEmpty
-        ? 'Lv. 1 Trailhead'
-        : _stringFrom(data['authorLevelBadge']),
-    level: _intFrom(data['authorLevel']) == 0
-        ? 1
-        : _intFrom(data['authorLevel']),
-    timeLabel: _relativeTimeLabel(data['createdAtLocal']),
-    trail: trailName,
-    body: caption,
-    likes: _intFrom(data['likeCount']),
-    replies: _intFrom(data['commentCount']),
-    color: _colorForPost(_stringFrom(data['postId'])),
-    routeCaptureId: _stringFrom(data['routeCaptureId']),
-    routePointCount: _intFrom(data['routePointCount']),
-    routePreviewPoints: routePreviewPoints,
-    authorPhotoURL: _stringFrom(data['authorPhotoURL']),
-    imageUrls: data['imageUrls'] is List
-        ? (data['imageUrls'] as List)
-              .whereType<String>()
-              .where((url) => url.isNotEmpty)
-              .take(6)
-              .toList()
-        : const [],
-    isLiked: data['isLiked'] == true,
-    isOwnPost: data['isOwnPost'] == true,
-    kind: _stringFrom(data['kind']),
-    hikeState: _stringFrom(data['hikeState']),
-    distanceKm: data['distanceKm'] is num
-        ? (data['distanceKm'] as num).toDouble()
-        : null,
-    durationMinutes: data['durationMinutes'] is num
-        ? (data['durationMinutes'] as num).toInt()
-        : null,
-  );
 }
 
 /// Computes community comment from firestore.

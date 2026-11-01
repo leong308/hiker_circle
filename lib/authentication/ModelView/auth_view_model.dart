@@ -124,7 +124,8 @@ class AuthViewModel extends ChangeNotifier {
         elapsedMilliseconds: stopwatch.elapsedMilliseconds,
       );
       _status = AuthStatus.enteringCode;
-      _message = 'OTP sent to $normalized via WhatsApp.';
+      _message =
+          'OTP sent to ${PhoneNumberFormatter.maskForDisplay(normalized)} via WhatsApp.';
       _error = null;
     } catch (error) {
       AuthFlowDiagnostics.event(

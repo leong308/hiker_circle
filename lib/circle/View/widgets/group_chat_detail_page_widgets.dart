@@ -392,10 +392,8 @@ class _ParticipantCard extends StatelessWidget {
     required this.phone,
     required this.isYou,
     required this.username,
-    this.onReminder,
   });
 
-  final VoidCallback? onReminder;
   final String phone;
   final bool isYou;
   final String username;
@@ -464,12 +462,6 @@ class _ParticipantCard extends StatelessWidget {
               ],
             ),
           ),
-          if (onReminder != null)
-            TextButton.icon(
-              onPressed: onReminder,
-              icon: const Icon(Icons.notifications_active_outlined, size: 16),
-              label: const Text('Send reminder now'),
-            ),
           if (isYou)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

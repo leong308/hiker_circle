@@ -72,6 +72,7 @@ class _CommunityPost {
     this.imageUrls = const [],
     this.isLiked = false,
     this.isOwnPost = false,
+    this.authorIsAdmin = false,
     this.kind = 'note',
     this.hikeState = '',
     this.distanceKm,
@@ -100,6 +101,7 @@ class _CommunityPost {
   final List<String> imageUrls;
   final bool isLiked;
   final bool isOwnPost;
+  final bool authorIsAdmin;
   final String kind;
   final String hikeState;
   final double? distanceKm;
@@ -131,6 +133,7 @@ class _CommunityPost {
         imageUrls: imageUrls,
         isLiked: isLiked ?? this.isLiked,
         isOwnPost: isOwnPost,
+        authorIsAdmin: authorIsAdmin,
         kind: kind,
         hikeState: hikeState,
         distanceKm: distanceKm,
@@ -163,22 +166,65 @@ class _CommunityComment {
   final String authorPhotoURL;
 }
 
-/// Represents team plan.
-class _TeamPlan {
-  /// Creates team plan.
-  const _TeamPlan({
-    required this.name,
-    required this.trail,
-    required this.dateLabel,
-    required this.status,
-    required this.members,
-    required this.readiness,
-  });
+/// Computes community post from firestore.
+_CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
+  final authorPhone = _stringFrom(data['authorPhoneNumber']);
+  final authorName = _stringFrom(data['authorName']).isEmpty
+      ? 'Hiker ${authorPhone.length >= 4 ? authorPhone.substring(authorPhone.length - 4) : ''}'
+      : _stringFrom(data['authorName']);
+  final handle = _stringFrom(data['authorHandle']).isEmpty
+      ? _handleForPhone(authorPhone)
+      : _stringFrom(data['authorHandle']);
+  final trailName = _stringFrom(data['trailName']).isEmpty
+      ? 'Community'
+      : _stringFrom(data['trailName']);
+  final caption = _stringFrom(data['caption']);
+  final routePreviewPoints = _listOfMaps(
+    data['routePreviewPoints'],
+  ).map(HikeCoordinate.tryFromFirestore).nonNulls.toList();
 
-  final String name;
-  final String trail;
-  final String dateLabel;
-  final String status;
-  final List<String> members;
-  final int readiness;
+  return _CommunityPost(
+    postId: _stringFrom(data['postId']),
+    updatedAtMillis: data['updatedAtMillis'] is num
+        ? (data['updatedAtMillis'] as num).toInt()
+        : null,
+    authorId: _stringFrom(data['authorId']),
+    authorPhoneNumber: authorPhone,
+    author: authorName,
+    handle: handle,
+    levelBadge: _stringFrom(data['authorLevelBadge']).isEmpty
+        ? 'Lv. 1 Trailhead'
+        : _stringFrom(data['authorLevelBadge']),
+    level: _intFrom(data['authorLevel']) == 0
+        ? 1
+        : _intFrom(data['authorLevel']),
+    timeLabel: _relativeTimeLabel(data['createdAtLocal']),
+    trail: trailName,
+    body: caption,
+    likes: _intFrom(data['likeCount']),
+    replies: _intFrom(data['commentCount']),
+    color: _colorForPost(_stringFrom(data['postId'])),
+    routeCaptureId: _stringFrom(data['routeCaptureId']),
+    routePointCount: _intFrom(data['routePointCount']),
+    routePreviewPoints: routePreviewPoints,
+    authorPhotoURL: _stringFrom(data['authorPhotoURL']),
+    imageUrls: data['imageUrls'] is List
+        ? (data['imageUrls'] as List)
+              .whereType<String>()
+              .where((url) => url.isNotEmpty)
+              .take(6)
+              .toList()
+        : const [],
+    isLiked: data['isLiked'] == true,
+    isOwnPost: data['isOwnPost'] == true,
+    authorIsAdmin: data['authorIsAdmin'] == true,
+    kind: _stringFrom(data['kind']),
+    hikeState: _stringFrom(data['hikeState']),
+    distanceKm: data['distanceKm'] is num
+        ? (data['distanceKm'] as num).toDouble()
+        : null,
+    durationMinutes: data['durationMinutes'] is num
+        ? (data['durationMinutes'] as num).toInt()
+        : null,
+  );
 }

@@ -49,11 +49,9 @@ class AppSettingsController extends ChangeNotifier {
   final String? _settingsPathOverride;
 
   HikerCircleThemeSetting _themeSetting = HikerCircleThemeSetting.system;
-  String _language = 'English';
   String _preferredTimeZone = PreferredTimeZone.fallbackId;
   bool _preciseLocationEnabled = true;
   bool _privateScreenUnlockEnabled = false;
-  bool _anonymousTrailRecommendationsEnabled = false;
   bool _hapticSafetyFeedbackEnabled = true;
   bool _lowBatterySafetyWarningEnabled = true;
   double _fallSensorSensitivity = 5;
@@ -73,9 +71,6 @@ class AppSettingsController extends ChangeNotifier {
   /// Completes once persisted device preferences have been restored.
   Future<void> get ready => _initialization;
 
-  /// Returns language.
-  String get language => _language;
-
   /// Returns preferred time zone.
   String get preferredTimeZone => _preferredTimeZone;
 
@@ -91,10 +86,6 @@ class AppSettingsController extends ChangeNotifier {
     _privateScreenUnlockEnabled = value;
     _settingsChanged();
   }
-
-  /// Returns anonymous trail recommendations enabled.
-  bool get anonymousTrailRecommendationsEnabled =>
-      _anonymousTrailRecommendationsEnabled;
 
   /// Returns haptic safety feedback enabled.
   bool get hapticSafetyFeedbackEnabled => _hapticSafetyFeedbackEnabled;
@@ -132,13 +123,10 @@ class AppSettingsController extends ChangeNotifier {
   Map<String, Object?> get debugSnapshot => {
     'storageType': 'App-scoped JSON settings',
     'persistence': 'Persistent on this device',
-    'language': _language,
     'preferredTimeZone': _preferredTimeZone,
     'themeSetting': _themeSetting.label,
     'themeMode': _themeSetting.themeMode.name,
     'preciseLocationEnabled': _preciseLocationEnabled,
-    'anonymousTrailRecommendationsEnabled':
-        _anonymousTrailRecommendationsEnabled,
     'hapticSafetyFeedbackEnabled': _hapticSafetyFeedbackEnabled,
     'lowBatterySafetyWarningEnabled': _lowBatterySafetyWarningEnabled,
     'fallSensorSensitivity': _fallSensorSensitivity,
@@ -152,17 +140,6 @@ class AppSettingsController extends ChangeNotifier {
       return;
     }
     _themeSetting = setting;
-    _settingsChanged();
-  }
-
-  /// Sets language.
-  void setLanguage(String language) {
-    const supported = {'English'};
-    final normalized = supported.contains(language) ? language : 'English';
-    if (_language == normalized) {
-      return;
-    }
-    _language = normalized;
     _settingsChanged();
   }
 
@@ -182,15 +159,6 @@ class AppSettingsController extends ChangeNotifier {
       return;
     }
     _preciseLocationEnabled = enabled;
-    _settingsChanged();
-  }
-
-  /// Sets anonymous trail recommendations enabled.
-  void setAnonymousTrailRecommendationsEnabled(bool enabled) {
-    if (_anonymousTrailRecommendationsEnabled == enabled) {
-      return;
-    }
-    _anonymousTrailRecommendationsEnabled = enabled;
     _settingsChanged();
   }
 
@@ -248,7 +216,6 @@ class AppSettingsController extends ChangeNotifier {
             ? values['themeSetting'] as String
             : HikerCircleThemeSetting.system.label,
       );
-      _language = 'English';
       _privateScreenUnlockEnabled =
           values['privateScreenUnlockEnabled'] == true;
       _preferredTimeZone = PreferredTimeZone.normalize(
@@ -259,10 +226,6 @@ class AppSettingsController extends ChangeNotifier {
       _preciseLocationEnabled = values['preciseLocationEnabled'] is bool
           ? values['preciseLocationEnabled'] as bool
           : true;
-      _anonymousTrailRecommendationsEnabled =
-          values['anonymousTrailRecommendationsEnabled'] is bool
-          ? values['anonymousTrailRecommendationsEnabled'] as bool
-          : false;
       _hapticSafetyFeedbackEnabled =
           values['hapticSafetyFeedbackEnabled'] is bool
           ? values['hapticSafetyFeedbackEnabled'] as bool
@@ -280,6 +243,11 @@ class AppSettingsController extends ChangeNotifier {
         _pathDeviationDistanceMeters = PathDeviationPolicy.normalizeDistance(
           deviation.round(),
         );
+      }
+      // Drop retired keys after loading, preserving every retained preference.
+      if (values.containsKey('language') ||
+          values.containsKey('anonymousTrailRecommendationsEnabled')) {
+        unawaited(_queuePersist());
       }
       notifyListeners();
     } catch (error) {
@@ -299,12 +267,9 @@ class AppSettingsController extends ChangeNotifier {
           'fallSensorSensitivity': _fallSensorSensitivity,
           'pathDeviationDistanceMeters': _pathDeviationDistanceMeters,
           'themeSetting': _themeSetting.label,
-          'language': _language,
           'privateScreenUnlockEnabled': _privateScreenUnlockEnabled,
           'preferredTimeZone': _preferredTimeZone,
           'preciseLocationEnabled': _preciseLocationEnabled,
-          'anonymousTrailRecommendationsEnabled':
-              _anonymousTrailRecommendationsEnabled,
           'hapticSafetyFeedbackEnabled': _hapticSafetyFeedbackEnabled,
           'lowBatterySafetyWarningEnabled': _lowBatterySafetyWarningEnabled,
         });

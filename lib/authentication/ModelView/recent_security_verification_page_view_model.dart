@@ -37,12 +37,9 @@ class _RecentSecurityVerificationPageStateViewModel extends ChangeNotifier {
     );
   }
 
-  /// Returns command masked phone.
-  String get commandMaskedPhone {
-    final value = readPhoneNumber();
-    if (value.length <= 6) return value;
-    return '${value.substring(0, 4)} •••• ${value.substring(value.length - 3)}';
-  }
+  /// Uses the same masked account label as WhatsApp delivery notices.
+  String get commandMaskedPhone =>
+      PhoneNumberFormatter.maskForDisplay(readPhoneNumber());
 
   /// Releases resources owned by this instance.
   @override

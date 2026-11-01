@@ -8,9 +8,7 @@ class MePage extends StatefulWidget {
     required this.session,
     required this.phoneNumber,
     required this.onSignOut,
-    this.onStartHike,
     this.onRescheduleExpiredHike,
-    this.onOpenSos,
     this.onOpenNotificationLink,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
   });
@@ -19,9 +17,7 @@ class MePage extends StatefulWidget {
   final String phoneNumber;
   final Future<void> Function(String link)? onOpenNotificationLink;
   final VoidCallback onSignOut;
-  final Future<void> Function(Trail trail)? onStartHike;
   final Future<void> Function(UpcomingHike)? onRescheduleExpiredHike;
-  final VoidCallback? onOpenSos;
   final FirebaseBootstrapResult firebaseBootstrapResult;
 
   /// Creates the presentation state for this widget.
@@ -338,76 +334,6 @@ class _MePageState extends State<MePage> {
   Future<void> _openEmergencyContacts() =>
       _screenModel.commandOpenEmergencyContacts();
 
-  /// Opens assistant trail.
-  Future<void> _openAssistantTrail(String trailId) async {
-    final trails = await _MePageDataActions.loadTrails(firebaseRepository)();
-    if (!mounted) return;
-    for (final trail in trails) {
-      if (trail.trailId == trailId) {
-        await _presentOpenAssistantTrailEffect1(trail);
-        return;
-      }
-    }
-    HikerCircleToast.show(context, 'This trail is no longer available.');
-  }
-
-  /// Map supported assistant destination identifiers to existing account and app screens.
-  void _navigateFromAssistant(String destinationId) {
-    switch (destinationId) {
-      case 'trails':
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => TrailPage(
-              session: widget.session,
-              hikerCircleRepository: firebaseRepository,
-              onStartHike: widget.onStartHike ?? (_) async {},
-            ),
-          ),
-        );
-      case 'find_hike':
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => FindHikePage(
-              session: widget.session,
-              repository: firebaseRepository,
-            ),
-          ),
-        );
-      case 'emergency_contacts':
-        unawaited(_openEmergencyContacts());
-      case 'sos':
-        Navigator.of(context).pop();
-        Navigator.of(context).pop();
-        widget.onOpenSos?.call();
-      case 'first_aid':
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const FirstAidGuidePage()),
-        );
-      case 'security':
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const SecurityMethodsPage()),
-        );
-      case 'hike_history':
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => HikeHistoryPage(
-              repository: firebaseRepository,
-              session: widget.session,
-              onRescheduleExpiredHike: widget.onRescheduleExpiredHike,
-            ),
-          ),
-        );
-      case 'achievements':
-        unawaited(_openAchievements());
-      case 'feedback':
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => FeedbackPage(isAdmin: widget.session.isAdmin),
-          ),
-        );
-    }
-  }
-
   /// Delegates open achievements to the ViewModel.
   Future<void> _openAchievements() => _screenModel.commandOpenAchievements();
 
@@ -465,8 +391,6 @@ class _MePageState extends State<MePage> {
         builder: (context) => _AdvancedAppSettingsPage(
           session: widget.session,
           firebaseRepository: firebaseRepository,
-          onOpenTrail: _openAssistantTrail,
-          onNavigate: _navigateFromAssistant,
         ),
       ),
     );
@@ -512,19 +436,6 @@ class _MePageState extends State<MePage> {
             session: widget.session,
             initialContacts: emergencyContacts,
             repository: emergencyContactsRepository,
-          ),
-        ),
-      );
-
-  /// Presents the open assistant trail effect1 UI.
-  Future<void> _presentOpenAssistantTrailEffect1(Trail trail) =>
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => TrailDetailPage(
-            session: widget.session,
-            hikerCircleRepository: firebaseRepository,
-            trail: trail,
-            onStartHike: widget.onStartHike ?? (_) async {},
           ),
         ),
       );
@@ -920,6 +831,7 @@ IconData _achievementIconFor(String iconName) {
     'terrain' => Icons.terrain_rounded,
     'military_tech' => Icons.military_tech_rounded,
     'route' => Icons.route_rounded,
+    'timer' => Icons.timer_rounded,
     'explore' => Icons.explore_rounded,
     'travel_explore' => Icons.travel_explore_rounded,
     'public' => Icons.public_rounded,
@@ -1103,14 +1015,10 @@ class _AdvancedAppSettingsPage extends StatefulWidget {
   const _AdvancedAppSettingsPage({
     required this.session,
     required this.firebaseRepository,
-    required this.onOpenTrail,
-    required this.onNavigate,
   });
 
   final AppSession session;
   final HikerCircleFirebaseRepository firebaseRepository;
-  final Future<void> Function(String trailId) onOpenTrail;
-  final void Function(String destinationId) onNavigate;
 
   /// Creates the presentation state for this widget.
   @override
@@ -1161,12 +1069,11 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
     )..addListener(_renderScreenModel);
     _screenModel.effectPresentChangePasswordEffect2 =
         _presentChangePasswordEffect2;
-    _screenModel.effectPresentSetPrivateUnlockEffect2 =
-        _presentSetPrivateUnlockEffect2;
     _screenModel.effectPresentChangePasswordEffect1 =
         _presentChangePasswordEffect1;
-    _screenModel.effectPresentSetPrivateUnlockEffect1 =
-        _presentSetPrivateUnlockEffect1;
+    _screenModel.effectShowBiometricUnlockIssue = _showBiometricUnlockIssue;
+    _screenModel.effectConfirmDisableHapticFeedback =
+        _confirmDisableHapticFeedback;
 
     _settings.addListener(_handleSettingsChanged);
     unawaited(
@@ -1272,208 +1179,40 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
     }
   }
 
-  /// Builds this widget from its current presentation state.
+  /// Presents the shared settings layout with the existing guarded preference actions.
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _MeColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DetailHeader(
-                    title: 'App Settings',
-                    subtitle: 'Advanced preferences and device controls',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  SectionLabel(label: 'HikerCircle Assistant'),
-                  const SizedBox(height: 8),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    color: _MeColors.surfaceFor(context),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: _MeColors.separatorFor(context)),
-                    ),
-                    child: ListTile(
-                      leading: Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: _MeColors.greenSoftFor(context),
-                          borderRadius: BorderRadius.circular(13),
-                        ),
-                        child: const Icon(
-                          Icons.auto_awesome_rounded,
-                          color: _MeColors.green,
-                        ),
-                      ),
-                      title: const Text('Ask HikerCircle'),
-                      subtitle: const Text(
-                        'Quick answers from reviewed app guides',
-                      ),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (context) => HikerCircleAssistantPage(
-                            ownerPhoneNumber: widget.session.phoneNumber,
-                            onOpenTrail: widget.onOpenTrail,
-                            onNavigate: widget.onNavigate,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  SectionLabel(label: 'Account Security'),
-                  const SizedBox(height: 8),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    color: _MeColors.surfaceFor(context),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: _MeColors.separatorFor(context)),
-                    ),
-                    child: ListTile(
-                      leading: Icon(
-                        Icons.security_rounded,
-                        color: _MeColors.green,
-                      ),
-                      title: const Text('Login security'),
-                      subtitle: const Text('Manage Authenticator and passkeys'),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (context) => const SecurityMethodsPage(),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  SwitchListTile.adaptive(
-                    secondary: const Icon(Icons.fingerprint_rounded),
-                    title: const Text('Private-screen unlock'),
-                    subtitle: const Text(
-                      'Require biometrics when opening the app after it was closed. Skipped during an active hike.',
-                    ),
-                    value: _settings.privateScreenUnlockEnabled,
-                    onChanged: _setPrivateUnlock,
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.password_rounded),
-                    title: const Text('Change password'),
-                    subtitle: const Text(
-                      'Verify your identity before changing your password',
-                    ),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: _changePassword,
-                  ),
-                  const SizedBox(height: 18),
-                  SectionLabel(label: 'Language'),
-                  const SizedBox(height: 8),
-                  _ChoiceSettingCard(
-                    icon: Icons.language_rounded,
-                    title: 'App language',
-                    value: _settings.language,
-                    options: const ['English'],
-                    onSelected: _settings.setLanguage,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Additional languages will appear after their translations are available.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryTextFor(context),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  SectionLabel(label: 'Safety settings'),
-                  const SizedBox(height: 8),
-                  const SafetySettingsPanel(),
-                  const SizedBox(height: 18),
-                  SectionLabel(label: 'Region'),
-                  const SizedBox(height: 8),
-                  _TimeZoneSettingCard(
-                    value: PreferredTimeZone.compactLabel(
-                      _settings.preferredTimeZone,
-                    ),
-                    timeZoneId: _settings.preferredTimeZone,
-                    status: _timeZoneStatus,
-                    isBusy: _isLoadingTimeZone || _isSavingTimeZone,
-                    onTap: () => unawaited(_choosePreferredTimeZone()),
-                  ),
-                  const SizedBox(height: 18),
-                  SectionLabel(label: 'Appearance & Theme'),
-                  const SizedBox(height: 8),
-                  _ChoiceSettingCard(
-                    icon: Icons.palette_rounded,
-                    title: 'Theme mode',
-                    value: _settings.themeSetting.label,
-                    options: HikerCircleThemeSetting.values
-                        .map((setting) => setting.label)
-                        .toList(),
-                    onSelected: (value) => _settings.setThemeSetting(
-                      HikerCircleThemeSetting.fromLabel(value),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  SectionLabel(label: 'Permissions'),
-                  const SizedBox(height: 8),
-                  _SwitchSettingCard(
-                    icon: Icons.location_on_rounded,
-                    title: 'Precise location for hikes and SOS',
-                    subtitle:
-                        'Used for route tracking and emergency map links.',
-                    value: _settings.preciseLocationEnabled,
-                    onChanged: (value) => unawaited(_setPreciseLocation(value)),
-                  ),
-                  const SizedBox(height: 18),
-                  SectionLabel(label: 'Trail Recommendations'),
-                  const SizedBox(height: 8),
-                  _SwitchSettingCard(
-                    icon: Icons.insights_rounded,
-                    title:
-                        'Allow HikerCircle to collect and use my trail data as anonymous',
-                    subtitle:
-                        'Allows HikerCircle to use your trail pathway anonymously as recommendations for other hikers and reduce map-based outliers.',
-                    value: _settings.anonymousTrailRecommendationsEnabled,
-                    onChanged:
-                        _settings.setAnonymousTrailRecommendationsEnabled,
-                  ),
-                  const SizedBox(height: 8),
-                ],
-              ),
-            ),
-          ),
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: _MeColors.backgroundFor(context),
+    body: SafeArea(
+      child: AppSettingsContent(
+        settings: _settings,
+        onBack: () => Navigator.of(context).pop(),
+        onLoginSecurity: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const SecurityMethodsPage()),
         ),
-      ),
-    );
-  }
-
-  /// Presents the set private unlock effect1 UI.
-  void
-  _presentSetPrivateUnlockEffect1() => ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text(
-        'Enroll biometrics in your phone settings before enabling private-screen unlock.',
+        onChangePassword: () => unawaited(_changePassword()),
+        onPrivateUnlock: (value) => unawaited(_setPrivateUnlock(value)),
+        onPreciseLocation: (value) => unawaited(_setPreciseLocation(value)),
+        onHapticFeedback: (value) =>
+            unawaited(_screenModel.commandSetHapticSafetyFeedback(value)),
+        onTimeZone: () => unawaited(_choosePreferredTimeZone()),
+        timeZoneLabel: PreferredTimeZone.compactLabel(
+          _settings.preferredTimeZone,
+        ),
+        timeZoneBusy: _isLoadingTimeZone || _isSavingTimeZone,
+        timeZoneError:
+            _timeZoneStatus.startsWith('Could') ||
+                _timeZoneStatus.startsWith('Not saved')
+            ? _timeZoneStatus
+            : null,
       ),
     ),
   );
 
-  /// Presents the set private unlock effect2 UI.
-  void _presentSetPrivateUnlockEffect2() =>
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Biometric verification is unavailable on this device.',
-          ),
-        ),
-      );
+  /// Presents the specific setup or access problem reported by device verification.
+  void _showBiometricUnlockIssue(String message) => ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text(message)));
 
   /// Presents the change password effect1 UI.
   Future<bool?> _presentChangePasswordEffect1() =>
@@ -1481,6 +1220,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
         MaterialPageRoute(
           builder: (_) => RecentSecurityVerificationPage(
             phoneNumber: widget.session.phoneNumber,
+            sendCodeOnOpen: false,
           ),
         ),
       );
@@ -1501,6 +1241,29 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
         builder: (context) =>
             _TimeZonePickerSheet(selectedTimeZone: _settings.preferredTimeZone),
       );
+
+  /// Matches the location-accuracy warning before turning off haptic feedback.
+  Future<bool?> _confirmDisableHapticFeedback() => showCupertinoDialog<bool>(
+    context: context,
+    builder: (context) => CupertinoAlertDialog(
+      title: const Text('Turn off haptic safety feedback?'),
+      content: const Text(
+        'Vibration helps you notice safety alerts and SOS countdowns when you are not looking at the screen. Keeping it enabled is recommended.',
+      ),
+      actions: [
+        CupertinoDialogAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Keep On'),
+        ),
+        CupertinoDialogAction(
+          isDestructiveAction: true,
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Turn Off'),
+        ),
+      ],
+    ),
+  );
 
   /// Presents the set precise location effect1 UI.
   Future<bool?>
@@ -1529,7 +1292,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
 }
 
 /// Defines the achievement status tab choices.
-enum _AchievementStatusTab { earned, locked }
+enum _AchievementStatusTab { all, earned, locked }
 
 /// Displays the achievements page.
 class AchievementsPage extends StatefulWidget {
@@ -1571,6 +1334,8 @@ class _AchievementsPageState extends State<AchievementsPage> {
 
   late _AchievementStatusTab _achievementTab;
   StreamSubscription<String>? _achievementChanges;
+  StreamSubscription<List<Map<String, dynamic>>>? _catalogChanges;
+  bool _managementDialogOpen = false;
 
   /// Initializes bindings and starts the screen lifecycle.
   @override
@@ -1583,15 +1348,47 @@ class _AchievementsPageState extends State<AchievementsPage> {
     _screenModel.effectPresentOpenRewardModerationEffect1 =
         _presentOpenRewardModerationEffect1;
 
-    _achievementTab = widget.initiallyShowEarned
+    _achievementTab = widget.session.isAdmin
+        ? _AchievementStatusTab.all
+        : widget.initiallyShowEarned
         ? _AchievementStatusTab.earned
         : _AchievementStatusTab.locked;
     _achievementsFuture = _loadAchievementsCacheFirst();
+    _catalogChanges = widget.repository
+        .watchUserAchievementProgress(session: widget.session)
+        .listen(
+          _screenModel.commandApplyLiveRows,
+          onError: (Object _, StackTrace __) {
+            // Cached visibility remains available while Firestore reconnects.
+          },
+        );
     _achievementChanges = AchievementNotificationEvents.changes.listen((owner) {
       if (owner == widget.session.phoneNumber) {
         unawaited(_reloadLocalAchievements());
       }
     });
+  }
+
+  /// Rebinds role and owner-specific content if the account changes while the page is mounted.
+  @override
+  void didUpdateWidget(covariant AchievementsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session.phoneNumber != widget.session.phoneNumber ||
+        oldWidget.session.isAdmin != widget.session.isAdmin) {
+      _catalogChanges?.cancel();
+      _achievementTab = widget.session.isAdmin
+          ? _AchievementStatusTab.all
+          : widget.initiallyShowEarned
+          ? _AchievementStatusTab.earned
+          : _AchievementStatusTab.locked;
+      _achievementsFuture = _loadAchievementsCacheFirst();
+      _catalogChanges = widget.repository
+          .watchUserAchievementProgress(session: widget.session)
+          .listen(
+            _screenModel.commandApplyLiveRows,
+            onError: (Object _, StackTrace __) {},
+          );
+    }
   }
 
   /// Delegates reload local achievements to the ViewModel.
@@ -1602,6 +1399,7 @@ class _AchievementsPageState extends State<AchievementsPage> {
   @override
   void dispose() {
     _achievementChanges?.cancel();
+    _catalogChanges?.cancel();
 
     _screenModel.removeListener(_renderScreenModel);
     _screenModel.dispose();
@@ -1629,6 +1427,7 @@ class _AchievementsPageState extends State<AchievementsPage> {
                     !snapshot.hasData;
                 final achievements = _achievementItemsFromRows(
                   snapshot.data ?? const [],
+                  includeInactive: widget.session.isAdmin,
                 );
                 final earned = achievements
                     .where((item) => item.isUnlocked)
@@ -1637,7 +1436,9 @@ class _AchievementsPageState extends State<AchievementsPage> {
                     .where((item) => !item.isUnlocked)
                     .toList();
                 final visibleAchievements =
-                    _achievementTab == _AchievementStatusTab.earned
+                    _achievementTab == _AchievementStatusTab.all
+                    ? achievements
+                    : _achievementTab == _AchievementStatusTab.earned
                     ? earned
                     : locked;
 
@@ -1673,10 +1474,47 @@ class _AchievementsPageState extends State<AchievementsPage> {
                             if (isLoading)
                               const _AchievementLoadingCard()
                             else ...[
-                              _AchievementProgressPanel(items: achievements),
+                              _AchievementProgressPanel(
+                                items: achievements,
+                                retainedPoints: _retainedAchievementPoints(
+                                  snapshot.data ?? const [],
+                                  includeInactive: widget.session.isAdmin,
+                                ),
+                              ),
                               const SizedBox(height: 18),
+                              if (widget.session.isAdmin) ...[
+                                Row(
+                                  children: [
+                                    const Expanded(
+                                      child: SectionLabel(
+                                        label: 'Achievement rules',
+                                      ),
+                                    ),
+                                    FilledButton.icon(
+                                      key: const Key(
+                                        'achievement-add-rule-button',
+                                      ),
+                                      onPressed:
+                                          _screenModel.stateSavingAchievement
+                                          ? null
+                                          : () => unawaited(_editAchievement()),
+                                      icon: const Icon(Icons.add_rounded),
+                                      label: const Text('Add rule'),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Swipe right to edit · left to archive or unarchive',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                                const SizedBox(height: 12),
+                              ],
                               _AchievementStatusTabs(
                                 selected: _achievementTab,
+                                allCount: widget.session.isAdmin
+                                    ? achievements.length
+                                    : null,
                                 earnedCount: earned.length,
                                 lockedCount: locked.length,
                                 onSelected: (value) {
@@ -1691,14 +1529,20 @@ class _AchievementsPageState extends State<AchievementsPage> {
                                           _AchievementStatusTab.earned
                                       ? Icons.emoji_events_outlined
                                       : Icons.lock_open_rounded,
-                                  title:
-                                      _achievementTab ==
-                                          _AchievementStatusTab.earned
+                                  title: achievements.isEmpty
+                                      ? (widget.session.isAdmin
+                                            ? 'No achievement rules yet'
+                                            : 'No active achievements')
+                                      : _achievementTab ==
+                                            _AchievementStatusTab.earned
                                       ? 'No badges unlocked yet'
                                       : 'Every badge is unlocked',
-                                  message:
-                                      _achievementTab ==
-                                          _AchievementStatusTab.earned
+                                  message: achievements.isEmpty
+                                      ? (widget.session.isAdmin
+                                            ? 'Add a rule to create an achievement.'
+                                            : 'New achievements will appear here when available.')
+                                      : _achievementTab ==
+                                            _AchievementStatusTab.earned
                                       ? 'Open Locked to choose your next hiking goal.'
                                       : 'Keep hiking to build your rank and help the community.',
                                 )
@@ -1706,6 +1550,14 @@ class _AchievementsPageState extends State<AchievementsPage> {
                                 _AchievementCollectionGrid(
                                   items: visibleAchievements,
                                   onTap: _showAchievementDetail,
+                                  onEdit: widget.session.isAdmin
+                                      ? (item) => _editAchievement(item)
+                                      : null,
+                                  onToggleActive: widget.session.isAdmin
+                                      ? _toggleAchievementActive
+                                      : null,
+                                  actionsEnabled:
+                                      !_screenModel.stateSavingAchievement,
                                 ),
                             ],
                           ],
@@ -1719,6 +1571,95 @@ class _AchievementsPageState extends State<AchievementsPage> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Presents the shared editor; saving and role validation remain in the ViewModel/backend.
+  Future<void> _editAchievement([_AchievementProfileItem? item]) async {
+    if (!widget.session.isAdmin ||
+        _managementDialogOpen ||
+        _screenModel.stateSavingAchievement) {
+      return;
+    }
+    _managementDialogOpen = true;
+    Map<String, dynamic>? values;
+    try {
+      values = await showModalBottomSheet<Map<String, dynamic>>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => AchievementEditorSheet(initial: item?.source),
+      );
+    } finally {
+      _managementDialogOpen = false;
+    }
+    if (!mounted || values == null) return;
+    final success = await _screenModel.commandSaveAchievement(
+      values,
+      achievementId: item?.achievementId ?? '',
+    );
+    if (!mounted) return;
+    HikerCircleToast.show(
+      context,
+      success
+          ? (item == null ? 'Achievement added.' : 'Achievement updated.')
+          : _screenModel.stateAchievementError ??
+                'The achievement could not be saved.',
+      tone: success ? HikerCircleToastTone.success : HikerCircleToastTone.error,
+    );
+  }
+
+  /// Confirms the reversible visibility change without deleting any hiker's award history.
+  Future<void> _toggleAchievementActive(_AchievementProfileItem item) async {
+    if (!widget.session.isAdmin ||
+        _managementDialogOpen ||
+        _screenModel.stateSavingAchievement) {
+      return;
+    }
+    _managementDialogOpen = true;
+    final label = item.isActive ? 'Archive' : 'Unarchive';
+    bool? confirmed;
+    try {
+      confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: Icon(
+            item.isActive ? Icons.archive_rounded : Icons.unarchive_rounded,
+          ),
+          title: Text('$label achievement?'),
+          content: Text(
+            item.isActive
+                ? 'This achievement will be hidden from hikers. Previously awarded points are kept.'
+                : 'This achievement will be visible to hikers again. Eligible progress will be checked.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(label),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _managementDialogOpen = false;
+    }
+    if (!mounted || confirmed != true) return;
+    final success = await _screenModel.commandSetAchievementActive(
+      item.achievementId,
+      !item.isActive,
+    );
+    if (!mounted) return;
+    HikerCircleToast.show(
+      context,
+      success
+          ? 'Achievement ${item.isActive ? 'archived' : 'unarchived'}.'
+          : _screenModel.stateAchievementError ??
+                'The achievement could not be updated.',
+      tone: success ? HikerCircleToastTone.success : HikerCircleToastTone.error,
     );
   }
 
@@ -1990,12 +1931,14 @@ class _AchievementStatusTabs extends StatelessWidget {
   /// Creates achievement status tabs.
   const _AchievementStatusTabs({
     required this.selected,
+    this.allCount,
     required this.earnedCount,
     required this.lockedCount,
     required this.onSelected,
   });
 
   final _AchievementStatusTab selected;
+  final int? allCount;
   final int earnedCount;
   final int lockedCount;
   final ValueChanged<_AchievementStatusTab> onSelected;
@@ -2011,19 +1954,21 @@ class _AchievementStatusTabs extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final isLtr = Directionality.of(context) == TextDirection.ltr;
-          final earnedIsLeading = isLtr;
-          final selectedIsLeading = selected == _AchievementStatusTab.earned
-              ? earnedIsLeading
-              : !earnedIsLeading;
+          final choices = [
+            if (allCount != null) _AchievementStatusTab.all,
+            _AchievementStatusTab.earned,
+            _AchievementStatusTab.locked,
+          ];
+          final index = choices.indexOf(selected).clamp(0, choices.length - 1);
+          final alignment = -1.0 + 2.0 * index / (choices.length - 1);
 
           /// Selects from drag.
           void selectFromDrag(DragUpdateDetails details) {
-            final isLeadingHalf = isLtr
-                ? details.localPosition.dx < constraints.maxWidth / 2
-                : details.localPosition.dx >= constraints.maxWidth / 2;
-            final next = isLeadingHalf
-                ? _AchievementStatusTab.earned
-                : _AchievementStatusTab.locked;
+            final fraction = details.localPosition.dx / constraints.maxWidth;
+            final next =
+                choices[((isLtr ? fraction : 1 - fraction) * choices.length)
+                    .floor()
+                    .clamp(0, choices.length - 1)];
             if (next != selected) onSelected(next);
           }
 
@@ -2035,11 +1980,9 @@ class _AchievementStatusTabs extends StatelessWidget {
                 AnimatedAlign(
                   duration: const Duration(milliseconds: 280),
                   curve: Curves.easeOutCubic,
-                  alignment: selectedIsLeading
-                      ? Alignment.centerLeft
-                      : Alignment.centerRight,
+                  alignment: Alignment(isLtr ? alignment : -alignment, 0),
                   child: FractionallySizedBox(
-                    widthFactor: 0.5,
+                    widthFactor: 1 / choices.length,
                     child: Container(
                       key: const Key('achievement-tab-thumb'),
                       height: 48,
@@ -2064,6 +2007,21 @@ class _AchievementStatusTabs extends StatelessWidget {
                 ),
                 Row(
                   children: [
+                    if (allCount != null)
+                      Expanded(
+                        child: CupertinoButton(
+                          padding: EdgeInsets.zero,
+                          minimumSize: const Size.fromHeight(48),
+                          onPressed: () =>
+                              onSelected(_AchievementStatusTab.all),
+                          child: _AchievementTabLabel(
+                            key: const Key('achievement-tab-all'),
+                            icon: CupertinoIcons.square_grid_2x2,
+                            label: 'All  $allCount',
+                            selected: selected == _AchievementStatusTab.all,
+                          ),
+                        ),
+                      ),
                     Expanded(
                       child: CupertinoButton(
                         padding: EdgeInsets.zero,
@@ -2530,10 +2488,18 @@ String _formatRankPoints(int points) {
 /// Displays the achievement collection grid.
 class _AchievementCollectionGrid extends StatelessWidget {
   /// Creates achievement collection grid.
-  const _AchievementCollectionGrid({required this.items, required this.onTap});
+  const _AchievementCollectionGrid({
+    required this.items,
+    required this.onTap,
+    this.onEdit,
+    this.onToggleActive,
+    this.actionsEnabled = true,
+  });
 
   final List<_AchievementProfileItem> items;
   final ValueChanged<_AchievementProfileItem> onTap;
+  final Future<void> Function(_AchievementProfileItem)? onEdit, onToggleActive;
+  final bool actionsEnabled;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -2549,11 +2515,27 @@ class _AchievementCollectionGrid extends StatelessWidget {
             crossAxisCount: columnCount,
             crossAxisSpacing: 11,
             mainAxisSpacing: 11,
-            mainAxisExtent: 236,
+            mainAxisExtent:
+                (onEdit == null ? 236 : 260) +
+                (MediaQuery.textScalerOf(context).scale(16) - 16).clamp(0, 24) *
+                    3,
           ),
           itemBuilder: (context, index) {
             final item = items[index];
-            return _AchievementBadgeCard(item: item, onTap: () => onTap(item));
+            final card = _AchievementBadgeCard(
+              item: item,
+              onTap: () => onTap(item),
+            );
+            if (onEdit == null || onToggleActive == null) return card;
+            return AchievementRuleSwipeCard(
+              key: ValueKey('achievement-admin-${item.achievementId}'),
+              achievementId: item.achievementId,
+              isActive: item.isActive,
+              enabled: actionsEnabled,
+              onEdit: () => onEdit!(item),
+              onToggleActive: () => onToggleActive!(item),
+              child: card,
+            );
           },
         );
       },
@@ -2671,7 +2653,9 @@ class _AchievementDetailSheet extends StatelessWidget {
                           const SizedBox(height: 7),
                           Center(
                             child: _AchievementTag(
-                              label: item.isUnlocked
+                              label: !item.isActive
+                                  ? 'INACTIVE · ${item.category.toUpperCase()}'
+                                  : item.isUnlocked
                                   ? 'EARNED · $displayPoints POINTS'
                                   : '${item.category.toUpperCase()} · $displayPoints POINTS',
                               accent: item.accentColor,
@@ -2709,7 +2693,7 @@ class _AchievementDetailSheet extends StatelessWidget {
                             icon: CupertinoIcons.sparkles,
                             title: 'Reward and recognition',
                             body:
-                                'Earn $displayPoints trail-rank points when this badge unlocks. Each achievement awards its points once and contributes to your Trail Journey level.',
+                                '${item.rewardRecognition}\n\n$displayPoints points · awarded once · contributes to your Trail Journey level.',
                             accent: item.accentColor,
                           ),
                           const SizedBox(height: 8),
@@ -2775,7 +2759,10 @@ class _AchievementDetailProgress extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Row(
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            spacing: 12,
+            runSpacing: 6,
             children: [
               Text(
                 item.isUnlocked ? 'Completed' : 'Current progress',
@@ -2785,9 +2772,8 @@ class _AchievementDetailProgress extends StatelessWidget {
                   letterSpacing: 0,
                 ),
               ),
-              const Spacer(),
               Text(
-                '${item.progressCount} / ${item.targetCount}',
+                '${AchievementCatalog.quantity(item.metricKey, item.progressCount, unit: false)} / ${AchievementCatalog.quantity(item.metricKey, item.targetCount)}',
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
                   color: item.accentColor,
                   fontWeight: FontWeight.w900,
@@ -2812,7 +2798,7 @@ class _AchievementDetailProgress extends StatelessWidget {
             child: Text(
               item.isUnlocked
                   ? 'This milestone is complete.'
-                  : '$remaining remaining before this badge unlocks.',
+                  : '${AchievementCatalog.quantity(item.metricKey, remaining)} remaining before this badge unlocks.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: _MeColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w700,
@@ -3140,58 +3126,6 @@ class _TimeZonePickerSheetState extends State<_TimeZonePickerSheet> {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Displays the animated boolean toggle.
-class _AnimatedBooleanToggle extends StatelessWidget {
-  /// Creates animated boolean toggle.
-  const _AnimatedBooleanToggle({required this.value, required this.onChanged});
-
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedToggleSwitch<bool>.size(
-      current: value,
-      values: const [false, true],
-      height: 38,
-      spacing: 2,
-      indicatorSize: const Size.square(32),
-      borderWidth: 2,
-      style: ToggleStyle(
-        backgroundColor: _MeColors.greenSoftFor(context),
-        borderColor: _MeColors.separatorFor(context),
-        borderRadius: BorderRadius.circular(999),
-        indicatorBorderRadius: BorderRadius.circular(999),
-      ),
-      styleBuilder: (enabled) => ToggleStyle(
-        indicatorColor: enabled
-            ? _MeColors.green
-            : _MeColors.destructiveFor(context),
-      ),
-      iconBuilder: (enabled) => Icon(
-        enabled ? Icons.check_rounded : Icons.close_rounded,
-        color: enabled ? _MeColors.green : _MeColors.destructiveFor(context),
-        size: 17,
-      ),
-      foregroundIndicatorIconBuilder: (context, global) {
-        final enabled = global.current;
-        return Icon(
-          enabled ? Icons.check_rounded : Icons.close_rounded,
-          color: _MeColors.surfaceFor(context),
-          size: 18,
-        );
-      },
-      iconOpacity: 0.72,
-      selectedIconOpacity: 0,
-      selectedIconScale: 1,
-      animationDuration: const Duration(milliseconds: 260),
-      animationCurve: Curves.easeOutCubic,
-      onChanged: onChanged,
     );
   }
 }

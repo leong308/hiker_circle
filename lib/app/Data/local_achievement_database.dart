@@ -15,7 +15,8 @@ List<Map<String, dynamic>> _achievementRows(Object? json) {
         .where(
           (row) =>
               row['achievementId'] is String &&
-              (row['achievementId'] as String).isNotEmpty,
+              (row['achievementId'] as String).isNotEmpty &&
+              (AchievementCatalog.visible(row) || row['isUnlocked'] == true),
         )
         .toList();
   } catch (_) {
@@ -51,6 +52,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
     List<Map<String, dynamic>>? serverRows,
     bool freshServerSnapshot = false,
   }) async {
+    await AchievementCatalog.load();
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty) return const [];
     final db = await _openDatabase();
@@ -64,9 +66,6 @@ extension LocalAchievementEvents on LocalSessionDatabase {
       var rows = cached.isEmpty
           ? seedRows.map((row) => Map<String, dynamic>.from(row)).toList()
           : _achievementRows(cached.single['payload_json']);
-      if (rows.isEmpty) {
-        rows = seedRows.map((row) => Map<String, dynamic>.from(row)).toList();
-      }
       final state = await tx.query(
         'achievement_sync_state',
         where: 'owner_phone_number = ?',
@@ -75,6 +74,14 @@ extension LocalAchievementEvents on LocalSessionDatabase {
       );
       final hasBaseline =
           state.isNotEmpty && state.single['has_server_baseline'] == 1;
+      if (!hasBaseline) {
+        final knownIds = rows.map((row) => row['achievementId']).toSet();
+        rows.addAll(
+          seedRows
+              .where((row) => knownIds.add(row['achievementId']))
+              .map((row) => Map<String, dynamic>.from(row)),
+        );
+      }
       final now = DateTime.now().toUtc().toIso8601String();
 
       /// Records unlock.
@@ -123,7 +130,9 @@ extension LocalAchievementEvents on LocalSessionDatabase {
       if (serverRows != null) {
         final oldById = {for (final row in rows) row['achievementId']: row};
         final next = <Map<String, dynamic>>[];
-        for (final remote in serverRows) {
+        for (final remote in serverRows.where(
+          (row) => AchievementCatalog.visible(row) || row['isUnlocked'] == true,
+        )) {
           final row = Map<String, dynamic>.from(remote);
           final old = oldById.remove(row['achievementId']);
           final target = _achievementInt(
@@ -132,9 +141,9 @@ extension LocalAchievementEvents on LocalSessionDatabase {
           final serverProgress = row['isUnlocked'] == true
               ? target
               : _achievementInt(row['progressCount']).clamp(0, target);
-          final localProgress = _achievementInt(
-            old?['localProgressCount'],
-          ).clamp(0, target);
+          final localProgress = old?['metricKey'] != row['metricKey']
+              ? 0
+              : _achievementInt(old?['localProgressCount']).clamp(0, target);
           final progress = math.max(serverProgress, localProgress);
           final unlocked = row['isUnlocked'] == true || progress >= target;
           row['progressCount'] = progress;
@@ -169,7 +178,13 @@ extension LocalAchievementEvents on LocalSessionDatabase {
       }
 
       for (final event in events) {
-        if (event.eventKey.isEmpty || event.metricKey.isEmpty) continue;
+        final metric = AchievementCatalog.metric(event.metricKey);
+        if (event.eventKey.isEmpty ||
+            metric == null ||
+            event.increment < 1 ||
+            event.increment > (metric['maxIncrement'] as num).toInt()) {
+          continue;
+        }
         final seen = await tx.query(
           'achievement_event_receipts',
           where: 'owner_phone_number = ? AND event_key = ?',
@@ -192,10 +207,11 @@ extension LocalAchievementEvents on LocalSessionDatabase {
           final target = row['rewardType'] == 'one_time'
               ? 1
               : _achievementInt(row['targetCount']).clamp(1, 1000000000);
-          final progress = (_achievementInt(row['progressCount']) + 1).clamp(
-            0,
-            target,
-          );
+          final progress =
+              (_achievementInt(row['progressCount']) + event.increment).clamp(
+                0,
+                target,
+              );
           row['progressCount'] = progress;
           row['localProgressCount'] = progress;
           row['isUnlocked'] = progress >= target;
@@ -222,6 +238,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
   Future<List<Map<String, dynamic>>> pendingAchievementNotifications(
     String owner,
   ) async {
+    await AchievementCatalog.load();
     final db = await _openDatabase();
     final rows = await db.query(
       'achievement_notification_outbox',
@@ -229,11 +246,28 @@ extension LocalAchievementEvents on LocalSessionDatabase {
       whereArgs: [owner.trim()],
       orderBy: 'created_at ASC',
     );
+    final cache = await db.query(
+      'achievement_progress_cache',
+      where: 'owner_phone_number = ?',
+      whereArgs: [owner.trim()],
+      limit: 1,
+    );
+    final current = {
+      for (final row in _achievementRows(
+        cache.isEmpty ? null : cache.single['payload_json'],
+      ))
+        row['achievementId']: row,
+    };
     return rows
         .map(
           (row) => Map<String, dynamic>.from(
             jsonDecode(row['payload_json'] as String) as Map,
           ),
+        )
+        .where(
+          (row) =>
+              AchievementCatalog.visible(row) &&
+              (current[row['achievementId']] ?? row)['isActive'] != false,
         )
         .toList();
   }

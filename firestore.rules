@@ -92,16 +92,6 @@ service cloud.firestore {
       );
     }
 
-    function teamMember(data) {
-      return signedIn() && (
-        (data.keys().hasAny(['leaderId'])
-          && data.leaderId == request.auth.uid)
-        || (data.keys().hasAny(['memberIds'])
-          && data.memberIds is list
-          && request.auth.uid in data.memberIds)
-      );
-    }
-
     function ownHike(data) {
       return signedIn()
         && data.userId == request.auth.uid
@@ -238,10 +228,30 @@ service cloud.firestore {
       );
     }
 
+    // Shared previews are untrusted display data; opening always reads the real post.
+    function validSharedCommunityPost() {
+      return !request.resource.data.keys().hasAny(['sharedPost']) || (
+        request.resource.data.sharedPost is map
+        && request.resource.data.sharedPost.keys().hasAll(['postId', 'authorName', 'caption', 'trailName'])
+        && request.resource.data.sharedPost.keys().hasOnly(['postId', 'authorName', 'caption', 'trailName'])
+        && request.resource.data.sharedPost.postId is string
+        && request.resource.data.sharedPost.postId.size() > 0
+        && request.resource.data.sharedPost.postId.size() <= 200
+        && !request.resource.data.sharedPost.postId.matches('.*[/\\x00-\\x1f].*')
+        && request.resource.data.sharedPost.authorName is string
+        && request.resource.data.sharedPost.authorName.size() > 0
+        && request.resource.data.sharedPost.authorName.size() <= 160
+        && request.resource.data.sharedPost.caption is string
+        && request.resource.data.sharedPost.caption.size() <= 600
+        && request.resource.data.sharedPost.trailName is string
+        && request.resource.data.sharedPost.trailName.size() <= 160
+      );
+    }
+
     function validChatMessageCreate(chatId) {
       return request.resource.data.keys().hasOnly([
           'chatId', 'senderPhone', 'senderName', 'text', 'sentAtLocal',
-          'isSystemMessage', 'seenBy', 'senderPhotoURL', 'attachment'
+          'isSystemMessage', 'seenBy', 'senderPhotoURL', 'attachment', 'sharedPost'
         ])
         && request.resource.data.senderName is string
         && request.resource.data.senderName.size() > 0
@@ -259,7 +269,8 @@ service cloud.firestore {
         && (!request.resource.data.keys().hasAny(['senderPhotoURL'])
           || (request.resource.data.senderPhotoURL is string
             && request.resource.data.senderPhotoURL.size() <= 2048))
-        && validChatAttachment(chatId);
+        && validChatAttachment(chatId)
+        && validSharedCommunityPost();
     }
 
     function validEmergencyContact(contact) {
@@ -464,27 +475,6 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /assistantConversations/{userId} {
-      allow read: if signedIn() && request.auth.uid == userId;
-      allow create, update: if signedIn() && request.auth.uid == userId
-        && request.resource.data.keys().hasOnly(['clearedAtMicros'])
-        && request.resource.data.clearedAtMicros is int
-        && request.resource.data.clearedAtMicros >= 0;
-      allow delete: if false;
-
-      match /messages/{messageId} {
-        allow read: if signedIn() && request.auth.uid == userId;
-        allow create, update: if signedIn() && request.auth.uid == userId
-          && request.resource.data.keys().hasOnly(['id', 'createdAtMicros', 'payload'])
-          && request.resource.data.id == messageId
-          && request.resource.data.createdAtMicros is int
-          && request.resource.data.createdAtMicros >= 0
-          && request.resource.data.payload is string
-          && request.resource.data.payload.size() <= 30000;
-        allow delete: if signedIn() && request.auth.uid == userId;
-      }
-    }
-
     // Authentication factors, OTP/session material, and WebAuthn challenges
     // are backend-only. They must never be readable through a mobile SDK,
     // including by the account owner or an administrator client session.
@@ -628,13 +618,6 @@ service cloud.firestore {
         allow read: if signedIn() && resource.data.uid == request.auth.uid;
         allow write: if false;
       }
-    }
-
-    match /teams/{teamId} {
-      allow read: if teamMember(resource.data) || admin();
-      // The Admin SDK bypasses rules. No signed-in mobile account, including an
-      // admin account, may create or mutate team membership directly.
-      allow write: if false;
     }
 
     // Creation and all participant/phase mutations are authenticated Cloud
@@ -841,7 +824,9 @@ service cloud.firestore {
           );
         }
 
+        // Version two has only first/frequency; old clients retain their limits.
         function validConfig(data) {
+          let version = data.get('schemaVersion', 1);
           return data.enabled is bool
             && data.firstReminderMinutesBefore is int
             && data.firstReminderMinutesBefore in [
@@ -849,12 +834,19 @@ service cloud.firestore {
             ]
             && data.repeatIntervalMinutes is int
             && data.repeatIntervalMinutes in [0, 15, 30, 60, 120, 360]
-            && data.finalReminderMinutesBefore is int
-            && data.finalReminderMinutesBefore in [5, 10, 15, 30, 60]
-            && data.finalReminderMinutesBefore
-              <= data.firstReminderMinutesBefore
-            && data.maximumReminders is int
-            && data.maximumReminders in [1, 2, 3, 4, 5, 6, 7, 8];
+            && version is int
+            && ((version == 2
+                && data.repeatIntervalMinutes < data.firstReminderMinutesBefore
+                && !data.keys().hasAny([
+                  'finalReminderMinutesBefore', 'maximumReminders'
+                ]))
+              || (version == 1
+                && data.finalReminderMinutesBefore is int
+                && data.finalReminderMinutesBefore in [5, 10, 15, 30, 60]
+                && data.finalReminderMinutesBefore
+                  <= data.firstReminderMinutesBefore
+                && data.maximumReminders is int
+                && data.maximumReminders in [1, 2, 3, 4, 5, 6, 7, 8]));
         }
 
         function ownReminderPath() {
@@ -879,7 +871,7 @@ service cloud.firestore {
         allow create: if ownReminder(request.resource.data)
           && validConfig(request.resource.data)
           && request.resource.data.keys().hasOnly([
-            'enabled', 'firstReminderMinutesBefore',
+            'schemaVersion', 'enabled', 'firstReminderMinutesBefore',
             'repeatIntervalMinutes', 'finalReminderMinutesBefore',
             'maximumReminders', 'hikeId', 'ownerUserId',
             'ownerPhoneNumber', 'updatedAt', 'updatedAtLocal'
@@ -888,7 +880,7 @@ service cloud.firestore {
           && ownReminder(request.resource.data)
           && validConfig(request.resource.data)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'enabled', 'firstReminderMinutesBefore',
+            'schemaVersion', 'enabled', 'firstReminderMinutesBefore',
             'repeatIntervalMinutes', 'finalReminderMinutesBefore',
             'maximumReminders', 'updatedAt', 'updatedAtLocal'
           ]);

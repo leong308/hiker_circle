@@ -1,5 +1,8 @@
 // HikeBriefingWeatherService shares bounded forecast caching for scheduled hike briefings.
 import '../../app/Data/local_session_database.dart';
+import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../Model/hike_session_models.dart';
+import '../Model/hike_weather_briefing.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../trail/Model/trail_models.dart';
@@ -7,10 +10,20 @@ import '../../trail/Model/trail_models.dart';
 /// One shared, bounded cache for the Home briefing. No requests on map movement.
 class HikeBriefingWeatherService {
   /// Creates hike briefing weather service.
-  HikeBriefingWeatherService({http.Client? client}) : _client = client;
+  HikeBriefingWeatherService({
+    http.Client? client,
+    Future<TrailWeather> Function(String trailId, {bool refresh})?
+    trailForecast,
+  }) : _client = client,
+       _trailForecast = trailForecast;
+
+  final Future<TrailWeather> Function(String trailId, {bool refresh})?
+  _trailForecast;
+  final _trailPending = <String, Future<TrailWeather>>{};
+  static const reloadAge = Duration(minutes: 15);
   static final shared = HikeBriefingWeatherService();
   static const freshness = TrailWeather.cacheFreshness;
-  static const forecastDays = 16;
+  static const forecastDays = 7;
 
   /// Checks whether beyond forecast.
   static bool isBeyondForecast(DateTime departure, {DateTime? now}) =>
@@ -20,6 +33,73 @@ class HikeBriefingWeatherService {
   final _cache = <String, TrailWeather>{};
   final _pending = <String, Future<TrailWeather>>{};
   final _failed = <String, DateTime>{};
+
+  /// Loads registered hike weather by trail identity, never its saved GPS copy.
+  Future<TrailWeather> fetchForHike(UpcomingHike hike, {bool force = false}) =>
+      hike.draft?.trail.isUnlisted == true ||
+          hike.trailId.startsWith('unlisted_')
+      ? fetch(hike.latitude, hike.longitude, force: force)
+      : _fetchTrail(hike.trailId, force: force);
+
+  /// Keeps recorded-location hikes working while sharing saved trail forecasts.
+  Future<TrailWeather> fetchForTrail(Trail trail, {bool force = false}) =>
+      trail.isUnlisted
+      ? fetch(trail.latitude, trail.longitude, force: force)
+      : _fetchTrail(trail.trailId, force: force);
+
+  /// Coalesces concurrent requests from the card, forecast sheet and widget.
+  Future<TrailWeather> _fetchTrail(
+    String trailId, {
+    required bool force,
+  }) async {
+    final key = trailId.trim();
+    if (key.isEmpty) {
+      throw const FormatException('This hike has no trail forecast.');
+    }
+    final pending = _trailPending[key];
+    if (pending != null) return pending;
+    final read =
+        _trailForecast ??
+        HikerCircleFirebaseRepository().loadTrailWeatherForecast;
+    final request = read(key, refresh: force);
+    _trailPending[key] = request;
+    try {
+      return await request;
+    } finally {
+      if (identical(_trailPending[key], request)) _trailPending.remove(key);
+    }
+  }
+
+  /// Enables reload only for missing session data or a forecast at least 15 minutes old.
+  static bool canReload(
+    TrailWeather? weather, {
+    required DateTime departure,
+    required DateTime returning,
+    DateTime? now,
+  }) {
+    if (weather == null) return true;
+    final hourly = weather.forecastData['hourly'];
+    final times = hourly is Map ? hourly['time'] : null;
+    if (times is! List || times.isEmpty) return true;
+    final briefing = HikeWeatherBriefing.fromWeather(
+      weather,
+      departure,
+      returning,
+    );
+    final usable = briefing.hours.any(
+      (hour) =>
+          hour.temperature != null ||
+          hour.rainChance != null ||
+          hour.values.values.any((value) => value != null),
+    );
+    final age = (now ?? DateTime.now()).toUtc().difference(
+      weather.cachedAt.toUtc(),
+    );
+    return !briefing.covered ||
+        !usable ||
+        age >= reloadAge ||
+        age < const Duration(minutes: -1);
+  }
 
   /// Fetches.
   Future<TrailWeather> fetch(

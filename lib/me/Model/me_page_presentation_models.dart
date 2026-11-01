@@ -265,62 +265,14 @@ class _AchievementGuidance {
       0,
       item.targetCount,
     );
-    return '$remaining of ${item.targetCount} qualifying activities remain.';
+    return '${AchievementCatalog.quantity(item.metricKey, remaining)} remaining to reach ${AchievementCatalog.quantity(item.metricKey, item.targetCount)}.';
   }
 
   /// Creates achievement guidance using for item.
   factory _AchievementGuidance.forItem(_AchievementProfileItem item) {
-    final category = item.category.toLowerCase();
-    final whyItMatters = switch (category) {
-      'hike milestone' =>
-        'Regular time on trail builds experience, confidence, and better judgement. This badge recognises the consistency behind becoming a capable hiker.',
-      'trail exploration' =>
-        'Trying different trails develops navigation skills and exposes you to new terrain instead of repeating only familiar routes.',
-      'malaysia exploration' =>
-        'Malaysia’s states offer distinct landscapes, climates, and trail communities. This achievement encourages responsible exploration across the country.',
-      'safety habit' =>
-        'Reliable check-ins keep your trusted contacts informed and make it easier to notice quickly when a hike is not going to plan.',
-      'account security' =>
-        'Strong account protection helps keep your identity, hike history, emergency contacts, and live-location permissions under your control.',
-      'community safety' =>
-        'Confirmed hazard reports give other hikers timely information that can help them prepare, reroute, or avoid preventable danger.',
-      'community' =>
-        'Useful trail stories and verified observations help other hikers plan with more confidence and strengthen the hiking community.',
-      'team hike' =>
-        'Safe group hiking depends on staying together, communicating clearly, and completing the route without a separation emergency.',
-      'preparation' =>
-        'Good preparation reduces avoidable risk before departure and makes safety tools more dependable when mobile coverage is weak.',
-      _ =>
-        'This achievement highlights a meaningful habit that supports safer, more confident, and more rewarding hiking.',
-    };
-
-    final whatCounts = switch (item.metricKey) {
-      'hike_completed' =>
-        'Start a hike in HikerCircle and complete it normally. Cancelled or unfinished sessions do not increase this achievement.',
-      'distinct_trail_completed' =>
-        'Each completed trail counts once. Repeating the same trail can still build other milestones, but it does not add another unique trail here.',
-      'malaysia_state_hiked' =>
-        'Complete a recorded trail in a new Malaysian state. Multiple trails in the same state count as one state for this badge.',
-      'check_in_completed' =>
-        'Respond successfully to scheduled safety check-ins during an active hike. Missed or expired check-ins are not counted.',
-      'security_factor_type_bound' =>
-        'Bind the required different security methods to your account. Only active, successfully configured methods count.',
-      'hazard_report_approved' =>
-        'Submit an accurate trail hazard report and wait for it to be confirmed by other hikers or moderation.',
-      'community_post_created' =>
-        'Publish a public trail post through HikerCircle. Drafts and private content are not included.',
-      'team_hike_completed' =>
-        'Complete a HikerCircle team hike without triggering a separation emergency. Every qualifying team session adds one.',
-      'offline_map_verified_at_hike_start' =>
-        'Download the trail’s offline map before starting and keep it available when the hike session begins.',
-      'full_checklist_verified_at_departure' =>
-        'Mark every required gear item complete before starting the hike session.',
-      _ => item.condition,
-    };
-
     return _AchievementGuidance(
-      whyItMatters: whyItMatters,
-      whatCounts: whatCounts,
+      whyItMatters: item.whyItMatters,
+      whatCounts: item.whatCounts,
     );
   }
 }
@@ -332,6 +284,9 @@ class _AchievementProfileItem {
     required this.achievementId,
     required this.title,
     required this.condition,
+    required this.whyItMatters,
+    required this.whatCounts,
+    required this.rewardRecognition,
     required this.category,
     required this.iconName,
     required this.rewardPoints,
@@ -344,11 +299,13 @@ class _AchievementProfileItem {
     required this.accentColorValue,
     required this.isUnlocked,
     required this.awardedAt,
+    required this.source,
   });
 
   final String achievementId;
   final String title;
   final String condition;
+  final String whyItMatters, whatCounts, rewardRecognition;
   final String category;
   final String iconName;
   final int rewardPoints;
@@ -361,6 +318,10 @@ class _AchievementProfileItem {
   final int accentColorValue;
   final bool isUnlocked;
   final DateTime? awardedAt;
+  final Map<String, dynamic> source;
+
+  /// The rule flag is authoritative even when an older award remains earned.
+  bool get isActive => source['isActive'] != false;
 
   /// Returns is cumulative.
   bool get isCumulative => rewardType == 'cumulative';
@@ -379,8 +340,17 @@ class _AchievementProfileItem {
 
     return _AchievementProfileItem(
       achievementId: _mapString(row['achievementId']),
+      source: Map<String, dynamic>.from(row),
       title: title.isEmpty ? 'Achievement' : title,
-      condition: condition.isEmpty ? 'Complete a safety milestone' : condition,
+      condition: condition.isEmpty
+          ? AchievementCatalog.goal(
+              _mapString(row['metricKey']),
+              _mapInt(row['targetCount']),
+            )
+          : condition,
+      whyItMatters: AchievementCatalog.content(row)['whyItMatters']!,
+      whatCounts: AchievementCatalog.content(row)['whatCounts']!,
+      rewardRecognition: AchievementCatalog.content(row)['rewardRecognition']!,
       category: category.isEmpty ? 'Safety' : category,
       iconName: iconName.isEmpty ? 'emoji_events' : iconName,
       rewardPoints: _mapInt(row['rewardPoints']),
@@ -401,9 +371,17 @@ class _AchievementProfileItem {
 
 /// Computes achievement items from rows.
 List<_AchievementProfileItem> _achievementItemsFromRows(
-  List<Map<String, dynamic>> rows,
-) {
-  return rows.map(_AchievementProfileItem.fromRow).toList()
+  List<Map<String, dynamic>> rows, {
+  bool includeInactive = false,
+}) {
+  return rows
+      .where(
+        (row) =>
+            AchievementCatalog.visible(row) &&
+            (includeInactive || row['isActive'] != false),
+      )
+      .map(_AchievementProfileItem.fromRow)
+      .toList()
     ..sort((left, right) {
       final orderComparison = left.sortOrder.compareTo(right.sortOrder);
       if (orderComparison != 0) {
@@ -458,3 +436,16 @@ class _ProfileHistoryItem {
   final String meta;
   final IconData icon;
 }
+
+/// Retired badges stay hidden while their previously awarded points remain part of the hiker's rank.
+int _retainedAchievementPoints(
+  List<Map<String, dynamic>> rows, {
+  bool includeInactive = false,
+}) => rows
+    .where(
+      (row) =>
+          row['isUnlocked'] == true &&
+          (!AchievementCatalog.visible(row) ||
+              (!includeInactive && row['isActive'] == false)),
+    )
+    .fold<int>(0, (total, row) => total + _mapInt(row['pointsAwarded']));

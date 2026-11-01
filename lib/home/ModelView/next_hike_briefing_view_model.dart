@@ -8,11 +8,38 @@ class _NextHikeBriefingStateViewModel extends ChangeNotifier {
     required this.readIsVisible,
     required this.readTrail,
     required this.readWeatherService,
+    required this.readOnReview,
   });
   final UpcomingHike Function() readHike;
   final bool Function() readIsVisible;
   final Trail? Function() readTrail;
   final HikeBriefingWeatherService? Function() readWeatherService;
+  final Future<void> Function()? Function() readOnReview;
+  bool stateOpeningReview = false;
+  String? stateReviewError;
+
+  /// Opens preparation/readiness once and makes navigation failures visible.
+  Future<void> commandOpenReview() async {
+    final open = readOnReview();
+    if (stateOpeningReview || open == null) return;
+    _publish(() {
+      stateOpeningReview = true;
+      stateReviewError = null;
+    });
+    try {
+      await open();
+    } catch (_) {
+      if (mounted) {
+        _publish(
+          () =>
+              stateReviewError = 'Could not open your hike. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) _publish(() => stateOpeningReview = false);
+    }
+  }
+
   bool _disposed = false;
 
   /// Whether this instance is still active.
@@ -51,9 +78,22 @@ class _NextHikeBriefingStateViewModel extends ChangeNotifier {
     if (weather != null &&
         weather.forecastData['hourly'] is Map &&
         weather.forecastData['utc_offset_seconds'] is num) {
-      stateWeather = weather;
+      if (stateWeather == null ||
+          weather.cachedAt.isAfter(stateWeather!.cachedAt)) {
+        stateWeather = weather;
+        stateFailed = false;
+      }
     }
   }
+
+  /// Allows a manual reload when there is no usable forecast or it is 15 minutes old.
+  bool get commandCanReload =>
+      !stateLoading &&
+      HikeBriefingWeatherService.canReload(
+        stateWeather,
+        departure: readHike().departureTime,
+        returning: readHike().expectedReturnTime,
+      );
 
   /// Computes tick.
   void commandTick() {
@@ -85,19 +125,25 @@ class _NextHikeBriefingStateViewModel extends ChangeNotifier {
       stateLoading = true;
     });
     try {
-      final weather = await commandService.fetch(
-        readHike().latitude,
-        readHike().longitude,
+      final weather = await commandService.fetchForHike(
+        readHike(),
         force: force,
       );
       if (!mounted || generation != stateGeneration) return;
       _publish(() {
-        stateWeather = weather;
+        // A catalogue update can arrive while this older cache read is in flight.
+        if (stateWeather == null ||
+            !weather.cachedAt.isBefore(stateWeather!.cachedAt)) {
+          stateWeather = weather;
+        }
         stateFailed = false;
         stateRetryAt = DateTime.now().add(HikeBriefingWeatherService.freshness);
       });
       unawaited(
-        HomeScreenWidgetService.shared.acceptForecast(readHike(), weather),
+        HomeScreenWidgetService.shared.acceptForecast(
+          readHike(),
+          stateWeather!,
+        ),
       );
     } catch (_) {
       if (!mounted || generation != stateGeneration) return;

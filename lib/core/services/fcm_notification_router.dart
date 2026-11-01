@@ -7,6 +7,38 @@ abstract final class FcmNotificationRouter {
   /// Computes deep link for.
   static String? deepLinkFor(Map<String, dynamic> data) {
     final type = data['type']?.toString().trim() ?? '';
+    if (type == 'nearby_upcoming_hike') {
+      // Upgrade previously delivered /view payloads before generic link handling.
+      // Discovery opens the public details and join action, never preparation.
+      String? suppliedId;
+      for (final key in const ['deepLink', 'deep_link', 'deeplink']) {
+        final uri = Uri.tryParse(data[key]?.toString().trim() ?? '');
+        if (uri?.scheme == 'hikercircle' &&
+            uri?.host == 'upcoming-hike' &&
+            const ['/view', '/details'].contains(uri?.path)) {
+          suppliedId = uri?.queryParameters['upcomingHikeId'];
+          break;
+        }
+      }
+      final id =
+          (data['upcomingHikeId'] ?? data['hikeId'] ?? suppliedId)
+              ?.toString()
+              .trim() ??
+          '';
+      if (id.isEmpty ||
+          id.length > 200 ||
+          RegExp(r'[/\x00-\x1f]').hasMatch(id) ||
+          id == '.' ||
+          id == '..') {
+        return null;
+      }
+      return _link(
+        host: 'upcoming-hike',
+        path: '/details',
+        key: 'upcomingHikeId',
+        value: id,
+      );
+    }
     if (type == 'trail_hazard_alert') {
       if (ActiveTrailHazardNotice.isActiveFcm(data)) {
         return ActiveTrailHazardNotice.fromFcm(data)?.deepLink;
@@ -92,7 +124,6 @@ abstract final class FcmNotificationRouter {
           key: 'chatId',
           value: data['chatId'],
         );
-      case 'nearby_upcoming_hike':
       case 'upcoming_hike_reminder':
       case 'upcoming_hike_precaution':
       case 'upcoming_hike_30_minute_reminder':

@@ -80,10 +80,8 @@ class _UpcomingHikeCardStateViewModel extends ChangeNotifier {
 
   /// Returns command is participating.
   bool get commandIsParticipating {
-    final phone = readSession().phoneNumber;
     return stateJoinedLocally ||
-        phone == readHike().creatorPhone ||
-        readHike().participantPhones.contains(phone);
+        readHike().isParticipant(readSession().phoneNumber);
   }
 
   /// Opens directions.

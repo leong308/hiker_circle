@@ -384,27 +384,58 @@ class _AdvancedAppSettingsPageStateViewModel extends ChangeNotifier {
 
   late final Future<void> Function() effectPresentChangePasswordEffect2;
 
-  late final void Function() effectPresentSetPrivateUnlockEffect2;
-
   late final Future<bool?> Function() effectPresentChangePasswordEffect1;
 
-  late final void Function() effectPresentSetPrivateUnlockEffect1;
+  late final void Function(String) effectShowBiometricUnlockIssue;
+  bool _updatingBiometricUnlock = false;
+  late final Future<bool?> Function() effectConfirmDisableHapticFeedback;
+  bool _updatingHapticFeedback = false;
 
-  /// Sets private unlock.
-  Future<void> commandSetPrivateUnlock(bool enabled) async {
+  /// Requires an explicit confirmation before disabling haptic safety feedback.
+  Future<void> commandSetHapticSafetyFeedback(bool enabled) async {
+    if (!mounted || _updatingHapticFeedback) return;
+    _updatingHapticFeedback = true;
     try {
-      if (enabled && !await PrivateScreenUnlock.available()) {
-        if (mounted) {
-          effectPresentSetPrivateUnlockEffect1();
-        }
+      if (!enabled && await effectConfirmDisableHapticFeedback() != true) {
         return;
       }
-      if (!await PrivateScreenUnlock.authenticate() || !mounted) return;
-      stateSettings.setPrivateScreenUnlockEnabled(enabled);
+      if (mounted) stateSettings.setHapticSafetyFeedbackEnabled(enabled);
+    } finally {
+      _updatingHapticFeedback = false;
+    }
+  }
+
+  /// Changes the saved preference only after a successful biometric challenge.
+  Future<void> commandSetPrivateUnlock(bool enabled) async {
+    if (!mounted || _updatingBiometricUnlock) return;
+    _updatingBiometricUnlock = true;
+    try {
+      final result = await PrivateScreenUnlock.requestAuthentication();
+      if (!mounted) return;
+      if (result == BiometricUnlockResult.authenticated) {
+        stateSettings.setPrivateScreenUnlockEnabled(enabled);
+      } else {
+        final message = switch (result) {
+          BiometricUnlockResult.notEnrolled =>
+            'Set up Face ID or fingerprints in your phone settings before enabling App biometric unlock.',
+          BiometricUnlockResult.unavailable =>
+            'Biometric access is unavailable. Check your phone settings and allow HikerCircle to use Face ID or fingerprints.',
+          BiometricUnlockResult.lockedOut =>
+            'Biometrics are locked. Unlock your phone with its passcode, then try again.',
+          BiometricUnlockResult.failed =>
+            'Biometric verification was not completed. Please try again.',
+          _ => null,
+        };
+        if (message != null) effectShowBiometricUnlockIssue(message);
+      }
     } catch (_) {
       if (mounted) {
-        effectPresentSetPrivateUnlockEffect2();
+        effectShowBiometricUnlockIssue(
+          'Biometric verification was not completed. Please try again.',
+        );
       }
+    } finally {
+      _updatingBiometricUnlock = false;
     }
   }
 
@@ -417,9 +448,9 @@ class _AdvancedAppSettingsPageStateViewModel extends ChangeNotifier {
   }
 }
 
-/// Owns the state and non-visual actions of AchievementsPage.
+/// Owns cached progress, admin mutations and stale-load protection for the achievements page.
 class _AchievementsPageStateViewModel extends ChangeNotifier {
-  /// Creates achievements page state view model.
+  /// Reads the current account at each operation instead of trusting a stale form.
   _AchievementsPageStateViewModel({
     required this.readRepository,
     required this.readSession,
@@ -427,98 +458,199 @@ class _AchievementsPageStateViewModel extends ChangeNotifier {
   final HikerCircleFirebaseRepository Function() readRepository;
   final AppSession Function() readSession;
   bool _disposed = false;
+  int _revision = 0;
+  List<Map<String, dynamic>> _rows = [];
+  bool stateSavingAchievement = false;
+  String? stateAchievementError;
+  late Future<List<Map<String, dynamic>>> stateAchievementsFuture;
+  late final Future<void> Function() effectPresentOpenRewardModerationEffect1;
+  bool stateOpeningRewardModeration = false;
 
-  /// Whether this instance is still active.
+  /// Whether async results can still update this page.
   bool get mounted => !_disposed;
 
-  /// Applies a state change and publishes it to listeners.
+  /// Publishes presentation changes only while this account page is mounted.
   void _publish(VoidCallback update) {
     update();
-    if (!_disposed) notifyListeners();
+    if (mounted) notifyListeners();
   }
 
-  late Future<List<Map<String, dynamic>>> stateAchievementsFuture;
+  /// Applies current rule visibility and progress from the shared repository listener.
+  void commandApplyLiveRows(List<Map<String, dynamic>> rows) {
+    if (!mounted) return;
+    _revision++;
+    _rows = rows;
+    _publish(() => stateAchievementsFuture = Future.value(rows));
+  }
 
-  /// Computes reload local achievements.
+  /// Reopens the locally committed snapshot after a notification or catalog update.
   Future<void> commandReloadLocalAchievements() async {
+    final generation = ++_revision;
     final cached = await readRepository().loadCachedAchievementProgress(
       session: readSession(),
     );
-    if (mounted && cached != null) {
+    if (mounted && generation == _revision && cached != null) {
+      _rows = cached.rows;
       _publish(() => stateAchievementsFuture = Future.value(cached.rows));
     }
   }
 
-  /// Loads achievements cache first.
+  /// Shows cached content immediately, then checks the live catalog for admin-only inactive rules too.
   Future<List<Map<String, dynamic>>> commandLoadAchievementsCacheFirst() async {
     final cached = await readRepository().loadCachedAchievementProgress(
       session: readSession(),
     );
     if (cached != null) {
+      _rows = cached.rows;
       unawaited(commandRevalidateAchievementCache(cached.contentHash));
       return cached.rows;
     }
-
     final rows = await readRepository().loadLocalAchievementProgress(
       session: readSession(),
     );
+    _rows = rows;
     unawaited(commandRevalidateAchievementCache(''));
     return rows;
   }
 
-  /// Computes cache fresh achievement rows.
+  /// Persists row metadata alongside progress so archived flags survive app restart.
   Future<void> commandCacheFreshAchievementRows(
     List<Map<String, dynamic>> rows,
-  ) async {
-    await readRepository().saveCachedAchievementProgress(
-      session: readSession(),
-      contentHash: achievementProgressContentHash(rows),
-      rows: rows,
-    );
-  }
+  ) => readRepository().saveCachedAchievementProgress(
+    session: readSession(),
+    contentHash: achievementProgressContentHash(rows),
+    rows: rows,
+  );
 
-  /// Computes revalidate achievement cache.
+  /// Refreshes the user's progress without allowing an earlier request to restore an archived card.
   Future<void> commandRevalidateAchievementCache(String cachedHash) async {
-    final remoteHash = await readRepository().loadAchievementProgressHash(
-      session: readSession(),
-    );
-    if (remoteHash.isEmpty || remoteHash == cachedHash) return;
+    final generation = ++_revision;
+    if (!readSession().isAdmin) {
+      final remoteHash = await readRepository().loadAchievementProgressHash(
+        session: readSession(),
+      );
+      if (remoteHash.isEmpty || remoteHash == cachedHash) return;
+    }
     final rows = await readRepository().loadUserAchievementProgress(
       session: readSession(),
     );
-    if (rows.isEmpty) return;
+    if (!mounted || generation != _revision) return;
     await commandCacheFreshAchievementRows(rows);
-    if (!mounted) return;
+    if (mounted && generation == _revision) {
+      _rows = rows;
+      _publish(() => stateAchievementsFuture = Future.value(rows));
+    }
+  }
+
+  /// Saves a supported rule and commits its known server result locally before further refreshes.
+  Future<bool> commandSaveAchievement(
+    Map<String, dynamic> values, {
+    String achievementId = '',
+  }) => _mutate(() async {
+    final id = await readRepository().saveAchievementByAdmin(
+      session: readSession(),
+      achievement: values,
+      achievementId: achievementId,
+    );
+    final rows = await _mutationRows();
+    final index = rows.indexWhere((row) => row['achievementId'] == id);
+    final row = {
+      if (index >= 0) ...rows[index],
+      ...values,
+      'achievementId': id,
+    };
+    if (index < 0) {
+      rows.add(row);
+    } else {
+      rows[index] = row;
+    }
+    await _commitMutationRows(rows);
+  });
+
+  /// Archives or unarchives just this definition; prior awards and points remain untouched.
+  Future<bool> commandSetAchievementActive(String id, bool isActive) =>
+      _mutate(() async {
+        await readRepository().setAchievementActiveByAdmin(
+          session: readSession(),
+          achievementId: id,
+          isActive: isActive,
+        );
+        final before = await _mutationRows();
+        final rows = [
+          for (final row in before)
+            row['achievementId'] == id ? {...row, 'isActive': isActive} : row,
+        ];
+        await _commitMutationRows(rows);
+      });
+
+  /// Uses in-memory rows if a successful server update cannot read the local cache.
+  Future<List<Map<String, dynamic>>> _mutationRows() async {
+    try {
+      final cached = await readRepository().loadCachedAchievementProgress(
+        session: readSession(),
+      );
+      return [...(cached?.rows ?? _rows)];
+    } catch (_) {
+      return [..._rows];
+    }
+  }
+
+  /// A cache failure must not misreport an already-saved rule and invite duplicate creation.
+  Future<void> _commitMutationRows(List<Map<String, dynamic>> rows) async {
+    try {
+      await commandCacheFreshAchievementRows(rows);
+    } catch (_) {
+      // The rule listener will retry the authoritative snapshot after local storage recovers.
+    }
+    if (mounted) commandApplyLiveRows(rows);
+  }
+
+  /// Serializes moderation requests and reports failures without changing the visible archive state.
+  Future<bool> _mutate(Future<void> Function() action) async {
+    if (!mounted || !readSession().isAdmin || stateSavingAchievement) {
+      return false;
+    }
+    _revision++;
     _publish(() {
-      stateAchievementsFuture = Future.value(rows);
+      stateSavingAchievement = true;
+      stateAchievementError = null;
     });
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      if (mounted) {
+        _publish(
+          () => stateAchievementError =
+              error is HikerCircleFirebaseRepositoryException
+              ? error.message
+              : 'This achievement could not be updated. Please retry.',
+        );
+      }
+      return false;
+    } finally {
+      if (mounted) _publish(() => stateSavingAchievement = false);
+    }
   }
 
-  /// Releases resources owned by this instance.
-  @override
-  void dispose() {
-    _disposed = true;
-    super.dispose();
-  }
-
-  late final Future<void> Function() effectPresentOpenRewardModerationEffect1;
-
-  bool stateOpeningRewardModeration = false;
-
-  /// Opens reward moderation.
+  /// Retains the existing dashboard shortcut and reloads its changes on return.
   Future<void> commandOpenRewardModeration() async {
     if (!readSession().isAdmin || stateOpeningRewardModeration) return;
     stateOpeningRewardModeration = true;
     try {
       await effectPresentOpenRewardModerationEffect1();
-      if (mounted) {
-        _publish(() {
-          stateAchievementsFuture = commandLoadAchievementsCacheFirst();
-        });
-      }
+      if (mounted) await commandRevalidateAchievementCache('');
     } finally {
       stateOpeningRewardModeration = false;
     }
+  }
+
+  /// Stops late requests from updating a disposed account page.
+  @override
+  void dispose() {
+    _disposed = true;
+    _revision++;
+    super.dispose();
   }
 }
 

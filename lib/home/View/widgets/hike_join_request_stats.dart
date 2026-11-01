@@ -2,53 +2,39 @@ import 'package:flutter/material.dart';
 import '../../../core/widgets/section_label.dart';
 import '../../Model/hike_join_request_stats.dart';
 
-/// Shows only aggregate activity, without profile, contact or route-history details.
+/// Shows aggregate activity without contact, location or private route information.
 class HikeJoinRequestStatsCard extends StatelessWidget {
-  /// Binds the host's review to server-projected hiking totals.
+  /// Binds the review to the server's privacy-filtered totals.
   const HikeJoinRequestStatsCard({super.key, required this.stats});
   final HikeJoinRequestStats stats;
 
-  /// Keeps the activity cards readable on narrow phones and with enlarged text.
+  /// Highlights essential totals and keeps the rest in an optional drawer.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
     if (!stats.available) {
       return Text(
         'Hiking stats are temporarily unavailable.',
-        style: theme.textTheme.bodyMedium,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: colors.onSurfaceVariant,
+        ),
       );
     }
-    final entries = <({IconData icon, String label, String value})>[
+    final highlights = [
+      ('${stats.completedHikes}', 'Completed hikes', Icons.hiking_rounded),
       (
-        icon: Icons.hiking_rounded,
-        label: 'Completed hikes',
-        value: '${stats.completedHikes}',
+        '${stats.totalDistanceKm.toStringAsFixed(1)} km',
+        'Total distance',
+        Icons.route_rounded,
       ),
-      (
-        icon: Icons.route_rounded,
-        label: 'Total recorded distance',
-        value: '${stats.totalDistanceKm.toStringAsFixed(1)} km',
-      ),
-      (
-        icon: Icons.landscape_outlined,
-        label: 'Longest completed hike',
-        value: '${stats.longestHikeKm.toStringAsFixed(1)} km',
-      ),
-      (
-        icon: Icons.people_outline_rounded,
-        label: 'Group hikes',
-        value: '${stats.groupHikes}',
-      ),
-      (
-        icon: Icons.person_outline_rounded,
-        label: 'Solo hikes',
-        value: '${stats.soloHikes}',
-      ),
-      (
-        icon: Icons.workspace_premium_outlined,
-        label: 'Achievements unlocked',
-        value: '${stats.unlockedAchievements}',
-      ),
+    ];
+    final details = [
+      ('Longest hike', '${stats.longestHikeKm.toStringAsFixed(1)} km'),
+      ('Group hikes', '${stats.groupHikes}'),
+      ('Solo hikes', '${stats.soloHikes}'),
+      ('Achievements', '${stats.unlockedAchievements}'),
+      ('Hiker level', '${stats.hikerLevel}'),
+      ('Achievement points', '${stats.achievementPoints}'),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -57,40 +43,37 @@ class HikeJoinRequestStatsCard extends StatelessWidget {
         const SizedBox(height: 10),
         LayoutBuilder(
           builder: (context, constraints) {
-            final columns =
-                constraints.maxWidth >= 280 &&
-                    MediaQuery.textScalerOf(context).scale(1) < 1.4
-                ? 2
-                : 1;
+            final stacked =
+                constraints.maxWidth < 250 ||
+                MediaQuery.textScalerOf(context).scale(1) > 1.4;
             return Wrap(
-              spacing: 8,
-              runSpacing: 8,
+              spacing: 10,
+              runSpacing: 10,
               children: [
-                for (final entry in entries)
+                for (final entry in highlights)
                   SizedBox(
-                    width: (constraints.maxWidth - (columns - 1) * 8) / columns,
+                    width: stacked
+                        ? constraints.maxWidth
+                        : (constraints.maxWidth - 10) / 2,
                     child: Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(13),
                       decoration: BoxDecoration(
-                        color: colors.surface,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: colors.outlineVariant.withValues(alpha: .5),
-                        ),
+                        color: colors.primary.withValues(alpha: .06),
+                        borderRadius: BorderRadius.circular(15),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(entry.icon, size: 21, color: colors.primary),
-                          const SizedBox(height: 8),
+                          Icon(entry.$3, color: colors.primary, size: 20),
+                          const SizedBox(height: 10),
                           Text(
-                            entry.value,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
+                            entry.$1,
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
                           const SizedBox(height: 3),
-                          Text(entry.label, style: theme.textTheme.bodySmall),
+                          Text(entry.$2, style: theme.textTheme.bodySmall),
                         ],
                       ),
                     ),
@@ -99,11 +82,50 @@ class HikeJoinRequestStatsCard extends StatelessWidget {
             );
           },
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
+        Theme(
+          data: theme.copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(bottom: 10),
+            title: Text(
+              'More hiking stats',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            children: [
+              for (final entry in details)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          entry.$1,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        entry.$2,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
         Text(
-          'Recorded activity in HikerCircle. Contact details, home area and private routes are not shared.',
+          'HikerCircle activity only. Personal details and private routes stay hidden.',
           style: theme.textTheme.bodySmall?.copyWith(
             color: colors.onSurfaceVariant,
+            height: 1.35,
           ),
         ),
       ],

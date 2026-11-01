@@ -6,10 +6,9 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
 import '../app/Data/firebase_bootstrap.dart';
-
-const feedbackCategories = ['Problem', 'Suggestion', 'Other'];
-const feedbackStatuses = ['New', 'In review', 'Resolved'];
-const feedbackImageLimit = 5 * 1024 * 1024;
+import 'Model/feedback_report.dart';
+export 'Model/feedback_report.dart'
+    show feedbackCategories, feedbackStatuses, feedbackImageLimit;
 
 /// Computes feedback submission error.
 String feedbackSubmissionError(Object error) {
@@ -133,7 +132,10 @@ class FeedbackRepository {
         isEqualTo: FirebaseBootstrap.requireAuthenticatedUser().uid,
       );
     }
-    yield* query.orderBy('createdAt', descending: true).limit(100).snapshots();
+    yield* query
+        .orderBy('createdAt', descending: true)
+        .limit(feedbackReportLimit)
+        .snapshots();
   }
 
   /// Sets status.

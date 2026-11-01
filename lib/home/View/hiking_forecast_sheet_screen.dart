@@ -40,25 +40,13 @@ class _ForecastState extends State<HikingForecastSheet>
     if (mounted) setState(() {});
   }
 
-  late TrailWeather _weather =
-      widget.weather ??
-      TrailWeather(
-        summary: '',
-        temperatureRange: '',
-        rainProbability: 0,
-        cachedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-        forecastData: {
-          'utc_offset_seconds': widget.hike.departureTime
-              .toLocal()
-              .timeZoneOffset
-              .inSeconds,
-        },
-      );
+  /// Reads forecast state owned by the ViewModel.
+  TrailWeather get _weather => _screenModel.stateWeather;
+  bool get _loading => _screenModel.stateLoading;
+  String? get _error => _screenModel.stateError;
 
-  /// Returns beyond forecast.
+  /// Returns whether the session falls beyond the shared trail forecast range.
   bool get _beyondForecast => _screenModel.commandBeyondForecast;
-  bool _loading = false;
-  String? _error;
   int _metric = 0;
   bool _detailsExpanded = false;
   bool _precautionsExpanded = false;
@@ -82,8 +70,12 @@ class _ForecastState extends State<HikingForecastSheet>
   @override
   void initState() {
     super.initState();
-    _screenModel = _ForecastStateViewModel(readHike: () => widget.hike)
-      ..addListener(_renderScreenModel);
+    _screenModel = _ForecastStateViewModel(
+      readHike: () => widget.hike,
+      readService: () => widget.service,
+      weather: widget.weather,
+      onWeatherChanged: (value) => widget.onWeatherChanged?.call(value),
+    )..addListener(_renderScreenModel);
 
     WidgetsBinding.instance.addObserver(this);
     _renderedHour = widget.hike.departureTime.millisecondsSinceEpoch ~/ 3600000;
@@ -110,50 +102,15 @@ class _ForecastState extends State<HikingForecastSheet>
               widget.hike.departureTime,
               widget.hike.expectedReturnTime,
             ).covered)) {
-      _refresh();
+      _refresh(force: false);
     }
   }
 
   /// Refreshes.
-  Future<void> _refresh() async {
-    if (_loading || _beyondForecast) return;
+  Future<void> _refresh({bool force = true}) async {
     _stopPreview();
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final updated = await widget.service.fetch(
-        widget.hike.latitude,
-        widget.hike.longitude,
-        force: true,
-      );
-      if (mounted) {
-        setState(() => _weather = updated);
-        widget.onWeatherChanged?.call(updated);
-        unawaited(
-          HomeScreenWidgetService.shared.acceptForecast(widget.hike, updated),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(
-          () => _error =
-              HikeWeatherBriefing.fromWeather(
-                _weather,
-                widget.hike.departureTime,
-                widget.hike.expectedReturnTime,
-              ).hours.isEmpty
-              ? 'Couldn’t load the forecast. Check your connection and try again.'
-              : 'Could not refresh. The last available forecast is shown.',
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-        _scheduleAutoplay();
-      }
-    }
+    await _screenModel.commandLoad(force: force);
+    if (mounted) _scheduleAutoplay();
   }
 
   /// Delegates clock to the ViewModel.
@@ -227,8 +184,12 @@ class _ForecastState extends State<HikingForecastSheet>
                     )
                   else
                     IconButton(
-                      tooltip: 'Refresh session forecast',
-                      onPressed: _beyondForecast ? null : _refresh,
+                      tooltip: _screenModel.commandCanReload
+                          ? 'Reload trail forecast'
+                          : 'Reload available after 15 minutes',
+                      onPressed: _screenModel.commandCanReload
+                          ? _refresh
+                          : null,
                       icon: const Icon(Icons.refresh),
                     ),
                   IconButton(
@@ -279,7 +240,7 @@ class _ForecastState extends State<HikingForecastSheet>
                             : _error ??
                                   'Forecast data does not cover these hike dates yet. Check again closer to departure.',
                       ),
-                      if (!_beyondForecast && !_loading)
+                      if (!_loading && _screenModel.commandCanReload)
                         FilledButton.icon(
                           onPressed: _refresh,
                           icon: const Icon(Icons.refresh),

@@ -1,66 +1,8 @@
 part of '../admin_analytics_dashboard_feature.dart';
 
-/// Computes map.
-Map<String, dynamic> _map(Object? v) =>
-    v is Map ? Map<String, dynamic>.from(v) : {};
-
-/// Computes rows.
-List<Map<String, dynamic>> _rows(Object? v) => v is List
-    ? v.whereType<Map>().map((r) => Map<String, dynamic>.from(r)).toList()
-    : [];
-
-/// Computes n.
-num _n(Object? v) => v is num && v.isFinite ? v : 0;
-
-/// Computes fmt.
-String _fmt(Object? value) {
-  final n = _n(value);
-  return n >= 10000
-      ? '${(n / 1000).toStringAsFixed(1)}k'
-      : n == n.round()
-      ? '${n.round()}'
-      : n.toStringAsFixed(1);
-}
-
-const _months = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-/// Computes label.
-String _label(Object? value) {
-  final text = value?.toString() ?? 'Not recorded';
-  return text.isEmpty
-      ? 'Not recorded'
-      : '${text[0].toUpperCase()}${text.substring(1).replaceAll('_', ' ')}';
-}
-
-const _blue = Color(0xFF4C8FE8),
-    _green = Color(0xFF42A781),
-    _orange = Color(0xFFDF9752),
-    _purple = Color(0xFF9A80DA);
-const _palette = [
-  _blue,
-  _green,
-  _orange,
-  _purple,
-  Color(0xFFDF7487),
-  Color(0xFF6BBFC1),
-];
-
-/// Render server-computed analytics and expose refresh state without recomputing cloud totals locally.
+/// Presents system-wide analysis from one protected aggregate snapshot.
 class AdminAnalyticsDashboard extends StatefulWidget {
-  /// Creates admin analytics dashboard.
+  /// Keeps management navigation separate from analytics selection.
   const AdminAnalyticsDashboard({
     super.key,
     required this.data,
@@ -70,345 +12,101 @@ class AdminAnalyticsDashboard extends StatefulWidget {
     required this.onSafety,
     required this.onRewards,
     required this.onTools,
+    this.onTrailRequests,
+    this.onFeedback,
   });
   final Map<String, dynamic>? data;
   final bool loading;
   final String? error;
   final VoidCallback onRetry, onSafety, onRewards, onTools;
+  final VoidCallback? onTrailRequests, onFeedback;
 
-  /// Creates the presentation state for this widget.
+  /// Binds the dashboard's presentation lifecycle to its ViewModel.
   @override
   State<AdminAnalyticsDashboard> createState() =>
       _AdminAnalyticsDashboardState();
 }
 
-/// Manages the admin analytics dashboard presentation and lifecycle.
+/// Owns widget bindings while the ViewModel handles filters and metric semantics.
 class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
-  int _period = 30;
-  String _growth = 'users';
+  late final _model = AdminDashboardViewModel(widget.data);
 
-  /// Builds this widget from its current presentation state.
+  /// Preserves selections when a refreshed server snapshot arrives.
   @override
-  Widget build(BuildContext context) {
-    final data = widget.data;
-    if (data == null) {
-      return AdminPanel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              Icons.insights_rounded,
-              color: AdminUi.green(context),
-              size: 28,
-            ),
-            const SizedBox(height: 14),
-            Text(
-              widget.loading ? 'Loading overview' : 'Overview unavailable',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              widget.loading
-                  ? 'Fetching the latest figures…'
-                  : widget.error ?? 'Statistics are not available yet.',
-              style: TextStyle(color: AdminUi.muted(context), height: 1.5),
-            ),
-            if (widget.loading) ...[
-              const SizedBox(height: 18),
-              const LinearProgressIndicator(minHeight: 3),
-            ],
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                if (!widget.loading)
-                  OutlinedButton.icon(
-                    onPressed: widget.onRetry,
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: const Text('Retry statistics'),
-                  ),
-                TextButton.icon(
-                  onPressed: widget.onTools,
-                  icon: const Icon(Icons.tune_rounded, size: 18),
-                  label: const Text('Admin tools'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
-    final totals = _map(data['totals']), users = _map(data['users']);
-    final hikes = _map(data['hikes']);
-    final safety = _map(data['safety']);
-    final incomplete = _map(data['coverage']).entries
-        .where(
-          (entry) =>
-              !{
-                'trails',
-                'trailRequests',
-                'communityPosts',
-                'communityModerationReviews',
-              }.contains(entry.key) &&
-              _map(entry.value)['complete'] == false,
-        )
-        .map((entry) => entry.key)
-        .toList();
-    return Material(
-      type: MaterialType.transparency,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _SnapshotSummary(
-            active: _fmt(hikes['active']),
-            upcoming: _fmt(hikes['upcoming']),
-            updated: _snapshotTime(context, data['generatedAtMillis']),
-            loading: widget.loading,
-          ),
-          if (widget.loading) ...[
-            const SizedBox(height: 8),
-            const LinearProgressIndicator(minHeight: 2),
-          ],
-          if (widget.error != null)
-            _SnapshotNotice(
-              message:
-                  'Refresh failed. Showing the previous snapshot. ${widget.error}',
-              onRetry: widget.loading ? null : widget.onRetry,
-            ),
-          if (incomplete.isNotEmpty)
-            _SnapshotNotice(
-              message:
-                  'Collection totals are exact; charts and breakdowns cover the first 10,000 records in ${incomplete.join(', ')}.',
-            ),
-          const SizedBox(height: 18),
-          AdminPanel(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const AdminSectionHeading(
-                  title: 'Review queue',
-                  subtitle: 'Pending reports and moderation work.',
-                ),
-                const SizedBox(height: 8),
-                _QueueRow(
-                  title: 'Safety reports',
-                  detail: 'Review reported hazards',
-                  count: _n(safety['pendingHazards']),
-                  icon: Icons.shield_outlined,
-                  tint: _orange,
-                  onTap: widget.onSafety,
-                ),
-                Divider(height: 1, color: AdminUi.border(context)),
-                _QueueRow(
-                  title: 'Open feedback',
-                  detail: 'Follow up on unresolved reports',
-                  count: _n(safety['openFeedback']),
-                  icon: Icons.feedback_outlined,
-                  tint: _blue,
-                  onTap: widget.onTools,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          const AdminSectionHeading(title: 'Key figures'),
-          const SizedBox(height: 12),
-          _ResponsiveGrid(
-            compact: true,
-            children: [
-              _Metric(
-                title: 'Registered users',
-                value: _fmt(totals['users']),
-                detail:
-                    '${_fmt(users['recentSignIns'])} signed in · last 30 days',
-                icon: Icons.people_alt_outlined,
-                tint: _blue,
-              ),
-              _Metric(
-                title: 'Completed sessions',
-                value: _fmt(hikes['completed']),
-                detail: '${_fmt(hikes['distanceKm'])} km recorded',
-                icon: Icons.hiking_rounded,
-                tint: _green,
-              ),
-              _Metric(
-                title: 'Active hikers',
-                value: _fmt(users['activeHikers30Days']),
-                detail: 'Started a hike · last 30 days',
-                icon: Icons.directions_walk_rounded,
-                tint: _orange,
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          _activity(data),
-          const SizedBox(height: 18),
-          AdminPanel(
-            padding: EdgeInsets.zero,
-            child: ExpansionTile(
-              key: const ValueKey('admin-more-statistics'),
-              shape: const Border(),
-              collapsedShape: const Border(),
-              tilePadding: const EdgeInsets.symmetric(
-                horizontal: 18,
-                vertical: 6,
-              ),
-              leading: Icon(
-                Icons.bar_chart_rounded,
-                color: AdminUi.green(context),
-              ),
-              title: const Text(
-                'More system breakdowns',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-              ),
-              subtitle: Text(
-                'Hiking, safety and rewards',
-                style: TextStyle(fontSize: 12, color: AdminUi.muted(context)),
-              ),
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-                  child: _details(data),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          AdminPanel(
-            onTap: widget.onTools,
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.tune_rounded,
-                  color: AdminUi.green(context),
-                  size: 22,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Admin tools',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        'Feedback and diagnostics',
-                        style: TextStyle(
-                          color: AdminUi.muted(context),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: AdminUi.muted(context),
-                  size: 20,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  void didUpdateWidget(covariant AdminAnalyticsDashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.data, widget.data)) _model.updateData(widget.data);
   }
 
-  /// Computes activity.
-  Widget _activity(Map<String, dynamic> data) {
-    final daily = _rows(data['daily']), monthly = _rows(data['monthly']);
-    final series = _period == 365
-        ? monthly
-        : daily.skip(math.max(0, daily.length - _period)).toList();
-    final total = series.fold<num>(0, (sum, row) => sum + _n(row[_growth]));
-    final label = switch (_growth) {
-      'users' => total == 1 ? 'new user' : 'new users',
-      _ => total == 1 ? 'completed session' : 'completed sessions',
-    };
-    final missing = _map(data['unknownDates']).entries
-        .where((entry) => entry.key == 'users' || entry.key == 'hikes')
-        .fold<num>(0, (sum, entry) => sum + _n(entry.value));
-    final color = switch (_growth) {
-      'users' => _blue,
-      _ => _green,
-    };
-    return AdminPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const AdminSectionHeading(title: 'Growth & activity'),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final period in [30, 90, 365])
-                ChoiceChip(
-                  key: ValueKey('analytics-period-$period'),
-                  label: Text(period == 365 ? '12 months' : '$period days'),
-                  selected: _period == period,
-                  showCheckmark: false,
-                  onSelected: (_) => setState(() => _period = period),
-                  labelStyle: TextStyle(
-                    fontSize: 12,
-                    fontWeight: _period == period
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-                  ),
-                  visualDensity: VisualDensity.compact,
-                  side: BorderSide.none,
-                  selectedColor: AdminUi.green(context).withValues(alpha: .12),
-                  backgroundColor: AdminUi.background(context),
-                ),
+  /// Releases selection listeners when the Overview workspace closes.
+  @override
+  void dispose() {
+    _model.dispose();
+    super.dispose();
+  }
+
+  /// Renders the selected analysis area with consistent global scope controls.
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _model,
+    builder: (context, _) {
+      final snapshot = _model.snapshot;
+      if (snapshot == null) {
+        return _DashboardUnavailable(
+          loading: widget.loading,
+          error: widget.error,
+          onRetry: widget.onRetry,
+          onTools: widget.onTools,
+        );
+      }
+      return Material(
+        type: MaterialType.transparency,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DashboardSnapshotHeader(
+              snapshot: snapshot,
+              loading: widget.loading,
+            ),
+            if (widget.loading)
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
+            if (widget.error != null)
+              _SnapshotNotice(
+                message:
+                    'Refresh could not finish. The previous snapshot remains visible.',
+                onRetry: widget.loading ? null : widget.onRetry,
+              ),
+            if (snapshot.incompleteCount > 0)
+              _SnapshotNotice(
+                message:
+                    '${snapshot.incompleteCount} data sources are incomplete. Counts marked ≥ are partial; rates need complete data. See Operations for coverage.',
+              ),
+            if (!snapshot.hasExpandedAnalysis)
+              const _SnapshotNotice(
+                message:
+                    'Some detailed analysis is unavailable in this snapshot. Refresh to check for an updated analysis.',
+              ),
+            const SizedBox(height: 20),
+            _DashboardAreaTabs(model: _model),
+            const SizedBox(height: 18),
+            if (_model.supportsPeriod) ...[
+              _DashboardPeriodSelector(model: _model),
+              const SizedBox(height: 20),
             ],
-          ),
-          const SizedBox(height: 18),
-          Text(
-            '${_fmt(total)} $label in this period',
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 20),
-          _Timeline(rows: series, metric: _growth, color: color),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final entry in {'users': 'Users', 'hikes': 'Hikes'}.entries)
-                TextButton.icon(
-                  onPressed: () => setState(() => _growth = entry.key),
-                  icon: Icon(
-                    _growth == entry.key
-                        ? Icons.radio_button_checked_rounded
-                        : Icons.radio_button_unchecked_rounded,
-                    size: 14,
-                  ),
-                  label: Text(entry.value),
-                  style: TextButton.styleFrom(
-                    foregroundColor: _growth == entry.key
-                        ? color
-                        : AdminUi.muted(context),
-                    textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      fontSize: 12,
-                      fontWeight: _growth == entry.key
-                          ? FontWeight.w700
-                          : FontWeight.w500,
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                  ),
-                ),
-            ],
-          ),
-          if (missing > 0) ...[
-            const SizedBox(height: 8),
+            ...switch (_model.area) {
+              AdminDashboardArea.overview => _overview(snapshot),
+              AdminDashboardArea.hiking => _hiking(snapshot),
+              AdminDashboardArea.safety => _safety(snapshot),
+              AdminDashboardArea.trails => _trails(snapshot),
+              AdminDashboardArea.people => _people(snapshot),
+              AdminDashboardArea.operations => _operations(snapshot),
+            },
+            const SizedBox(height: 20),
             Text(
-              '${_fmt(missing)} records have missing or future dates and are excluded from timelines.',
+              'Snapshot analysis · Malaysia time. Team members count as separate hiker sessions. Current-state panels and lifetime totals are labelled separately from the selected period.',
               style: TextStyle(
                 fontSize: 11,
                 height: 1.5,
@@ -416,756 +114,1197 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
               ),
             ),
           ],
-          const SizedBox(height: 6),
-          Text(
-            'Tap the chart to inspect a date. Team participants count as separate hiker sessions.',
-            style: TextStyle(
-              fontSize: 11,
-              height: 1.5,
-              color: AdminUi.muted(context),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Computes details.
-  Widget _details(Map<String, dynamic> data) {
-    final totals = _map(data['totals']), hikes = _map(data['hikes']);
-    final users = _map(data['users']), safety = _map(data['safety']);
-    final rewards = _map(data['rewards']);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Padding(
-          padding: EdgeInsets.all(6),
-          child: AdminSectionHeading(title: 'Hiking activity'),
         ),
-        const SizedBox(height: 8),
-        _ResponsiveGrid(
-          compact: true,
-          children: [
-            _Metric(
-              title: 'Hiking hours',
-              value: _fmt(hikes['hours']),
-              detail: 'Completed sessions · all time',
-              icon: Icons.timer_outlined,
-              tint: _green,
-            ),
-            _Metric(
-              title: 'Average distance',
-              value: '${_fmt(hikes['averageDistanceKm'])} km',
-              detail: 'Per completed hiker session',
-              icon: Icons.straighten_rounded,
-              tint: _blue,
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _ResponsiveGrid(
-          children: [
-            _Donut(
-              title: 'Session outcomes',
-              rows: _rows(hikes['byStatus']),
-              center: _fmt(totals['hikeSessions']),
-              unit: 'sessions',
-            ),
-            _Donut(
-              title: 'Hike types',
-              rows: _rows(hikes['byType']),
-              center: _fmt(totals['hikeSessions']),
-              unit: 'sessions',
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        const Padding(
-          padding: EdgeInsets.all(6),
-          child: AdminSectionHeading(title: 'Safety'),
-        ),
-        const SizedBox(height: 8),
-        _ResponsiveGrid(
-          children: [
-            _Bars(
-              title: 'Hazard severity',
-              rows: _rows(safety['bySeverity']),
-              suffix: 'reports',
-            ),
-            _Bars(
-              title: 'Hazard review status',
-              rows: _rows(safety['byHazardStatus']),
-              suffix: 'reports',
-            ),
-            _Bars(
-              title: 'Hazard types',
-              rows: _rows(safety['byHazardType']),
-              suffix: 'reports',
-            ),
-            _Bars(
-              title: 'Feedback status',
-              rows: _rows(safety['byFeedbackStatus']),
-              suffix: 'reports',
-            ),
-            _Bars(
-              title: 'Feedback categories',
-              rows: _rows(safety['byFeedbackCategory']),
-              suffix: 'reports',
-            ),
-            _Bars(
-              title: 'SOS alert status',
-              rows: _rows(safety['bySosStatus']),
-              suffix: 'alerts',
-              subtitle:
-                  'Recorded states, rather than a live safety assessment.',
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        const Padding(
-          padding: EdgeInsets.all(6),
-          child: AdminSectionHeading(title: 'Accounts & rewards'),
-        ),
-        const SizedBox(height: 8),
-        _Metric(
-          title: 'Achievement awards',
-          value: _fmt(totals['achievementAwards']),
-          detail: '${_fmt(totals['achievements'])} reward definitions',
-          icon: Icons.emoji_events_outlined,
-          tint: _purple,
-          onTap: widget.onRewards,
-        ),
-        const SizedBox(height: 12),
-        _ResponsiveGrid(
-          children: [
-            _Bars(
-              title: 'Account signals',
-              subtitle: 'These groups may overlap.',
-              suffix: 'users',
-              rows: [
-                {
-                  'label': 'Administrators',
-                  'value': users['administrators'] ?? 0,
-                },
-                {'label': 'Disabled accounts', 'value': users['disabled'] ?? 0},
-                {
-                  'label': 'Signed in within 30 days',
-                  'value': users['recentSignIns'] ?? 0,
-                },
-              ],
-            ),
-            _Bars(
-              title: 'Reward definitions',
-              suffix: 'definitions',
-              rows: [
-                {'label': 'Active', 'value': rewards['active'] ?? 0},
-                {'label': 'Archived', 'value': rewards['inactive'] ?? 0},
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Text(
-          'All-time totals reflect current records. Deleted records are not reconstructed. Engagement uses stored like/comment counters; sign-ins represent the latest recorded sign-in, not every app visit.',
-          style: TextStyle(
-            color: AdminUi.muted(context),
-            fontSize: 11,
-            height: 1.5,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Displays the snapshot summary.
-class _SnapshotSummary extends StatelessWidget {
-  /// Creates snapshot summary.
-  const _SnapshotSummary({
-    required this.active,
-    required this.upcoming,
-    required this.updated,
-    required this.loading,
-  });
-  final String active, upcoming, updated;
-  final bool loading;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    final dark = AdminUi.dark(context);
-    final foreground = Theme.of(context).colorScheme.onSurface;
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: dark
-              ? [const Color(0xFF203D30), const Color(0xFF192B25)]
-              : [const Color(0xFFE6F2E9), const Color(0xFFF2F7F3)],
-        ),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: AdminUi.green(context).withValues(alpha: .12),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Activity snapshot',
-            style: TextStyle(
-              color: foreground,
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            loading ? 'Refreshing…' : 'Updated $updated · MYT',
-            style: TextStyle(
-              color: AdminUi.muted(context),
-              fontSize: 11,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _SnapshotValue(
-                  value: active,
-                  label: 'Active sessions',
-                  icon: Icons.hiking_rounded,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _SnapshotValue(
-                  value: upcoming,
-                  label: 'Upcoming hikes',
-                  icon: Icons.event_outlined,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Displays the snapshot value.
-class _SnapshotValue extends StatelessWidget {
-  /// Creates snapshot value.
-  const _SnapshotValue({
-    required this.value,
-    required this.label,
-    required this.icon,
-  });
-  final String value, label;
-  final IconData icon;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(
-        children: [
-          Icon(icon, color: AdminUi.green(context), size: 19),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontSize: 27,
-                fontWeight: FontWeight.w800,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-        ],
-      ),
-      const SizedBox(height: 3),
-      Text(
-        label,
-        style: TextStyle(
-          color: AdminUi.muted(context),
-          fontSize: 12,
-          height: 1.4,
-        ),
-      ),
-    ],
-  );
-}
-
-/// Displays the snapshot notice.
-class _SnapshotNotice extends StatelessWidget {
-  /// Creates snapshot notice.
-  const _SnapshotNotice({required this.message, this.onRetry});
-  final String message;
-  final VoidCallback? onRetry;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(top: 12),
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: _orange.withValues(alpha: .08),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: _orange.withValues(alpha: .25)),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(Icons.info_outline_rounded, color: _orange, size: 18),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                message,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.5,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-            ),
-          ],
-        ),
-        if (onRetry != null)
-          Align(
-            alignment: AlignmentDirectional.centerEnd,
-            child: TextButton(
-              onPressed: onRetry,
-              child: const Text('Retry statistics'),
-            ),
-          ),
-      ],
-    ),
-  );
-}
-
-/// Computes snapshot time.
-String _snapshotTime(BuildContext context, Object? value) {
-  if (value is! num) return 'unavailable';
-  final date = DateTime.fromMillisecondsSinceEpoch(
-    value.toInt(),
-    isUtc: true,
-  ).add(const Duration(hours: 8));
-  return '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-}
-
-/// Displays the responsive grid.
-class _ResponsiveGrid extends StatelessWidget {
-  /// Creates responsive grid.
-  const _ResponsiveGrid({required this.children, this.compact = false});
-  final List<Widget> children;
-  final bool compact;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, c) {
-      final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
-      final cols = scale >= 1.5
-          ? 1
-          : compact
-          ? (c.maxWidth >= 1000
-                ? 4
-                : c.maxWidth >= 280
-                ? 2
-                : 1)
-          : c.maxWidth >= 760
-          ? 2
-          : 1;
-      return Column(
-        children: [
-          for (var index = 0; index < children.length; index += cols)
-            Padding(
-              padding: EdgeInsets.only(top: index == 0 ? 0 : 12),
-              child: IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (var offset = 0; offset < cols; offset++) ...[
-                      if (offset > 0) const SizedBox(width: 12),
-                      Expanded(
-                        child: index + offset < children.length
-                            ? children[index + offset]
-                            : const SizedBox(),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-        ],
       );
     },
   );
-}
 
-/// Displays the timeline.
-class _Timeline extends StatelessWidget {
-  /// Creates timeline.
-  const _Timeline({
-    required this.rows,
-    required this.metric,
-    required this.color,
-  });
-  final List<Map<String, dynamic>> rows;
-  final String metric;
-  final Color color;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    if (rows.isEmpty || rows.every((r) => _n(r[metric]) == 0)) {
-      return const SizedBox(
-        height: 170,
-        child: Center(child: Text('No recorded activity in this period.')),
-      );
-    }
-    final maximum = rows.fold<double>(
-      0,
-      (m, r) => math.max(m, _n(r[metric]).toDouble()),
-    );
-    final interval = math.max(1.0, (maximum / 4).ceilToDouble());
-    final muted = AdminUi.muted(context);
-    final tick = math.max(1, ((rows.length - 1) / 3).ceil());
-    return Semantics(
-      label:
-          '$metric activity chart. ${rows.length} time buckets. Tap to inspect.',
-      child: SizedBox(
-        height: 205,
-        child: LineChart(
-          LineChartData(
-            minX: 0,
-            maxX: math.max(1, rows.length - 1).toDouble(),
-            minY: 0,
-            maxY: math.max(1, maximum + interval).toDouble(),
-            lineTouchData: LineTouchData(
-              touchTooltipData: LineTouchTooltipData(
-                getTooltipItems: (spots) => spots.map((s) {
-                  final i = s.x.round().clamp(0, rows.length - 1);
-                  return LineTooltipItem(
-                    '${rows[i]['date']}\n${s.y.toInt()} $metric',
-                    const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            titlesData: FlTitlesData(
-              topTitles: const AxisTitles(
-                sideTitles: SideTitles(showTitles: false),
-              ),
-              rightTitles: const AxisTitles(
-                sideTitles: SideTitles(showTitles: false),
-              ),
-              leftTitles: AxisTitles(
-                sideTitles: SideTitles(
-                  showTitles: true,
-                  reservedSize: 32,
-                  interval: interval,
-                  getTitlesWidget: (v, m) => Text(
-                    _fmt(v),
-                    style: TextStyle(fontSize: 10, color: muted),
-                  ),
-                ),
-              ),
-              bottomTitles: AxisTitles(
-                sideTitles: SideTitles(
-                  showTitles: true,
-                  reservedSize: 30,
-                  interval: tick.toDouble(),
-                  getTitlesWidget: (v, m) {
-                    final i = v.round();
-                    if (i < 0 || i >= rows.length) return const SizedBox();
-                    final raw = rows[i]['date'].toString();
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 9),
-                      child: Text(
-                        raw.length == 7
-                            ? _months[(int.tryParse(raw.substring(5)) ?? 1)
-                                      .clamp(1, 12) -
-                                  1]
-                            : '${raw.substring(8)}/${raw.substring(5, 7)}',
-                        style: TextStyle(fontSize: 10, color: muted),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-            gridData: FlGridData(
-              show: true,
-              drawVerticalLine: false,
-              horizontalInterval: interval,
-              getDrawingHorizontalLine: (_) =>
-                  FlLine(color: AdminUi.border(context), strokeWidth: 1),
-            ),
-            borderData: FlBorderData(show: false),
-            lineBarsData: [
-              LineChartBarData(
-                spots: [
-                  for (var i = 0; i < rows.length; i++)
-                    FlSpot(i.toDouble(), _n(rows[i][metric]).toDouble()),
-                ],
-                color: color,
-                barWidth: 2.5,
-                isCurved: false,
-                dotData: const FlDotData(show: false),
-                belowBarData: BarAreaData(
-                  show: true,
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      color.withValues(alpha: .2),
-                      color.withValues(alpha: .01),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          duration: const Duration(milliseconds: 400),
+  /// Gives the administrator a concise operating picture before detailed charts.
+  List<Widget> _overview(AdminAnalyticsSnapshot snapshot) => [
+    const AdminSectionHeading(
+      title: 'Current activity',
+      subtitle: 'Latest recorded state at the snapshot time',
+    ),
+    const SizedBox(height: 10),
+    _CurrentActivityPanel(
+      children: [
+        _CurrentActivityValue(
+          metric: _model.metric('Active hiker sessions', 'hikes.active', [
+            'hikeSessions',
+          ], 'Current recorded sessions'),
+          icon: Icons.hiking_rounded,
+          tint: _green,
         ),
-      ),
-    );
-  }
-}
-
-/// Displays the bars.
-class _Bars extends StatelessWidget {
-  /// Creates bars.
-  const _Bars({
-    required this.title,
-    required this.rows,
-    required this.suffix,
-    this.subtitle,
-  });
-  final String title, suffix;
-  final String? subtitle;
-  final List<Map<String, dynamic>> rows;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    final max = rows.fold<num>(0, (n, r) => math.max(n, _n(r['value'])));
-    return AdminPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AdminSectionHeading(title: title, subtitle: subtitle),
-          const SizedBox(height: 16),
-          if (rows.isEmpty)
-            Text(
-              'No records yet.',
-              style: TextStyle(color: AdminUi.muted(context)),
-            ),
-          for (final (i, row) in rows.indexed)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _label(row['label']),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _fmt(row['value']),
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 7),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: max == 0 ? 0 : (_n(row['value']) / max).toDouble(),
-                      minHeight: 7,
-                      color: _palette[i % _palette.length],
-                      backgroundColor: AdminUi.border(
-                        context,
-                      ).withValues(alpha: .55),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          Text(
-            'Counts in $suffix',
-            style: TextStyle(fontSize: 10, color: AdminUi.muted(context)),
+        _CurrentActivityValue(
+          metric: _model.metric('Active team hikes', 'teams.active', [
+            'teamHikeSessions',
+          ], 'One record per team'),
+          icon: Icons.groups_outlined,
+          tint: _blue,
+        ),
+        _CurrentActivityValue(
+          metric: _model.metric('Upcoming plans', 'plans.upcoming', [
+            'upcomingHikes',
+            'teamHikeSessions',
+          ], 'Future scheduled departures'),
+          icon: Icons.event_outlined,
+          tint: _purple,
+        ),
+        _CurrentActivityValue(
+          metric: _model.metric(
+            'Open trail cautions',
+            'safety.pendingHazards',
+            ['hazardReports'],
+            'Reported + resolving',
           ),
-        ],
-      ),
-    );
-  }
-}
+          icon: Icons.shield_outlined,
+          tint: _orange,
+          onTap: widget.onSafety,
+        ),
+      ],
+    ),
+    const SizedBox(height: 24),
+    const AdminSectionHeading(
+      title: 'Period performance',
+      subtitle: 'Compared with the preceding calendar period',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.periodMetric('Completed hikes', 'completedHikes', [
+            'hikeSessions',
+          ], higherIsBetter: true),
+          icon: Icons.task_alt_rounded,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric('New accounts', 'newUsers', [
+            'users',
+          ], higherIsBetter: true),
+          icon: Icons.person_add_alt_1_rounded,
+          tint: _blue,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric(
+            'Distance recorded',
+            'distanceKm',
+            ['hikeSessions'],
+            unit: 'km',
+            higherIsBetter: true,
+          ),
+          icon: Icons.route_outlined,
+          tint: _purple,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric(
+            'Completion rate',
+            'completionRate',
+            ['hikeSessions'],
+            unit: '%',
+            higherIsBetter: true,
+          ),
+          icon: Icons.flag_outlined,
+          tint: _green,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _trendPanel(),
+    const SizedBox(height: 18),
+    _attention(snapshot),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      children: [
+        _Donut(
+          title: 'Period hike outcomes',
+          rows: _model.periodOutcomes,
+          center: _model.periodEndedLabel,
+          unit: 'ended',
+          emptyLabel: _model.emptyLabel(['hikeSessions']),
+          partial: _model.partial(['hikeSessions']),
+        ),
+        _bars(
+          'Current hazard lifecycle',
+          'safety.byHazardLifecycle',
+          ['hazardReports'],
+          'reports',
+          subtitle:
+              'Includes expiry; expiry does not confirm that a trail is safe.',
+        ),
+      ],
+    ),
+    const SizedBox(height: 24),
+    const AdminSectionHeading(
+      title: 'System footprint',
+      subtitle: 'All current records · lifetime totals',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.metric(
+            'Registered accounts',
+            'totals.users',
+            ['users'],
+            'Current account records',
+            exactTotal: true,
+          ),
+          icon: Icons.people_outline_rounded,
+          tint: _blue,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Trail catalogue',
+            'totals.trails',
+            ['trails'],
+            'Published trail records',
+            exactTotal: true,
+          ),
+          icon: Icons.terrain_outlined,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.metric('Completed sessions', 'hikes.completed', [
+            'hikeSessions',
+          ], 'All recorded completions'),
+          icon: Icons.check_circle_outline_rounded,
+          tint: _purple,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Achievement awards',
+            'totals.achievementAwards',
+            ['userAchievements'],
+            'Unlocked awards · all time',
+          ),
+          icon: Icons.emoji_events_outlined,
+          tint: _orange,
+          onTap: widget.onRewards,
+        ),
+      ],
+    ),
+  ];
 
-/// Displays the donut.
-class _Donut extends StatefulWidget {
-  /// Creates donut.
-  const _Donut({
-    required this.title,
-    required this.rows,
-    required this.center,
-    required this.unit,
-  });
-  final String title, center, unit;
-  final List<Map<String, dynamic>> rows;
+  /// Separates hiker activity, shared team sessions and scheduled plan outcomes.
+  List<Widget> _hiking(AdminAnalyticsSnapshot snapshot) => [
+    const AdminSectionHeading(
+      title: 'Hiking performance',
+      subtitle: 'Selected reporting period',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.periodMetric('Hikes started', 'startedHikes', [
+            'hikeSessions',
+          ], higherIsBetter: true),
+          icon: Icons.play_circle_outline_rounded,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric('Completed hikes', 'completedHikes', [
+            'hikeSessions',
+          ], higherIsBetter: true),
+          icon: Icons.flag_outlined,
+          tint: _blue,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric('Distinct hikers', 'activeHikers', [
+            'hikeSessions',
+          ], higherIsBetter: true),
+          icon: Icons.people_outline_rounded,
+          tint: _purple,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric('Repeat hikers', 'repeatHikers', [
+            'hikeSessions',
+          ], higherIsBetter: true),
+          icon: Icons.repeat_rounded,
+          tint: _orange,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _trendPanel(),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      children: [
+        _Donut(
+          title: 'Ended session outcomes',
+          rows: _model.periodOutcomes,
+          center: _model.periodEndedLabel,
+          unit: 'ended',
+          emptyLabel: _model.emptyLabel(['hikeSessions']),
+          partial: _model.partial(['hikeSessions']),
+        ),
+        _bars(
+          'Completed hike types',
+          'windows.${_model.period.days}.current.hikeTypes',
+          ['hikeSessions'],
+          'hiker sessions',
+          subtitle: 'Selected period · completed sessions',
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.periodMetric('Distance recorded', 'distanceKm', [
+            'hikeSessions',
+          ], unit: 'km'),
+          icon: Icons.route_outlined,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric('Hiking time', 'hours', [
+            'hikeSessions',
+          ], unit: 'h'),
+          icon: Icons.timer_outlined,
+          tint: _blue,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric(
+            'Average hike distance',
+            'averageDistanceKm',
+            ['hikeSessions'],
+            unit: 'km',
+          ),
+          icon: Icons.straighten_rounded,
+          tint: _purple,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric('Average hike duration', 'averageHours', [
+            'hikeSessions',
+          ], unit: 'h'),
+          icon: Icons.schedule_rounded,
+          tint: _orange,
+        ),
+      ],
+    ),
+    const SizedBox(height: 24),
+    _DashboardNote(text: _model.measurementCoverageLabel),
+    const SizedBox(height: 12),
+    const AdminSectionHeading(
+      title: 'Plans & team participation',
+      subtitle: 'Current recorded state · all plans and team records',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      children: [
+        _bars(
+          'Scheduled plan outcomes',
+          'plans.byStatus',
+          ['upcomingHikes', 'teamHikeSessions'],
+          'plans',
+          subtitle:
+              'Expired after the 15-minute start window; started team plans are excluded.',
+        ),
+        _bars(
+          'Team hike phases',
+          'teams.byPhase',
+          ['teamHikeSessions'],
+          'teams',
+          subtitle: 'One team session, regardless of participant count.',
+        ),
+        _bars(
+          'Hike join requests',
+          'joining.byStatus',
+          ['upcomingHikeJoinRequests'],
+          'requests',
+          subtitle: 'Latest decision for each recorded request.',
+        ),
+        _bars(
+          'Most hiked trails',
+          'hikes.popularTrails',
+          ['hikeSessions', 'trails'],
+          'completed hiker sessions',
+          subtitle:
+              'All time · top eight · unlisted locations remain anonymous.',
+        ),
+      ],
+    ),
+    const SizedBox(height: 12),
+    _DashboardNote(
+      text:
+          'Distinct hikers started at least one session in the selected period. Repeat hikers started at least two. Completion rate uses completed and abandoned sessions with recorded end dates; active sessions are excluded.',
+    ),
+  ];
 
-  /// Creates the presentation state for this widget.
-  @override
-  State<_Donut> createState() => _DonutState();
-}
-
-/// Manages the donut presentation and lifecycle.
-class _DonutState extends State<_Donut> {
-  int? _selected;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    final total = widget.rows.fold<num>(0, (n, r) => n + _n(r['value']));
-    return AdminPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AdminSectionHeading(title: widget.title),
-          const SizedBox(height: 12),
-          if (total == 0)
-            SizedBox(
-              height: 150,
-              child: Center(
-                child: Text(
-                  'No records yet.',
-                  style: TextStyle(color: AdminUi.muted(context)),
-                ),
-              ),
-            )
-          else
-            SizedBox(
-              height: 180,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  PieChart(
-                    PieChartData(
-                      centerSpaceRadius: 58,
-                      sectionsSpace: 3,
-                      startDegreeOffset: -90,
-                      pieTouchData: PieTouchData(
-                        touchCallback: (event, response) {
-                          setState(
-                            () => _selected =
-                                event.isInterestedForInteractions &&
-                                    response
-                                            ?.touchedSection
-                                            ?.touchedSectionIndex !=
-                                        -1
-                                ? response?.touchedSection?.touchedSectionIndex
-                                : null,
-                          );
-                        },
-                      ),
-                      sections: [
-                        for (final (i, row) in widget.rows.indexed)
-                          PieChartSectionData(
-                            value: _n(row['value']).toDouble(),
-                            color: _palette[i % _palette.length],
-                            radius: _selected == i ? 26 : 20,
-                            showTitle: false,
-                          ),
-                      ],
-                    ),
-                  ),
-                  IgnorePointer(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _selected != null && _selected! < widget.rows.length
-                              ? _fmt(widget.rows[_selected!]['value'])
-                              : widget.center,
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        Text(
-                          widget.unit,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AdminUi.muted(context),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          Wrap(
-            spacing: 14,
-            runSpacing: 10,
+  /// Distinguishes hazard resolution, SOS events and provider acknowledgement.
+  List<Widget> _safety(AdminAnalyticsSnapshot snapshot) => [
+    const AdminSectionHeading(
+      title: 'Current trail safety',
+      subtitle: 'Reported and resolving cautions at snapshot time',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.metric('Open cautions', 'safety.pendingHazards', [
+            'hazardReports',
+          ], 'Reported + resolving'),
+          icon: Icons.shield_outlined,
+          tint: _orange,
+          onTap: widget.onSafety,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Serious open cautions',
+            'safety.criticalOpen',
+            ['hazardReports'],
+            'Current serious-risk reports',
+          ),
+          icon: Icons.warning_amber_rounded,
+          tint: _red,
+          onTap: widget.onSafety,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Resolving reports',
+            'safety.resolvingHazards',
+            ['hazardReports'],
+            'Awaiting three distinct hikers',
+          ),
+          icon: Icons.groups_outlined,
+          tint: _blue,
+          onTap: widget.onSafety,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Median time to resolution',
+            'safety.medianResolutionHours',
+            ['hazardReports'],
+            'All time · recorded resolution timings',
+            unit: 'h',
+            requireComplete: true,
+          ),
+          icon: Icons.timelapse_rounded,
+          tint: _green,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      children: [
+        _bars('Open caution types', 'safety.byOpenHazardType', [
+          'hazardReports',
+        ], 'current reports'),
+        _bars(
+          'Hazard lifecycle',
+          'safety.byHazardLifecycle',
+          ['hazardReports'],
+          'reports',
+          subtitle:
+              'All retained reports · expired reports are included under Resolved.',
+        ),
+      ],
+    ),
+    const SizedBox(height: 24),
+    const AdminSectionHeading(
+      title: 'SOS & contact confirmations',
+      subtitle: 'Selected period · test dispatches excluded',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.periodMetric('SOS alerts recorded', 'sosAlerts', [
+            'sosAlerts',
+          ]),
+          icon: Icons.sos_rounded,
+          tint: _red,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric('New hazard reports', 'hazards', [
+            'hazardReports',
+          ]),
+          icon: Icons.report_outlined,
+          tint: _orange,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric(
+            'Contacts confirmed',
+            'contactConfirmed',
+            ['sosWhatsAppDispatches'],
+          ),
+          icon: Icons.mark_chat_read_outlined,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.periodMetric(
+            'Contact confirmation rate',
+            'contactConfirmationRate',
+            ['sosWhatsAppDispatches'],
+            unit: '%',
+            higherIsBetter: true,
+          ),
+          icon: Icons.verified_outlined,
+          tint: _blue,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      children: [
+        _Bars(
+          title: 'SOS contact outcomes',
+          rows: snapshot.hasSources(['sosWhatsAppDispatches'])
+              ? _model.periodContacts
+              : const [],
+          suffix: 'contacts',
+          subtitle:
+              'Latest known outcome for contacts dispatched in this period.',
+          emptyLabel: _model.emptyLabel(['sosWhatsAppDispatches']),
+          partial: _model.partial(['sosWhatsAppDispatches']),
+        ),
+        AdminPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (final (i, row) in widget.rows.indexed)
-                InkWell(
-                  onTap: () =>
-                      setState(() => _selected = _selected == i ? null : i),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: _palette[i % _palette.length],
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            '${_label(row['label'])} · ${_fmt(row['value'])}',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: _selected == i
-                                  ? FontWeight.w800
-                                  : FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              const AdminSectionHeading(title: 'How to read these results'),
+              const SizedBox(height: 14),
+              const _DefinitionLine(
+                title: 'Confirmed',
+                body:
+                    'The provider acknowledged the dispatch. This does not confirm delivery to the contact, a reply or a rescue response.',
+              ),
+              const _DefinitionLine(
+                title: 'Unconfirmed',
+                body:
+                    'No acknowledgement arrived within 15 seconds. Late confirmations can still update the result.',
+              ),
+              const _DefinitionLine(
+                title: 'Failed',
+                body:
+                    'A known dispatch failure. Only eligible failed contacts can be retried.',
+              ),
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: widget.onSafety,
+                icon: const Icon(Icons.shield_outlined),
+                label: const Text('Open trail Safety'),
+              ),
             ],
           ),
-        ],
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.metric(
+            'Unconfirmed contacts · 24h',
+            'contacts.recentUnconfirmed',
+            ['sosWhatsAppDispatches'],
+            'Latest known outcomes · last 24 hours',
+          ),
+          icon: Icons.pending_outlined,
+          tint: _orange,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Failed contacts · 24h',
+            'contacts.recentFailed',
+            ['sosWhatsAppDispatches'],
+            'Known failures · last 24 hours',
+          ),
+          icon: Icons.error_outline_rounded,
+          tint: _red,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Confirmed resolutions',
+            'safety.confirmedResolutions',
+            ['hazardReports'],
+            'Three hikers confirmed · all time',
+          ),
+          icon: Icons.task_alt_rounded,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Expired reports',
+            'safety.expiredHazards',
+            ['hazardReports'],
+            'Expired without confirmed resolution',
+          ),
+          icon: Icons.history_rounded,
+          tint: _blue,
+        ),
+      ],
+    ),
+    const SizedBox(height: 12),
+    const _DashboardNote(
+      text:
+          'Weather cautions expire after 24 hours for critical risks or 12 hours otherwise. Other trail reports keep their seven-day lifetime. Expiry is not proof that a condition is safe.',
+    ),
+  ];
+
+  /// Analyses catalogue quality and coverage without exposing private hike locations.
+  List<Widget> _trails(AdminAnalyticsSnapshot snapshot) => [
+    const AdminSectionHeading(
+      title: 'Trail catalogue quality',
+      subtitle: 'Current catalogue · all records',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.metric(
+            'Published trails',
+            'totals.trails',
+            ['trails'],
+            'Current catalogue records',
+            exactTotal: true,
+          ),
+          icon: Icons.terrain_outlined,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.ratio(
+            'Stored route coverage',
+            'trails.routeStored',
+            'trails.analysedCount',
+            ['trails'],
+            'Trails with stored route geometry',
+          ),
+          icon: Icons.route_outlined,
+          tint: _blue,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Hiker rating average',
+            'trails.averageRating',
+            ['trails'],
+            'Weighted by available rating records',
+            requireComplete: true,
+          ),
+          icon: Icons.star_outline_rounded,
+          tint: _orange,
+        ),
+        _MetricCard(
+          metric: _model.ratio(
+            'Fresh trailhead forecasts',
+            'trails.freshForecasts',
+            'trails.analysedCount',
+            ['trails'],
+            'Forecasts younger than three hours',
+          ),
+          icon: Icons.cloud_outlined,
+          tint: _purple,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      children: [
+        _bars('Trails by state', 'trails.byState', ['trails'], 'trails'),
+        _bars('Trail difficulty', 'trails.byDifficulty', ['trails'], 'trails'),
+        _bars('Trail length', 'trails.byLength', ['trails'], 'trails'),
+        AdminPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const AdminSectionHeading(title: 'Catalogue completeness'),
+              const SizedBox(height: 14),
+              _ValueLine(
+                metric: _model.metric(
+                  'Missing map coordinates',
+                  'trails.missingLocation',
+                  ['trails'],
+                  '',
+                ),
+              ),
+              _ValueLine(
+                metric: _model.metric(
+                  'Missing trail distance',
+                  'trails.missingDistance',
+                  ['trails'],
+                  '',
+                ),
+              ),
+              _ValueLine(
+                metric: _model.metric(
+                  'Missing cover image',
+                  'trails.missingCover',
+                  ['trails'],
+                  '',
+                ),
+              ),
+              _ValueLine(
+                metric: _model.metric(
+                  'Offline maps available',
+                  'trails.offlineAvailable',
+                  ['trails'],
+                  '',
+                ),
+              ),
+              _ValueLine(
+                metric: _model.metric(
+                  'Verified trail records',
+                  'trails.verified',
+                  ['trails'],
+                  '',
+                ),
+              ),
+              _ValueLine(
+                metric: _model.metric(
+                  'Ratings recorded',
+                  'trails.ratingCount',
+                  ['trails'],
+                  '',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _ActionPanel(
+      title: 'Trail submissions',
+      detail: 'Review recorded trails before adding them to the catalogue.',
+      metric: _model.metric(
+        'Pending review',
+        'feedback.pendingTrailRequests',
+        ['trailRequests'],
+        'Current submitted requests',
       ),
-    );
-  }
+      icon: Icons.add_location_alt_outlined,
+      onTap: widget.onTrailRequests ?? widget.onTools,
+      action: 'Review trail submissions',
+    ),
+    const SizedBox(height: 12),
+    const _DashboardNote(
+      text:
+          'A stale forecast normally refreshes when it is requested. It is not evidence of a provider outage. Stored route coverage uses saved geometry metadata, not whether a map was opened.',
+    ),
+  ];
+
+  /// Shows account adoption and recognition alongside aggregate community engagement.
+  List<Widget> _people(AdminAnalyticsSnapshot snapshot) => [
+    const AdminSectionHeading(
+      title: 'People & participation',
+      subtitle: 'Accounts and recorded hiking engagement',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.periodMetric('New accounts', 'newUsers', [
+            'users',
+          ], higherIsBetter: true),
+          icon: Icons.person_add_alt_1_outlined,
+          tint: _blue,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Accounts that started a hike',
+            'users.activated',
+            ['users', 'hikeSessions'],
+            'Current accounts · any recorded start',
+          ),
+          icon: Icons.hiking_rounded,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Hiking activation',
+            'users.activationRate',
+            ['users', 'hikeSessions'],
+            'Current accounts with a recorded hike start',
+            unit: '%',
+          ),
+          icon: Icons.insights_outlined,
+          tint: _purple,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Recent sign-ins',
+            'users.recentSignIns',
+            ['users'],
+            'Latest recorded sign-in within 30 days',
+          ),
+          icon: Icons.login_rounded,
+          tint: _orange,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _trendPanel(),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      children: [
+        _bars(
+          'Account availability',
+          'users.byStatus',
+          ['users'],
+          'accounts',
+          subtitle:
+              'Administrators remain part of the enabled or disabled account totals.',
+        ),
+        _Bars(
+          title: 'Achievement definitions',
+          rows: _model.definitionRows,
+          suffix: 'definitions',
+          emptyLabel: _model.emptyLabel(['achievements']),
+          partial: _model.partial(['achievements']),
+        ),
+      ],
+    ),
+    const SizedBox(height: 24),
+    const AdminSectionHeading(
+      title: 'Rewards & recognition',
+      subtitle: 'Unlocked awards and the rules currently stored',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.periodMetric('Awards unlocked', 'awards', [
+            'userAchievements',
+          ], higherIsBetter: true),
+          icon: Icons.emoji_events_outlined,
+          tint: _orange,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Hikers with awards',
+            'rewards.recipients',
+            ['userAchievements'],
+            'Distinct award recipients · all time',
+          ),
+          icon: Icons.workspace_premium_outlined,
+          tint: _purple,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Active achievement rules',
+            'rewards.active',
+            ['achievements'],
+            'Currently available definitions',
+          ),
+          icon: Icons.rule_outlined,
+          tint: _green,
+          onTap: widget.onRewards,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Archived achievement rules',
+            'rewards.inactive',
+            ['achievements'],
+            'Inactive definitions kept for reference',
+          ),
+          icon: Icons.archive_outlined,
+          tint: _blue,
+          onTap: widget.onRewards,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _bars(
+      'Hiking participation funnel',
+      'users.hikingFunnel',
+      ['users', 'hikeSessions'],
+      'current accounts',
+      subtitle:
+          'Current accounts with a recorded start and completion; each account counts once.',
+    ),
+    const SizedBox(height: 18),
+    _bars(
+      'Most awarded achievements',
+      'rewards.topAwards',
+      ['userAchievements', 'achievements'],
+      'unlocked awards',
+      subtitle: 'All time · top eight · archived awards stay in history.',
+    ),
+    const SizedBox(height: 24),
+    const AdminSectionHeading(
+      title: 'Community engagement',
+      subtitle: 'Aggregate current post records · no personal content',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.periodMetric('New community posts', 'posts', [
+            'communityPosts',
+          ]),
+          icon: Icons.article_outlined,
+          tint: _blue,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Recorded likes',
+            'content.likes',
+            ['communityPosts'],
+            'Current stored post counters · all time',
+          ),
+          icon: Icons.favorite_border_rounded,
+          tint: _purple,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Recorded comments',
+            'content.comments',
+            ['communityPosts'],
+            'Current stored post counters · all time',
+          ),
+          icon: Icons.chat_bubble_outline_rounded,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Administrator accounts',
+            'users.administrators',
+            ['users'],
+            'Current protected admin roles',
+          ),
+          icon: Icons.admin_panel_settings_outlined,
+          tint: _orange,
+        ),
+      ],
+    ),
+    const SizedBox(height: 12),
+    const _DashboardNote(
+      text:
+          'Recent sign-ins count the latest stored sign-in for each account, not app visits or a full login history. Archived achievements remain part of historical awards. Deleted records are not reconstructed.',
+    ),
+  ];
+
+  /// Presents recorded delivery work and source coverage, not inferred infrastructure uptime.
+  List<Widget> _operations(AdminAnalyticsSnapshot snapshot) => [
+    const AdminSectionHeading(
+      title: 'Notification operations',
+      subtitle: 'Current job states · all retained notification records',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.metric(
+            'Overdue notification jobs',
+            'operations.notifications.overdue',
+            ['fcmOutbox'],
+            'Due jobs pending longer than five minutes',
+          ),
+          icon: Icons.pending_actions_rounded,
+          tint: _orange,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Unconfirmed jobs',
+            'operations.notifications.unconfirmed',
+            ['fcmOutbox'],
+            'Outbound result could not be confirmed',
+          ),
+          icon: Icons.help_outline_rounded,
+          tint: _orange,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'FCM device acceptance',
+            'operations.notifications.deviceAcceptanceRate',
+            ['fcmOutbox'],
+            'Known accepted / accepted + rejected attempts',
+            unit: '%',
+          ),
+          icon: Icons.notifications_active_outlined,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Median processing time',
+            'operations.notifications.medianProcessingSeconds',
+            ['fcmOutbox'],
+            'Recorded creation-to-processing timings',
+            unit: 's',
+            requireComplete: true,
+          ),
+          icon: Icons.av_timer_rounded,
+          tint: _blue,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      children: [
+        _bars(
+          'Notification job outcomes',
+          'operations.notifications.byStatus',
+          ['fcmOutbox'],
+          'jobs',
+          subtitle:
+              'Sent means accepted by FCM, not delivered to or read by a hiker.',
+        ),
+        _bars('Notification categories', 'operations.notifications.byType', [
+          'fcmOutbox',
+        ], 'jobs'),
+      ],
+    ),
+    const SizedBox(height: 24),
+    const AdminSectionHeading(
+      title: 'Forecast cache & location sharing',
+      subtitle: 'Latest stored state · three-hour forecast freshness',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      compact: true,
+      children: [
+        _MetricCard(
+          metric: _model.metric(
+            'Fresh shared forecasts',
+            'operations.weather.fresh',
+            ['trailWeatherCache'],
+            'Cache entries younger than three hours',
+          ),
+          icon: Icons.cloud_done_outlined,
+          tint: _green,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Weather retry cooldowns',
+            'operations.weather.retryCooldown',
+            ['trailWeatherCache'],
+            'Current provider retry cooldowns',
+          ),
+          icon: Icons.cloud_sync_outlined,
+          tint: _orange,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Fresh checkpoint forecasts',
+            'operations.checkpointForecasts.fresh',
+            ['checkpointWeather'],
+            'Shared saved checkpoint forecasts',
+          ),
+          icon: Icons.location_on_outlined,
+          tint: _blue,
+        ),
+        _MetricCard(
+          metric: _model.metric(
+            'Active location shares',
+            'operations.activeShares',
+            ['live_location_shares'],
+            'Enabled shares that have not expired',
+          ),
+          icon: Icons.share_location_rounded,
+          tint: _purple,
+        ),
+      ],
+    ),
+    const SizedBox(height: 18),
+    _ResponsiveGrid(
+      children: [
+        _bars(
+          'Shared forecast freshness',
+          'operations.weather.byFreshness',
+          ['trailWeatherCache'],
+          'cache entries',
+          subtitle:
+              'Stale entries refresh on demand; this is not an uptime monitor.',
+        ),
+        _bars(
+          'Checkpoint forecast freshness',
+          'operations.checkpointForecasts.byFreshness',
+          ['checkpointWeather'],
+          'checkpoint forecasts',
+        ),
+      ],
+    ),
+    const SizedBox(height: 24),
+    const AdminSectionHeading(
+      title: 'Administrative workload',
+      subtitle: 'Current queues that need follow-up',
+    ),
+    const SizedBox(height: 10),
+    _ResponsiveGrid(
+      children: [
+        _ActionPanel(
+          title: 'Hiker feedback',
+          detail: 'Follow up on unresolved feedback and support requests.',
+          metric: _model.metric('Open feedback', 'feedback.open', [
+            'appFeedback',
+          ], ''),
+          icon: Icons.feedback_outlined,
+          onTap: widget.onFeedback ?? widget.onTools,
+          action: 'Open feedback inbox',
+        ),
+        _ActionPanel(
+          title: 'Trail submissions',
+          detail: 'Review recorded trails awaiting publication.',
+          metric: _model.metric(
+            'Pending review',
+            'feedback.pendingTrailRequests',
+            ['trailRequests'],
+            '',
+          ),
+          icon: Icons.add_location_alt_outlined,
+          onTap: widget.onTrailRequests ?? widget.onTools,
+          action: 'Review trail submissions',
+        ),
+      ],
+    ),
+    const SizedBox(height: 24),
+    _ResponsiveGrid(
+      children: [
+        _bars('Feedback outcomes', 'feedback.byStatus', [
+          'appFeedback',
+        ], 'reports'),
+        _bars('Feedback categories', 'feedback.byCategory', [
+          'appFeedback',
+        ], 'reports'),
+      ],
+    ),
+    const SizedBox(height: 24),
+    const AdminSectionHeading(
+      title: 'Analysis coverage',
+      subtitle: 'What this snapshot can reliably describe',
+    ),
+    const SizedBox(height: 10),
+    _CoveragePanel(
+      snapshot: snapshot,
+      onRefresh: widget.loading ? null : widget.onRetry,
+    ),
+    const SizedBox(height: 18),
+    _Bars(
+      title: 'Activity date exclusions',
+      rows: _model.dateIssues,
+      suffix: 'events',
+      subtitle:
+          'Missing dates or event times after this snapshot are excluded from period metrics.',
+      emptyLabel: snapshot.hasExpandedAnalysis
+          ? 'No date exclusions in the analysed activity.'
+          : 'Date quality analysis is unavailable.',
+    ),
+    const SizedBox(height: 12),
+    const _DashboardNote(
+      text:
+          'These figures describe stored application work. They do not measure server uptime, app crashes, network availability, message reads or rescue response. Sources are collected independently; the snapshot is not an atomic live view.',
+    ),
+  ];
+
+  /// Plots only valid buckets for the selected source and reporting period.
+  Widget _trendPanel() => AdminPanel(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const AdminSectionHeading(title: 'Activity trend'),
+        const SizedBox(height: 14),
+        DropdownButtonFormField<String>(
+          key: ValueKey('dashboard-trend-${_model.trendMetric}'),
+          initialValue: _model.trendMetric,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'Measure',
+            prefixIcon: Icon(Icons.show_chart_rounded),
+            border: OutlineInputBorder(),
+          ),
+          items: [
+            for (final entry in AdminDashboardViewModel.trendLabels.entries)
+              DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+          ],
+          onChanged: (value) {
+            if (value != null) _model.selectTrend(value);
+          },
+        ),
+        const SizedBox(height: 18),
+        _Timeline(
+          rows: _model.trendRows,
+          metric: _model.trendMetric,
+          color: _model.trendMetric == 'sosAlerts' ? _red : _green,
+          emptyLabel: _model.emptyLabel([
+            AdminDashboardViewModel.trendSources[_model.trendMetric]!,
+          ]),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${_model.trendLabel} · ${_model.periodHint}',
+          style: TextStyle(fontSize: 11, color: AdminUi.muted(context)),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Tap a point to inspect its value. Missing and future-dated events are excluded.',
+          style: TextStyle(
+            fontSize: 11,
+            height: 1.4,
+            color: AdminUi.muted(context),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// Routes each finding to the relevant analysis or management destination.
+  Widget _attention(AdminAnalyticsSnapshot snapshot) => AdminPanel(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const AdminSectionHeading(
+          title: 'Needs attention',
+          subtitle: 'Recorded findings at snapshot time',
+        ),
+        const SizedBox(height: 8),
+        if (snapshot.rows('attention').isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Text(
+              snapshot.incompleteCount > 0
+                  ? 'No findings in the available sources. Review incomplete coverage in Operations.'
+                  : 'No outstanding findings in the monitored queues.',
+              style: TextStyle(color: AdminUi.muted(context), height: 1.5),
+            ),
+          ),
+        for (final issue in snapshot.rows('attention'))
+          _AttentionRow(
+            issue: issue,
+            onTap: () {
+              final key = '${issue['key']}';
+              if (key.startsWith('sos-')) {
+                _model.selectArea(AdminDashboardArea.safety);
+              } else if (key == 'critical-hazards') {
+                widget.onSafety();
+              } else if (key == 'trail-requests') {
+                (widget.onTrailRequests ?? widget.onTools)();
+              } else if (key == 'feedback') {
+                (widget.onFeedback ?? widget.onTools)();
+              } else {
+                _model.selectArea(AdminDashboardArea.operations);
+              }
+            },
+          ),
+      ],
+    ),
+  );
+
+  /// Adds a source-aware empty state to standard ranked bar panels.
+  Widget _bars(
+    String title,
+    String path,
+    List<String> sources,
+    String suffix, {
+    String? subtitle,
+  }) => _Bars(
+    title: title,
+    rows: _model.rows(path, sources),
+    suffix: suffix,
+    subtitle: subtitle,
+    emptyLabel: _model.emptyLabel(sources),
+    partial: _model.partial(sources),
+  );
 }

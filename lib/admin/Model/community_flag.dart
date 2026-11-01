@@ -6,7 +6,7 @@ enum CommunityFlagSource {
   keywords,
   pattern,
   integrity,
-  gemini,
+  earlierReview,
   localRules,
   unavailable,
 }
@@ -17,7 +17,7 @@ enum CommunityFlagSourceFilter {
   keywords,
   pattern,
   integrity,
-  gemini,
+  earlierReview,
   localRules,
   unavailable;
 
@@ -27,7 +27,7 @@ enum CommunityFlagSourceFilter {
     keywords => 'Keywords',
     pattern => 'Patterns',
     integrity => 'Record checks',
-    gemini => 'Gemini',
+    earlierReview => 'Earlier checks',
     localRules => 'Local rules',
     unavailable => 'Source unavailable',
   };
@@ -63,7 +63,7 @@ const _categoryLabels = <String, String>{
   'unsafe_advice': 'Potentially dangerous advice',
   'integrity': 'Content record needs review',
   'sensitive_content': 'Sensitive information',
-  'provider_safety': 'Provider safety review',
+  'provider_safety': 'Earlier safety review',
   'check_unavailable': 'Check unavailable',
 };
 
@@ -165,15 +165,12 @@ class CommunityFlag {
         return CommunityFlagSource.pattern;
       case 'integrity':
         return CommunityFlagSource.integrity;
-      case 'gemini':
-        return CommunityFlagSource.gemini;
       case 'local_rules':
         return CommunityFlagSource.localRules;
     }
-    // A model field alone is not proof that Gemini produced this verdict.
-    if (_isGeminiModel(model) ||
-        const {'gemini', 'google_gemini'}.contains(provider.toLowerCase())) {
-      return CommunityFlagSource.gemini;
+    // Retain flags produced by earlier checkers without exposing a retired provider.
+    if (model.isNotEmpty || provider.isNotEmpty || explicit.isNotEmpty) {
+      return CommunityFlagSource.earlierReview;
     }
     if (explicit.isEmpty &&
         model.isEmpty &&
@@ -192,7 +189,7 @@ class CommunityFlag {
     CommunityFlagSource.keywords => 'Keyword match',
     CommunityFlagSource.pattern => 'Pattern match',
     CommunityFlagSource.integrity => 'Record check',
-    CommunityFlagSource.gemini => 'Gemini',
+    CommunityFlagSource.earlierReview => 'Earlier check',
     CommunityFlagSource.localRules => 'Local rules',
     CommunityFlagSource.unavailable => 'Source unavailable',
   };
@@ -205,8 +202,8 @@ class CommunityFlag {
       'A sensitive information pattern matched; the value is not copied into this flag.',
     CommunityFlagSource.integrity =>
       'A content record needs checking for missing or invalid data.',
-    CommunityFlagSource.gemini =>
-      'This saved flag identifies Gemini as its source. Review its suggestion against the original content.',
+    CommunityFlagSource.earlierReview =>
+      'A saved flag from an earlier checker. Review it against the original content; the current checker uses local rules.',
     CommunityFlagSource.localRules =>
       'An older local check flagged this content without saving the exact matched rule.',
     CommunityFlagSource.unavailable =>
@@ -277,12 +274,6 @@ List<String> _strings(Object? value) => value is List
           .toSet()
           .toList(growable: false)
     : const [];
-
-/// Checks whether gemini model.
-bool _isGeminiModel(String value) => RegExp(
-  r'^(?:(?:publishers/google/)?models/|google/)?gemini(?:-[a-z0-9][a-z0-9._-]*)?$',
-  caseSensitive: false,
-).hasMatch(value);
 
 /// Supports current millisecond fields and older Firestore/ISO timestamps.
 DateTime? parseCommunityFlagTimestamp(Object? value) {

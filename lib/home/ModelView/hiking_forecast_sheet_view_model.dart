@@ -3,8 +3,78 @@ part of '../hiking_forecast_sheet_feature.dart';
 /// Owns the state and non-visual actions of HikingForecastSheet.
 class _ForecastStateViewModel extends ChangeNotifier {
   /// Creates forecast state view model.
-  _ForecastStateViewModel({required this.readHike});
+  _ForecastStateViewModel({
+    required this.readHike,
+    required this.readService,
+    required this.onWeatherChanged,
+    TrailWeather? weather,
+  }) : stateWeather =
+           weather ??
+           TrailWeather(
+             summary: '',
+             temperatureRange: '',
+             rainProbability: 0,
+             cachedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+             forecastData: {
+               'utc_offset_seconds': readHike().departureTime
+                   .toLocal()
+                   .timeZoneOffset
+                   .inSeconds,
+             },
+           ) {
+    _clock = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => notifyListeners(),
+    );
+  }
   final UpcomingHike Function() readHike;
+  final HikeBriefingWeatherService Function() readService;
+  final ValueChanged<TrailWeather> onWeatherChanged;
+  late final Timer _clock;
+  TrailWeather stateWeather;
+  bool stateLoading = false;
+  String? stateError;
+
+  /// Allows retry for an empty hiking window or weather at least 15 minutes old.
+  bool get commandCanReload =>
+      !stateLoading &&
+      HikeBriefingWeatherService.canReload(
+        stateWeather,
+        departure: readHike().departureTime,
+        returning: readHike().expectedReturnTime,
+      );
+
+  /// Loads the canonical trail forecast and retains the previous data on failure.
+  Future<void> commandLoad({bool force = false}) async {
+    if (stateLoading || (force && !commandCanReload)) return;
+    stateLoading = true;
+    stateError = null;
+    notifyListeners();
+    final hike = readHike();
+    try {
+      final updated = await readService().fetchForHike(hike, force: force);
+      if (!mounted) return;
+      stateWeather = updated;
+      onWeatherChanged(updated);
+      unawaited(HomeScreenWidgetService.shared.acceptForecast(hike, updated));
+    } catch (_) {
+      if (!mounted) return;
+      stateError =
+          HikeWeatherBriefing.fromWeather(
+            stateWeather,
+            hike.departureTime,
+            hike.expectedReturnTime,
+          ).hours.isEmpty
+          ? 'Couldn’t load the trail forecast. Check your connection and try again.'
+          : 'Could not reload. The last available trail forecast is shown.';
+    } finally {
+      if (mounted) {
+        stateLoading = false;
+        notifyListeners();
+      }
+    }
+  }
+
   bool _disposed = false;
 
   /// Whether this instance is still active.
@@ -119,6 +189,7 @@ class _ForecastStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _clock.cancel();
     super.dispose();
   }
 }

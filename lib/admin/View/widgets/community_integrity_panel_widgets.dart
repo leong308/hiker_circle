@@ -1,8 +1,8 @@
 part of '../../community_integrity_panel_feature.dart';
 
-/// Displays the community integrity panel.
+/// Displays the retained moderation queue without provider-specific controls.
 class CommunityIntegrityPanel extends StatefulWidget {
-  /// Creates community integrity panel.
+  /// Accepts live sources so the same queue works in Circle and in tests.
   const CommunityIntegrityPanel({
     super.key,
     this.onReviewed,
@@ -18,18 +18,18 @@ class CommunityIntegrityPanel extends StatefulWidget {
   loadReviews;
   final Future<bool?> Function(CommunityFlag flag)? openReview;
 
-  /// Creates the presentation state for this widget.
+  /// Binds the queue's presentation lifecycle.
   @override
   State<CommunityIntegrityPanel> createState() =>
       _CommunityIntegrityPanelState();
 }
 
-/// Manages the community integrity panel presentation and lifecycle.
+/// Owns only text entry and the filter/review navigation presentation.
 class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
-  /// Returns resolved.
-  Map<String, String> get _resolved => _screenModel.stateResolved;
+  late final _CommunityIntegrityPanelStateViewModel _screenModel;
+  final _searchController = TextEditingController();
 
-  /// Initializes bindings and starts the screen lifecycle.
+  /// Binds the ViewModel to the selected data sources and review destination.
   @override
   void initState() {
     super.initState();
@@ -37,241 +37,241 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
       readHealth: () => widget.health,
       readLoadReviews: () => widget.loadReviews,
       readReviews: () => widget.reviews,
-    )..addListener(_renderScreenModel);
+    )..addListener(_render);
     _screenModel.readOpenReview = () => widget.openReview;
     _screenModel.readOnReviewed = () => widget.onReviewed;
-    _screenModel.effectPresentOpenEffect1 = _presentOpenEffect1;
+    _screenModel.effectPresentOpenEffect1 = _presentReview;
   }
 
-  late final _CommunityIntegrityPanelStateViewModel _screenModel;
+  /// Reconnects when a parent replaces an injected/live data source.
+  @override
+  void didUpdateWidget(covariant CommunityIntegrityPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reviews != widget.reviews ||
+        oldWidget.health != widget.health ||
+        oldWidget.loadReviews != widget.loadReviews) {
+      _screenModel.commandRefresh();
+    }
+  }
 
-  /// Rebuilds the view after its ViewModel changes.
-  void _renderScreenModel() {
+  /// Rebuilds when queue controls or navigation state change.
+  void _render() {
     if (mounted) setState(() {});
   }
 
-  static const _pageSize = 50;
-  int _limit = _pageSize;
-  late Stream<QuerySnapshot<Map<String, dynamic>>> _reviews = _reviewStream();
-  late Stream<DocumentSnapshot<Map<String, dynamic>>> _health = _healthStream();
-  final _searchController = TextEditingController();
-  CommunityFlagSourceFilter _source = CommunityFlagSourceFilter.all;
-  _ContentFilter _content = _ContentFilter.all;
-  _QueueSort _sort = _QueueSort.newest;
-
-  /// Returns has reviews.
-  bool get _hasReviews => _screenModel.commandHasReviews;
-
-  /// Returns has health.
-  bool get _hasHealth => _screenModel.commandHasHealth;
-
-  /// Computes review stream.
-  Stream<QuerySnapshot<Map<String, dynamic>>> _reviewStream() =>
-      widget.loadReviews?.call(_limit) ??
-      widget.reviews ??
-      FirebaseFirestore.instance
-          .collection('communityModerationReviews')
-          .where('status', isEqualTo: 'pending')
-          .limit(_limit)
-          .snapshots();
-
-  /// Delegates health stream to the ViewModel.
-  Stream<DocumentSnapshot<Map<String, dynamic>>> _healthStream() =>
-      _screenModel.commandHealthStream();
-
-  /// Releases resources owned by this instance.
+  /// Releases text entry and ViewModel listeners.
   @override
   void dispose() {
     _searchController.dispose();
-
-    _screenModel.removeListener(_renderScreenModel);
+    _screenModel.removeListener(_render);
     _screenModel.dispose();
     super.dispose();
   }
 
-  /// Retries.
-  void _retry() {
-    setState(() {
-      if (_hasReviews) _reviews = _reviewStream();
-      if (_hasHealth) _health = _healthStream();
-    });
-  }
-
-  /// Clears filters.
-  void _clearFilters() {
+  /// Clears both visible text entry and the applied filter model.
+  void _clear() {
     _searchController.clear();
-    setState(() {
-      _source = CommunityFlagSourceFilter.all;
-      _content = _ContentFilter.all;
-    });
+    _screenModel.commandClearFilters();
   }
 
-  /// Delegates open to the ViewModel.
-  Future<void> _open(CommunityFlag flag) => _screenModel.commandOpen(flag);
-
-  /// Computes date.
+  /// Formats timestamps without exposing model/provider implementation fields.
   String _date(DateTime? date) {
     if (date == null) return 'Time unavailable';
     final local = MaterialLocalizations.of(context);
     return '${local.formatMediumDate(date)} · ${local.formatTimeOfDay(TimeOfDay.fromDateTime(date))}';
   }
 
-  /// Builds this widget from its current presentation state.
+  /// Presents scan health, compact controls and the pending review cards.
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      const SectionLabel(label: 'Automatic checks'),
+      const SizedBox(height: 8),
       AdminPanel(
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Icon(Icons.flag_outlined, color: AdminUi.green(context)),
-                const SizedBox(width: 10),
+                const _FlagGlyph(icon: Icons.fact_check_outlined),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Review queue',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
+                    'Rule-based checks',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
                 const CommunityModerationRulesButton(compact: true),
                 IconButton(
                   tooltip: 'Refresh flagged content',
-                  onPressed: _hasReviews ? _retry : null,
+                  onPressed: _screenModel.commandHasReviews
+                      ? _screenModel.commandRefresh
+                      : null,
                   icon: const Icon(Icons.refresh_rounded),
                 ),
               ],
             ),
+            const SizedBox(height: 10),
             Text(
-              'Check what triggered each flag and review the original content.',
-              style: TextStyle(color: AdminUi.muted(context), height: 1.4),
+              'Keyword, pattern and record checks · every 30 minutes',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AdminUi.muted(context),
+                height: 1.4,
+              ),
             ),
-            const SizedBox(height: 8),
-            if (_hasHealth)
+            const SizedBox(height: 6),
+            if (_screenModel.stateHealth != null)
               StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                stream: _health,
-                builder: _buildHealth,
+                stream: _screenModel.stateHealth,
+                builder: _health,
               )
             else
               Text(
-                'Scan status is unavailable while offline.',
-                style: TextStyle(color: AdminUi.muted(context)),
+                'Scan status unavailable while offline.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context)),
               ),
           ],
         ),
       ),
-      const SizedBox(height: 14),
-      if (!_hasReviews)
-        const AdminPanel(
-          child: Text('Connect to Firebase to load the review queue.'),
+      const SizedBox(height: 22),
+      if (!_screenModel.commandHasReviews)
+        const AdminEmptyState(
+          title: 'Connect to load flagged content',
+          message:
+              'Your review queue will appear when a connection is available.',
+          icon: Icons.cloud_off_rounded,
         )
-      else
+      else ...[
+        _controls(),
+        const SizedBox(height: 18),
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: _reviews,
-          builder: _buildQueue,
+          stream: _screenModel.stateReviews,
+          builder: _queue,
         ),
+      ],
     ],
   );
 
-  /// Builds health.
-  Widget _buildHealth(
+  /// Keeps operational scan details secondary to the content awaiting review.
+  Widget _health(
     BuildContext context,
     AsyncSnapshot<DocumentSnapshot<Map<String, dynamic>>> snapshot,
   ) {
+    final text = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context), height: 1.4);
     if (snapshot.hasError) {
-      return Wrap(
-        spacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          const Text('Scan status could not load.'),
-          TextButton(onPressed: _retry, child: const Text('Retry status')),
-        ],
-      );
-    }
-    if (!snapshot.hasData) return const LinearProgressIndicator(minHeight: 3);
-    final data = snapshot.data?.data();
-    final checkedAt = parseCommunityFlagTimestamp(data?['lastRunAtMillis']);
-    if (checkedAt == null) {
       return Text(
-        'Waiting for the first scheduled check.',
-        style: TextStyle(color: AdminUi.muted(context)),
+        'Scan status could not load. Existing flags can still be reviewed.',
+        style: text,
       );
     }
-    final incomplete = const {'failed', 'deferred'}.contains(data?['status']);
-    final counts = <String>[
-      if (data?['checked'] is num) '${data!['checked']} checked',
-      if (data?['flagged'] is num) '${data!['flagged']} flagged',
-    ];
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: (incomplete ? Colors.orange : AdminUi.green(context)).withValues(
-          alpha: .08,
-        ),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: ExpansionTile(
-        tilePadding: EdgeInsets.zero,
-        childrenPadding: const EdgeInsets.only(left: 30, top: 4, bottom: 4),
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        shape: const Border(),
-        collapsedShape: const Border(),
-        leading: Icon(
-          incomplete ? Icons.info_outline_rounded : Icons.schedule_rounded,
-          size: 20,
-          color: incomplete
-              ? Theme.of(context).colorScheme.error
-              : AdminUi.green(context),
-        ),
-        title: Text(
-          incomplete
-              ? 'Some content still needs checking'
-              : 'Last scan · ${_date(checkedAt)}',
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 13,
-            color: AdminUi.muted(context),
-          ),
-        ),
+    if (!snapshot.hasData) return const LinearProgressIndicator(minHeight: 2);
+    final data = snapshot.data?.data();
+    final date = parseCommunityFlagTimestamp(data?['lastRunAtMillis']);
+    if (date == null) {
+      return Text('Waiting for the first scheduled check.', style: text);
+    }
+    final failed = const {'failed', 'deferred'}.contains(data?['status']);
+    return Text(
+      failed
+          ? 'The last scan was incomplete. Saved flags remain available.'
+          : 'Last checked ${_date(date)}',
+      style: text,
+    );
+  }
+
+  /// Shows search and one filter action instead of several always-open forms.
+  Widget _controls() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              incomplete
-                  ? 'Existing flags are ready for review. The remaining content will be checked again.'
-                  : '${counts.join(' · ')}${counts.isEmpty ? '' : ' · '}Every 30 min',
-              style: TextStyle(color: AdminUi.muted(context), height: 1.4),
+          Expanded(
+            child: TextField(
+              key: const ValueKey('flag-search'),
+              controller: _searchController,
+              onChanged: _screenModel.commandSearch,
+              decoration: InputDecoration(
+                hintText: 'Search flagged content',
+                prefixIcon: const Icon(Icons.search_rounded),
+                filled: true,
+                fillColor: Theme.of(context).colorScheme.surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                suffixIcon: _searchController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        onPressed: () {
+                          _searchController.clear();
+                          _screenModel.commandSearch('');
+                        },
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            tooltip: 'Filter flagged content',
+            onPressed: _showFilters,
+            icon: Icon(
+              _screenModel.stateFilters.isActive
+                  ? Icons.filter_alt_rounded
+                  : Icons.filter_list_rounded,
             ),
           ),
         ],
       ),
-    );
-  }
+      const SizedBox(height: 8),
+      Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        children: [
+          Text(
+            _screenModel.stateFilters.description,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context)),
+          ),
+          if (_screenModel.stateFilters.isActive)
+            TextButton(onPressed: _clear, child: const Text('Reset filters')),
+        ],
+      ),
+    ],
+  );
 
-  /// Builds queue.
-  Widget _buildQueue(
+  /// Renders only pending flags from the loaded subset, including older checks.
+  Widget _queue(
     BuildContext context,
     AsyncSnapshot<QuerySnapshot<Map<String, dynamic>>> snapshot,
   ) {
     if (snapshot.hasError) {
       return AdminPanel(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'The review queue could not load.',
-              style: TextStyle(fontWeight: FontWeight.w700),
+            Text(
+              'Could not load flagged content',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
             const Text('Check your connection and try again.'),
-            TextButton.icon(
-              onPressed: _retry,
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _screenModel.commandRefresh,
               icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Retry review queue'),
+              label: const Text('Try again'),
             ),
           ],
         ),
@@ -280,254 +280,76 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
     if (!snapshot.hasData) {
       return const AdminPanel(
         child: Padding(
-          padding: EdgeInsets.all(12),
+          padding: EdgeInsets.all(18),
           child: Center(child: CircularProgressIndicator()),
         ),
       );
     }
-    final flags = snapshot.data!.docs
-        .map((doc) => CommunityFlag(id: doc.id, data: doc.data()))
-        .where((flag) => _resolved[flag.id] != flag.fingerprint)
-        .toList();
-    final visible = flags
-        .where(
-          (flag) =>
-              flag.matchesSource(_source) &&
-              (_content == _ContentFilter.all ||
-                  flag.isComment == (_content == _ContentFilter.comment)) &&
-              flag.matchesQuery(_searchController.text),
-        )
-        .toList();
-
-    /// Computes time.
-    int time(CommunityFlag flag) => flag.flaggedAt?.millisecondsSinceEpoch ?? 0;
-
-    /// Computes priority.
-    int priority(CommunityFlag flag) => switch (flag.severity) {
-      'critical' => 4,
-      'high' => 3,
-      'medium' => 2,
-      'low' => 1,
-      _ => 0,
-    };
-    visible.sort((a, b) {
-      if (_sort == _QueueSort.priority) {
-        final comparison = priority(b).compareTo(priority(a));
-        if (comparison != 0) return comparison;
-      }
-      final comparison = _sort == _QueueSort.oldest
-          ? time(a).compareTo(time(b))
-          : time(b).compareTo(time(a));
-      return comparison == 0 ? a.id.compareTo(b.id) : comparison;
-    });
-    final hasMore =
-        widget.reviews == null && snapshot.data!.docs.length >= _limit;
+    final flags = _screenModel.commandFlags(snapshot.data!);
+    final visible = _screenModel.stateFilters.apply(
+      flags,
+      _screenModel.stateQuery,
+    );
+    final hasMore = _screenModel.commandHasMore(snapshot.data!.docs.length);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        AdminPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                key: const ValueKey('flag-search'),
-                controller: _searchController,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  labelText: 'Search reasons or keywords',
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  suffixIcon: _searchController.text.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Clear search',
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {});
-                          },
-                          icon: const Icon(Icons.close_rounded),
-                        ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final source =
-                      DropdownButtonFormField<CommunityFlagSourceFilter>(
-                        key: const ValueKey('flag-source-filter'),
-                        initialValue: _source,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Flagged by',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          for (final filter in CommunityFlagSourceFilter.values)
-                            DropdownMenuItem(
-                              value: filter,
-                              child: Text(
-                                filter.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                        ],
-                        onChanged: (value) {
-                          if (value != null) setState(() => _source = value);
-                        },
-                      );
-                  final content = DropdownButtonFormField<_ContentFilter>(
-                    key: const ValueKey('flag-content-filter'),
-                    initialValue: _content,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Content',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: _ContentFilter.all,
-                        child: Text('All content'),
-                      ),
-                      DropdownMenuItem(
-                        value: _ContentFilter.post,
-                        child: Text('Posts'),
-                      ),
-                      DropdownMenuItem(
-                        value: _ContentFilter.comment,
-                        child: Text('Comments'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) setState(() => _content = value);
-                    },
-                  );
-                  if (constraints.maxWidth < 330 ||
-                      MediaQuery.textScalerOf(context).scale(16) > 21) {
-                    return Column(
-                      children: [source, const SizedBox(height: 14), content],
-                    );
-                  }
-                  return Row(
-                    children: [
-                      Expanded(child: source),
-                      const SizedBox(width: 12),
-                      Expanded(child: content),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 12,
-                runSpacing: 6,
-                children: [
-                  Text(
-                    '${visible.length} shown · ${flags.length} loaded',
-                    key: const ValueKey('flag-results-count'),
-                    style: TextStyle(color: AdminUi.muted(context)),
-                  ),
-                  PopupMenuButton<_QueueSort>(
-                    tooltip: 'Sort reviews',
-                    initialValue: _sort,
-                    onSelected: (value) => setState(() => _sort = value),
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: _QueueSort.newest,
-                        child: Text('Newest loaded'),
-                      ),
-                      PopupMenuItem(
-                        value: _QueueSort.oldest,
-                        child: Text('Oldest loaded'),
-                      ),
-                      PopupMenuItem(
-                        value: _QueueSort.priority,
-                        child: Text('Highest priority loaded'),
-                      ),
-                    ],
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.sort_rounded, size: 18),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(switch (_sort) {
-                              _QueueSort.newest => 'Newest loaded',
-                              _QueueSort.oldest => 'Oldest loaded',
-                              _QueueSort.priority => 'Highest priority loaded',
-                            }),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (snapshot.connectionState == ConnectionState.waiting)
-                const LinearProgressIndicator(minHeight: 3),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        if (visible.isEmpty)
-          AdminPanel(
-            child: Column(
-              children: [
-                Icon(
-                  flags.isEmpty
-                      ? Icons.task_alt_rounded
-                      : Icons.filter_alt_off_outlined,
-                  size: 32,
-                  color: AdminUi.green(context),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  flags.isEmpty
-                      ? 'No flags awaiting review'
-                      : 'No reviews match these filters',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  flags.isEmpty
-                      ? 'New flags will appear here after a content check.'
-                      : 'Try a different source, content type, or search.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AdminUi.muted(context)),
-                ),
-                if (flags.isNotEmpty)
-                  TextButton(
-                    onPressed: _clearFilters,
-                    child: const Text('Clear filters'),
-                  ),
-              ],
+        Row(
+          children: [
+            const Expanded(child: SectionLabel(label: 'Pending review')),
+            Text(
+              '${visible.length} of ${flags.length} loaded',
+              key: const ValueKey('flag-results-count'),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context)),
             ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_screenModel.stateError != null) ...[
+          Text(
+            _screenModel.stateError!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
+          const SizedBox(height: 10),
+        ],
+        if (snapshot.connectionState == ConnectionState.waiting)
+          const LinearProgressIndicator(minHeight: 2),
+        if (visible.isEmpty) ...[
+          AdminEmptyState(
+            title: flags.isEmpty ? 'All caught up' : 'No matching flags',
+            message: flags.isEmpty
+                ? 'New flags will appear here after a content check.'
+                : 'Try another search or change your filters.',
+            icon: flags.isEmpty
+                ? Icons.task_alt_rounded
+                : Icons.search_off_rounded,
+          ),
+          if (flags.isNotEmpty)
+            TextButton(
+              onPressed: _clear,
+              child: const Text('Clear search and filters'),
+            ),
+        ],
         for (final flag in visible)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: _flagCard(flag),
           ),
         if (hasMore) ...[
+          const SizedBox(height: 4),
           Text(
-            'Load more to include the rest of the queue in your search.',
-            style: TextStyle(color: AdminUi.muted(context)),
+            'Search and sorting apply to loaded reviews. Load more to include the rest.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context)),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: snapshot.connectionState == ConnectionState.waiting
                 ? null
-                : () => setState(() {
-                    _limit += _pageSize;
-                    _reviews = _reviewStream();
-                  }),
+                : _screenModel.commandLoadMore,
             icon: const Icon(Icons.expand_more_rounded),
             label: const Text('Load more reviews'),
           ),
@@ -536,139 +358,222 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
     );
   }
 
-  /// Computes flag card.
+  /// Uses one clear title, safe rule evidence and a quiet metadata line per flag.
   Widget _flagCard(CommunityFlag flag) {
-    final color = switch (flag.source) {
-      CommunityFlagSource.gemini =>
-        Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFFD2B5FF)
-            : const Color(0xFF6B3E9C),
-      CommunityFlagSource.keywords =>
-        Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFFFFC98C)
-            : const Color(0xFF8E520B),
-      CommunityFlagSource.pattern => AdminUi.blue(context),
-      _ => AdminUi.green(context),
-    };
-    final icon = switch (flag.source) {
-      CommunityFlagSource.gemini => Icons.auto_awesome_outlined,
-      CommunityFlagSource.keywords => Icons.text_fields_rounded,
-      CommunityFlagSource.pattern => Icons.pattern_rounded,
-      CommunityFlagSource.integrity => Icons.fact_check_outlined,
-      _ => Icons.info_outline_rounded,
-    };
+    final colors = Theme.of(context).colorScheme;
+    final urgent = const {'high', 'critical'}.contains(flag.severity);
+    final opening = _screenModel.stateOpening.contains(flag.id);
     return AdminPanel(
       key: ValueKey('flag-card-${flag.id}'),
-      onTap: () => _open(flag),
+      padding: const EdgeInsets.all(16),
+      onTap: _screenModel.stateOpening.isNotEmpty
+          ? null
+          : () => _screenModel.commandOpen(flag),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _FlagGlyph(
+                icon: flag.isComment
+                    ? Icons.chat_bubble_outline_rounded
+                    : Icons.article_outlined,
+              ),
+              const SizedBox(width: 12),
               Expanded(
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _label(
-                      flag.contentTypeLabel,
-                      flag.isComment
-                          ? Icons.chat_bubble_outline_rounded
-                          : Icons.article_outlined,
-                      AdminUi.muted(context),
-                    ),
-                    _label(flag.sourceLabel, icon, color),
-                    if (flag.severity != 'unknown')
-                      _label(
-                        '${flag.severityLabel} priority',
-                        Icons.outlined_flag_rounded,
-                        const {'high', 'critical'}.contains(flag.severity)
-                            ? Theme.of(context).colorScheme.error
-                            : AdminUi.muted(context),
+                    Text(
+                      '${flag.contentTypeLabel} · ${flag.sourceLabel}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AdminUi.muted(context),
                       ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      flag.title,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(Icons.chevron_right_rounded, color: AdminUi.muted(context)),
+              if (opening)
+                const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Icon(Icons.chevron_right_rounded, color: colors.primary),
             ],
           ),
           const SizedBox(height: 12),
           Text(
-            flag.title,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-              height: 1.4,
+            flag.evidenceLabels.isEmpty
+                ? 'Read the original content before making a decision.'
+                : flag.evidenceLabels.take(2).join(' · '),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AdminUi.muted(context),
+              height: 1.45,
             ),
           ),
-          if (flag.evidenceLabels.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            for (final label in flag.evidenceLabels.take(3))
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  label,
-                  style: TextStyle(color: AdminUi.muted(context), height: 1.4),
-                ),
-              ),
-            if (flag.evidenceLabels.length > 3)
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            children: [
               Text(
-                '+${flag.evidenceLabels.length - 3} more matches',
-                style: TextStyle(color: AdminUi.muted(context)),
+                _date(flag.flaggedAt),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: AdminUi.muted(context)),
               ),
-          ] else ...[
-            const SizedBox(height: 8),
-            Text(
-              flag.source == CommunityFlagSource.gemini
-                  ? 'Open to review the Gemini suggestion.'
-                  : flag.source == CommunityFlagSource.localRules
-                  ? 'Exact matched rule was not saved for this older flag.'
-                  : 'Open to check the original content.',
-              style: TextStyle(color: AdminUi.muted(context), height: 1.4),
-            ),
-          ],
-          const SizedBox(height: 10),
-          Text(
-            _date(flag.flaggedAt),
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context)),
+              if (flag.severity != 'unknown')
+                Text(
+                  '${flag.severityLabel} priority',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: urgent ? colors.error : AdminUi.muted(context),
+                    fontWeight: urgent ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  /// Computes label.
-  Widget _label(String text, IconData icon, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: .1),
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: color, size: 15),
-        const SizedBox(width: 5),
-        Flexible(
-          child: Text(
-            text,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
+  /// Opens an editable filter draft; dismissal leaves the applied queue intact.
+  Future<void> _showFilters() async {
+    var source = _screenModel.stateFilters.source;
+    var content = _screenModel.stateFilters.content;
+    var sort = _screenModel.stateFilters.sort;
+    final result = await showModalBottomSheet<CommunityFlagFilters>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            18,
+            4,
+            18,
+            24 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Filter flagged content',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 20),
+              DropdownButtonFormField<CommunityFlagSourceFilter>(
+                key: ValueKey('flag-source-filter-${source.name}'),
+                initialValue: source,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Detected by'),
+                items: [
+                  for (final value in CommunityFlagSourceFilter.values)
+                    DropdownMenuItem(value: value, child: Text(value.label)),
+                ],
+                onChanged: (value) {
+                  if (value != null) update(() => source = value);
+                },
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<CommunityFlagContentFilter>(
+                key: ValueKey('flag-content-filter-${content.name}'),
+                initialValue: content,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Content'),
+                items: [
+                  for (final value in CommunityFlagContentFilter.values)
+                    DropdownMenuItem(value: value, child: Text(value.label)),
+                ],
+                onChanged: (value) {
+                  if (value != null) update(() => content = value);
+                },
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<CommunityFlagSort>(
+                key: ValueKey('flag-sort-${sort.name}'),
+                initialValue: sort,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Sort'),
+                items: [
+                  for (final value in CommunityFlagSort.values)
+                    DropdownMenuItem(value: value, child: Text(value.label)),
+                ],
+                onChanged: (value) {
+                  if (value != null) update(() => sort = value);
+                },
+              ),
+              const SizedBox(height: 18),
+              TextButton(
+                onPressed: () => update(() {
+                  source = CommunityFlagSourceFilter.all;
+                  content = CommunityFlagContentFilter.all;
+                  sort = CommunityFlagSort.newest;
+                }),
+                child: const Text('Reset filters'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  CommunityFlagFilters(
+                    source: source,
+                    content: content,
+                    sort: sort,
+                  ),
+                ),
+                child: const Text('Apply filters'),
+              ),
+            ],
           ),
         ),
-      ],
-    ),
-  );
+      ),
+    );
+    if (mounted && result != null) _screenModel.commandFilter(result);
+  }
 
-  /// Presents the open effect1 UI.
-  Future<bool?> _presentOpenEffect1(CommunityFlag flag) =>
+  /// Presents the retained original-content review and human decision flow.
+  Future<bool?> _presentReview(CommunityFlag flag) =>
       Navigator.of(context).push<bool>(
         MaterialPageRoute(builder: (_) => CommunityFlagReviewPage(flag: flag)),
       );
+}
+
+/// Shares the Profile-style soft green icon treatment across queue cards.
+class _FlagGlyph extends StatelessWidget {
+  /// Creates one icon without changing a flag's category or severity.
+  const _FlagGlyph({required this.icon});
+  final IconData icon;
+
+  /// Builds the fixed icon tile while allowing adjacent text to wrap.
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 42,
+    height: 42,
+    decoration: BoxDecoration(
+      color: Theme.of(
+        context,
+      ).colorScheme.primaryContainer.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Icon(icon, size: 22, color: Theme.of(context).colorScheme.primary),
+  );
 }

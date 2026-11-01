@@ -182,7 +182,11 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
   final Map<String, TeamHikeSession> statePendingTeamReadinessSessions =
       <String, TeamHikeSession>{};
 
-  final Set<String> statePresentedTeamReadinessKeys = <String>{};
+  final teamReadinessNavigation = TeamReadinessNavigationGuard();
+
+  /// Shares automatic invitation receipts with the readiness stream.
+  Set<String> get statePresentedTeamReadinessKeys =>
+      teamReadinessNavigation.presentedKeys;
 
   String? stateActiveUpcomingJoinRequestReviewId;
 
@@ -940,6 +944,9 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
     final title = message.notification?.title ?? 'HikerCircle update';
     final body = message.notification?.body ?? 'Tap to view details.';
     final type = message.data['type'];
+    if (type == 'upcoming_hike_join_request') {
+      stateHikerCircleRepository.notifyUpcomingHikeJoinRequestsChanged();
+    }
     final deepLink = FcmNotificationRouter.deepLinkFor(<String, dynamic>{
       ...message.data,
     });
@@ -1547,6 +1554,27 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
       stateIsCheckInBusy = false;
     }
   }
+
+  /// Resolves current membership before opening preparation or team readiness.
+  Future<ResolvedUpcomingHikeStart> commandResolveUpcomingStart(
+    UpcomingHike hike,
+    HikeSessionDraft draft,
+  ) => UpcomingHikeStartResolver(
+    loadCurrent: (id) =>
+        stateHikerCircleRepository.loadParticipantUpcomingHikeForSafety(
+          hikeId: id,
+          session: readSession(),
+        ),
+    makeDraft: (current, draft) {
+      final roster = commandDraftForUpcomingHike(current, draft.trail);
+      return draft.copyWith(
+        hikeType: roster.hikeType,
+        teamBuddies: roster.teamBuddies,
+        clearSoloDistanceAcknowledgement:
+            draft.hikeType == HikeType.team && roster.hikeType == HikeType.solo,
+      );
+    },
+  ).resolve(hike, draft);
 
   /// Computes draft for upcoming hike.
   HikeSessionDraft commandDraftForUpcomingHike(UpcomingHike hike, Trail trail) {

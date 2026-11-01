@@ -177,6 +177,7 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
             e.id == m.id ||
             (e.senderPhone == m.senderPhone &&
                 e.text == m.text &&
+                e.sharedPost?.postId == m.sharedPost?.postId &&
                 e.sentAt.difference(m.sentAt).inSeconds.abs() < 5),
       );
       if (exists) continue;
@@ -184,6 +185,7 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
         (e) =>
             e.senderPhone == m.senderPhone &&
             e.text == m.text &&
+            e.sharedPost?.postId == m.sharedPost?.postId &&
             e.sentAt.difference(m.sentAt).inSeconds.abs() < 5,
       );
       if (!dupInToAdd) {

@@ -1,78 +1,140 @@
 part of '../community_integrity_panel_feature.dart';
 
-/// Owns the state and non-visual actions of CommunityIntegrityPanel.
+/// Owns queue subscriptions, filters, paging and review navigation state.
 class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
-  /// Creates community integrity panel state view model.
+  /// Binds live data without subscribing to private chats or changing content.
   _CommunityIntegrityPanelStateViewModel({
     required this.readHealth,
     required this.readLoadReviews,
     required this.readReviews,
-  });
+  }) {
+    _replaceStreams();
+  }
+
   final Stream<DocumentSnapshot<Map<String, dynamic>>>? Function() readHealth;
   final Stream<QuerySnapshot<Map<String, dynamic>>> Function(int limit)?
   Function()
   readLoadReviews;
   final Stream<QuerySnapshot<Map<String, dynamic>>>? Function() readReviews;
+  static const pageSize = 50;
+  int stateLimit = pageSize;
+  String stateQuery = '';
+  CommunityFlagFilters stateFilters = const CommunityFlagFilters();
+  Stream<QuerySnapshot<Map<String, dynamic>>>? stateReviews;
+  Stream<DocumentSnapshot<Map<String, dynamic>>>? stateHealth;
+  String? stateError;
+  final Set<String> stateOpening = {};
+  final Map<String, String> stateResolved = {};
+  bool _disposed = false;
 
-  /// Applies a state change and publishes it to listeners.
+  late final Future<bool?> Function(CommunityFlag flag)? Function()
+  readOpenReview;
+  late final VoidCallback? Function() readOnReviewed;
+  late final Future<bool?> Function(CommunityFlag flag)
+  effectPresentOpenEffect1;
+
+  /// Whether a Firebase app or an injected source can supply pending flags.
+  bool get commandHasReviews => stateReviews != null;
+
+  /// Creates stable streams so rebuilds do not restart database listeners.
+  void _replaceStreams() {
+    final connected = Firebase.apps.isNotEmpty;
+    stateReviews =
+        readLoadReviews()?.call(stateLimit) ??
+        readReviews() ??
+        (connected
+            ? FirebaseFirestore.instance
+                  .collection('communityModerationReviews')
+                  .where('status', isEqualTo: 'pending')
+                  .limit(stateLimit)
+                  .snapshots()
+            : null);
+    stateHealth =
+        readHealth() ??
+        (connected
+            ? FirebaseFirestore.instance
+                  .doc('communityModerationStatus/current')
+                  .snapshots()
+            : null);
+  }
+
+  /// Publishes state only while the panel remains on screen.
   void _publish(VoidCallback change) {
     change();
     if (!_disposed) notifyListeners();
   }
 
-  bool _disposed = false;
+  /// Reconnects both data sources while preserving search and applied filters.
+  void commandRefresh() => _publish(() {
+    stateError = null;
+    _replaceStreams();
+  });
 
-  /// Whether this instance is still active.
-  bool get mounted => !_disposed;
+  /// Adds another page to the loaded subset searched by the controls.
+  void commandLoadMore() => _publish(() {
+    stateLimit += pageSize;
+    _replaceStreams();
+  });
 
-  /// Returns command connected.
-  bool get commandConnected => Firebase.apps.isNotEmpty;
+  /// Applies search terms to safe displayed reasons and rule evidence.
+  void commandSearch(String value) => _publish(() => stateQuery = value);
 
-  /// Returns command has reviews.
-  bool get commandHasReviews =>
-      readReviews() != null || readLoadReviews() != null || commandConnected;
+  /// Applies a complete filter draft after the user chooses Apply.
+  void commandFilter(CommunityFlagFilters filters) =>
+      _publish(() => stateFilters = filters);
 
-  /// Returns command has health.
-  bool get commandHasHealth => readHealth() != null || commandConnected;
+  /// Restores the default queue controls without dropping loaded pages.
+  void commandClearFilters() => _publish(() {
+    stateQuery = '';
+    stateFilters = const CommunityFlagFilters();
+  });
 
-  /// Computes health stream.
-  Stream<DocumentSnapshot<Map<String, dynamic>>> commandHealthStream() =>
-      readHealth() ??
-      FirebaseFirestore.instance
-          .doc('communityModerationStatus/current')
-          .snapshots();
+  /// Retains revised flags while suppressing the exact version already reviewed.
+  List<CommunityFlag> commandFlags(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
+  ) => snapshot.docs
+      .map((doc) => CommunityFlag(id: doc.id, data: doc.data()))
+      .where(
+        (flag) =>
+            flag.status == 'pending' &&
+            stateResolved[flag.id] != flag.fingerprint,
+      )
+      .toList();
 
-  /// Releases resources owned by this instance.
+  /// Shows a page control only when more source records may remain.
+  bool commandHasMore(int loaded) =>
+      readReviews() == null && loaded >= stateLimit;
+
+  /// Opens one review at a time and exposes navigation errors for retry.
+  Future<void> commandOpen(CommunityFlag flag) async {
+    if (stateOpening.isNotEmpty) return;
+    _publish(() {
+      stateOpening.add(flag.id);
+      stateError = null;
+    });
+    try {
+      final open = readOpenReview();
+      final reviewed = open != null
+          ? await open(flag)
+          : await effectPresentOpenEffect1(flag);
+      if (_disposed || reviewed != true) return;
+      _publish(() => stateResolved[flag.id] = flag.fingerprint);
+      readOnReviewed()?.call();
+    } catch (_) {
+      if (!_disposed) {
+        _publish(
+          () => stateError = 'Could not open this flag. Please try again.',
+        );
+      }
+    } finally {
+      if (!_disposed) _publish(() => stateOpening.remove(flag.id));
+    }
+  }
+
+  /// Releases presentation listeners when the queue closes.
   @override
   void dispose() {
     _disposed = true;
     super.dispose();
-  }
-
-  late final Future<bool?> Function(CommunityFlag flag)? Function()
-  readOpenReview;
-
-  late final VoidCallback? Function() readOnReviewed;
-
-  late final Future<bool?> Function(CommunityFlag flag)
-  effectPresentOpenEffect1;
-
-  final Set<String> stateOpening = {};
-
-  final Map<String, String> stateResolved = {};
-
-  /// Opens.
-  Future<void> commandOpen(CommunityFlag flag) async {
-    if (!stateOpening.add(flag.id)) return;
-    try {
-      final reviewed = readOpenReview() != null
-          ? await readOpenReview()!(flag)
-          : await effectPresentOpenEffect1(flag);
-      if (!mounted || reviewed != true) return;
-      _publish(() => stateResolved[flag.id] = flag.fingerprint);
-      readOnReviewed()?.call();
-    } finally {
-      stateOpening.remove(flag.id);
-    }
   }
 }

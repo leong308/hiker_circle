@@ -163,9 +163,11 @@ class _AchievementsSummaryCard extends StatelessWidget {
         final unlocked = items.where((item) => item.isUnlocked).length;
         final total = items.isEmpty ? 0 : items.length;
         final progress = total == 0 ? 0.0 : unlocked / total;
-        final points = items
-            .where((item) => item.isUnlocked)
-            .fold<int>(0, (total, item) => total + item.pointsAwarded);
+        final points =
+            _retainedAchievementPoints(snapshot.data ?? const []) +
+            items
+                .where((item) => item.isUnlocked)
+                .fold<int>(0, (total, item) => total + item.pointsAwarded);
         final level = HikerLevel.fromPoints(points);
         final locked = items.where((item) => !item.isUnlocked).toList();
         final subtitle = isLoading
@@ -624,7 +626,12 @@ class _AchievementLeaderboardRow extends StatelessWidget {
 /// Displays the achievement progress panel.
 class _AchievementProgressPanel extends StatelessWidget {
   /// Creates achievement progress panel.
-  const _AchievementProgressPanel({required this.items});
+  const _AchievementProgressPanel({
+    required this.items,
+    this.retainedPoints = 0,
+  });
+
+  final int retainedPoints;
 
   final List<_AchievementProfileItem> items;
 
@@ -633,10 +640,9 @@ class _AchievementProgressPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final earned = items.where((item) => item.isUnlocked).toList();
     final locked = items.length - earned.length;
-    final points = earned.fold<int>(
-      0,
-      (total, item) => total + item.pointsAwarded,
-    );
+    final points =
+        retainedPoints +
+        earned.fold<int>(0, (total, item) => total + item.pointsAwarded);
     final level = HikerLevel.fromPoints(points);
     final nextLevelName = level.nextLevelPoints == null
         ? 'Peak rank reached'
@@ -1107,7 +1113,9 @@ class _AchievementBadgeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = item.accentColor;
-    final displayAccent = item.isUnlocked
+    final displayAccent = !item.isActive
+        ? _MeColors.secondaryTextFor(context)
+        : item.isUnlocked
         ? accent
         : Color.lerp(accent, _MeColors.secondaryTextFor(context), 0.48)!;
     final remaining = (item.targetCount - item.progressCount).clamp(
@@ -1148,6 +1156,17 @@ class _AchievementBadgeCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (!item.isActive) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _AchievementTag(
+                    label: 'Inactive',
+                    accent: displayAccent,
+                    compact: true,
+                  ),
+                ),
+              ],
               const Spacer(),
               Center(
                 child: _AchievementBadge(
@@ -1193,7 +1212,7 @@ class _AchievementBadgeCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        '$remaining left',
+                        '${AchievementCatalog.quantity(item.metricKey, remaining)} left',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -1204,7 +1223,7 @@ class _AchievementBadgeCard extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '${item.progressCount}/${item.targetCount}',
+                      '${AchievementCatalog.quantity(item.metricKey, item.progressCount, unit: false)}/${AchievementCatalog.quantity(item.metricKey, item.targetCount)}',
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: displayAccent,
                         fontWeight: FontWeight.w900,
@@ -1218,7 +1237,7 @@ class _AchievementBadgeCard extends StatelessWidget {
                       ? (item.awardedAt == null
                             ? 'Earned · ${item.pointsAwarded} pts'
                             : '${_formatAchievementDate(item.awardedAt!)} · ${item.pointsAwarded} pts')
-                      : 'One hike · ${item.rewardPoints} pts',
+                      : '1 activity · ${item.rewardPoints} pts',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
@@ -1438,221 +1457,6 @@ class _AchievementLoadingCard extends StatelessWidget {
         message: 'Loading achievements…',
         detail: 'Checking your progress, levels and unlocked badges.',
         padding: EdgeInsets.all(18),
-      ),
-    );
-  }
-}
-
-/// Displays the choice setting card.
-class _ChoiceSettingCard extends StatelessWidget {
-  /// Creates choice setting card.
-  const _ChoiceSettingCard({
-    required this.icon,
-    required this.title,
-    required this.value,
-    required this.options,
-    required this.onSelected,
-  });
-
-  final IconData icon;
-  final String title;
-  final String value;
-  final List<String> options;
-  final ValueChanged<String> onSelected;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                _Glyph(icon: icon),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.textFor(context),
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ),
-                _MiniPill(label: value),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final option in options)
-                  ChoiceChip(
-                    label: Text(option),
-                    selected: value == option,
-                    onSelected: (_) => onSelected(option),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Displays the time zone setting card.
-class _TimeZoneSettingCard extends StatelessWidget {
-  /// Creates time zone setting card.
-  const _TimeZoneSettingCard({
-    required this.value,
-    required this.timeZoneId,
-    required this.status,
-    required this.isBusy,
-    required this.onTap,
-  });
-
-  final String value;
-  final String timeZoneId;
-  final String status;
-  final bool isBusy;
-  final VoidCallback onTap;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: isBusy ? null : onTap,
-          borderRadius: BorderRadius.circular(14),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const _Glyph(icon: Icons.schedule_rounded),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'SOS message timezone',
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: _MeColors.textFor(context),
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        value,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: _MeColors.green,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                      Text(
-                        timeZoneId,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _MeColors.secondaryTextFor(context),
-                          letterSpacing: 0,
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        status,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _MeColors.secondaryTextFor(context),
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                if (isBusy)
-                  const SizedBox.square(
-                    dimension: 20,
-                    child: HikerCircleMinorLoadingIndicator(strokeWidth: 2.2),
-                  )
-                else
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: _MeColors.chevronFor(context),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Displays the switch setting card.
-class _SwitchSettingCard extends StatelessWidget {
-  /// Creates switch setting card.
-  const _SwitchSettingCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _Glyph(icon: icon),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.textFor(context),
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryTextFor(context),
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            _AnimatedBooleanToggle(value: value, onChanged: onChanged),
-          ],
-        ),
       ),
     );
   }

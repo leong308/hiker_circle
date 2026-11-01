@@ -1,5 +1,8 @@
 import '../core/widgets/section_label.dart';
-import 'View/safety_settings_panel.dart';
+import '../achievements/Model/achievement_catalog.dart';
+import '../achievements/View/achievement_editor_sheet.dart';
+import '../achievements/View/achievement_rule_swipe_card.dart';
+import 'View/widgets/app_settings_content.dart';
 import '../home/Data/location_update_interval_controller.dart';
 // MePage coordinates profile, account settings, privacy, achievements and security actions.
 import '../core/services/private_screen_unlock.dart';
@@ -10,7 +13,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show ImageFilter;
 
-import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,16 +25,11 @@ import '../app/Model/app_session.dart';
 import '../admin/View/admin_page.dart';
 import '../app/Model/preferred_time_zone.dart';
 import '../authentication/View/security_methods_page.dart';
-import '../assistant/View/hiker_circle_assistant_page.dart';
 import '../core/models/hiker_level.dart';
 import '../core/services/privacy_policy_launcher.dart';
 import '../core/widgets/loading_toast.dart';
 import '../core/widgets/app_toast.dart';
 import '../feedback/feedback_page.dart';
-import '../home/View/find_hike_page.dart';
-import '../home/View/first_aid_guide_page.dart';
-import '../trail/Model/trail_models.dart';
-import '../trail/View/trail_page.dart';
 import '../home/Model/hike_session_models.dart';
 import '../sos/Data/emergency_contacts_repository.dart';
 import '../sos/Data/sos_device_alert_service.dart';

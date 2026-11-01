@@ -2,6 +2,8 @@
 import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'Model/admin_analytics_snapshot.dart';
+import 'ModelView/admin_dashboard_view_model.dart';
 import 'View/admin_ui.dart';
 part 'View/admin_analytics_dashboard_screen.dart';
 

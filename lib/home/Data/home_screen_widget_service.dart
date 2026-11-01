@@ -73,7 +73,7 @@ class HomeScreenWidgetService {
       return;
     }
     try {
-      final forecast = await _weather.fetch(next.latitude, next.longitude);
+      final forecast = await _weather.fetchForHike(next);
       if (revision != _revision) return;
       _storeForecast(next, forecast);
       await _publish(_items());

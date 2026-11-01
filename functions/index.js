@@ -31,6 +31,8 @@ const crypto = require('crypto');
 const teamPolicy = require('./team_hike_policy');
 const teamHistory = require('./team_hike_history');
 const sosConfirmation = require('./sos_confirmation');
+const achievementCatalog = require('./achievement_catalog');
+const achievementProgressStore = require('./achievement_progress_store');
 const argon2 = require('argon2');
 const {
   SosDispatchValidationError,
@@ -113,11 +115,6 @@ const {activeMembershipChanged, createSchedulerClient, reconcileActiveHikeMonito
 const {upcomingMembershipChanged, reconcileUpcomingHikeOperations,
   withUpcomingRunLease} = require('./upcoming_hike_schedule');
 const {syncTrailWeather, latestFcmTokensForUser, historicalForecastProjection, canonicalUsername} = require('./storage_normalization');
-const {
-  AssistantError: HikerCircleAssistantError,
-  createAssistantHandler,
-} = require('./hiker_circle_assistant');
-
 const {isUnlistedSessionTrail, unlistedTrailSnapshot} = require('./unlisted_hikes');
 admin.initializeApp();
 
@@ -457,33 +454,6 @@ exports.cleanupDeletedCommunityPost = onDocumentDeleted(
     postId: event.params.postId, post: event.data.data() || {} })
 );
 
-// askHikerCircleAssistant: Apply the authenticated app session before routing the assistant request.
-exports.askHikerCircleAssistant = onCall(
-  {
-    secrets: [],
-    timeoutSeconds: 30,
-    memory: '256MiB',
-    maxInstances: 4,
-  },
-  async (request) => {
-    try {
-      const handler = createAssistantHandler({
-        db: admin.firestore(),
-      });
-      return await handler(request);
-    } catch (error) {
-      if (error instanceof HikerCircleAssistantError) {
-        throw new HttpsError(error.code, error.message);
-      }
-      logger.error('HikerCircle assistant failed.', error);
-      throw new HttpsError(
-        'internal',
-        'The HikerCircle assistant could not answer right now.'
-      );
-    }
-  }
-);
-
 // Public, privacy-safe community totals for the marketing site. All values are
 // aggregate-only. A completed team hike contributes one session and its
 // recorded distance for each participant, matching each hiker's history.
@@ -657,326 +627,7 @@ exports.forwardNearbySosIncident = onCall(
   },
 );
 
-const achievementSeedDefinitions = Object.freeze({
-  first_safe_hike: {
-    title: 'First Safe Hike',
-    condition: 'Complete first hike session',
-    category: 'Hike milestone',
-    iconName: 'verified_user',
-    rewardPoints: 120,
-    rewardType: 'one_time',
-    metricKey: 'hike_completed',
-    targetCount: 1,
-    isActive: true,
-    sortOrder: 10,
-    accentColorValue: 0xff34a853,
-  },
-  trail_regular: {
-    title: 'Trail Regular',
-    condition: 'Complete 5 hike sessions',
-    category: 'Hike milestone',
-    iconName: 'hiking',
-    rewardPoints: 160,
-    rewardType: 'cumulative',
-    metricKey: 'hike_completed',
-    targetCount: 5,
-    isActive: true,
-    sortOrder: 70,
-    accentColorValue: 0xff27ae60,
-  },
-  trail_enthusiast: {
-    title: 'Trail Enthusiast',
-    condition: 'Complete 10 hike sessions',
-    category: 'Hike milestone',
-    iconName: 'hiking',
-    rewardPoints: 220,
-    rewardType: 'cumulative',
-    metricKey: 'hike_completed',
-    targetCount: 10,
-    isActive: true,
-    sortOrder: 80,
-    accentColorValue: 0xff219653,
-  },
-  seasoned_trekker: {
-    title: 'Seasoned Trekker',
-    condition: 'Complete 25 hike sessions',
-    category: 'Hike milestone',
-    iconName: 'terrain',
-    rewardPoints: 350,
-    rewardType: 'cumulative',
-    metricKey: 'hike_completed',
-    targetCount: 25,
-    isActive: true,
-    sortOrder: 90,
-    accentColorValue: 0xff168aad,
-  },
-  fifty_hike_legend: {
-    title: 'Fifty-Hike Legend',
-    condition: 'Complete 50 hike sessions',
-    category: 'Hike milestone',
-    iconName: 'military_tech',
-    rewardPoints: 500,
-    rewardType: 'cumulative',
-    metricKey: 'hike_completed',
-    targetCount: 50,
-    isActive: true,
-    sortOrder: 100,
-    accentColorValue: 0xffffb000,
-  },
-  trail_collector: {
-    title: 'Trail Collector',
-    condition: 'Complete 5 different trails',
-    category: 'Trail exploration',
-    iconName: 'route',
-    rewardPoints: 180,
-    rewardType: 'cumulative',
-    metricKey: 'distinct_trail_completed',
-    targetCount: 5,
-    isActive: true,
-    sortOrder: 110,
-    accentColorValue: 0xff2d9cdb,
-  },
-  route_ranger: {
-    title: 'Route Ranger',
-    condition: 'Complete 10 different trails',
-    category: 'Trail exploration',
-    iconName: 'explore',
-    rewardPoints: 260,
-    rewardType: 'cumulative',
-    metricKey: 'distinct_trail_completed',
-    targetCount: 10,
-    isActive: true,
-    sortOrder: 120,
-    accentColorValue: 0xff2f80ed,
-  },
-  trail_atlas: {
-    title: 'Trail Atlas',
-    condition: 'Complete 25 different trails',
-    category: 'Trail exploration',
-    iconName: 'map',
-    rewardPoints: 450,
-    rewardType: 'cumulative',
-    metricKey: 'distinct_trail_completed',
-    targetCount: 25,
-    isActive: true,
-    sortOrder: 130,
-    accentColorValue: 0xff6c5ce7,
-  },
-  state_scout: {
-    title: 'State Scout',
-    condition: 'Complete hikes in 3 Malaysian states',
-    category: 'Malaysia exploration',
-    iconName: 'travel_explore',
-    rewardPoints: 250,
-    rewardType: 'cumulative',
-    metricKey: 'malaysia_state_hiked',
-    targetCount: 3,
-    isActive: true,
-    sortOrder: 140,
-    accentColorValue: 0xff00a99d,
-  },
-  malaysia_explorer: {
-    title: 'Malaysia Explorer',
-    condition: 'Complete hikes in 7 Malaysian states',
-    category: 'Malaysia exploration',
-    iconName: 'travel_explore',
-    rewardPoints: 450,
-    rewardType: 'cumulative',
-    metricKey: 'malaysia_state_hiked',
-    targetCount: 7,
-    isActive: true,
-    sortOrder: 150,
-    accentColorValue: 0xff00897b,
-  },
-  malaysia_trailblazer: {
-    title: 'Malaysia Trailblazer',
-    condition: 'Complete hikes in all 13 Malaysian states',
-    category: 'Malaysia exploration',
-    iconName: 'public',
-    rewardPoints: 800,
-    rewardType: 'cumulative',
-    metricKey: 'malaysia_state_hiked',
-    targetCount: 13,
-    isActive: true,
-    sortOrder: 160,
-    accentColorValue: 0xffffc107,
-  },
-  prepared_adventurer: {
-    title: 'Prepared Adventurer',
-    condition: 'Download offline map before starting',
-    category: 'Preparation',
-    iconName: 'map',
-    rewardPoints: 90,
-    rewardType: 'one_time',
-    // This metric must only be emitted once the backend can verify that an
-    // offline map was available at departure. Starting a hike alone is not
-    // proof of preparation.
-    metricKey: 'offline_map_verified_at_hike_start',
-    targetCount: 1,
-    isActive: false,
-    sortOrder: 20,
-    accentColorValue: 0xff2f80ed,
-  },
-  safety_first: {
-    title: 'Safety First',
-    condition: 'Complete gear checklist before departure',
-    category: 'Preparation',
-    iconName: 'health_and_safety',
-    rewardPoints: 100,
-    rewardType: 'one_time',
-    // A non-empty client list is not proof that the complete required
-    // checklist was finished. Keep this metric reserved for a future
-    // server-verified checklist workflow.
-    metricKey: 'full_checklist_verified_at_departure',
-    targetCount: 1,
-    isActive: false,
-    sortOrder: 30,
-    accentColorValue: 0xfff2994a,
-  },
-  reliable_check_in: {
-    title: 'Reliable Check-In',
-    condition: 'Complete 5 scheduled check-ins during hikes',
-    category: 'Safety habit',
-    iconName: 'task_alt',
-    rewardPoints: 110,
-    rewardType: 'cumulative',
-    metricKey: 'check_in_completed',
-    targetCount: 5,
-    isActive: true,
-    sortOrder: 40,
-    accentColorValue: 0xff9b51e0,
-  },
-  check_in_champion: {
-    title: 'Check-In Champion',
-    condition: 'Complete 25 safe check-ins during hikes',
-    category: 'Safety habit',
-    iconName: 'task_alt',
-    rewardPoints: 240,
-    rewardType: 'cumulative',
-    metricKey: 'check_in_completed',
-    targetCount: 25,
-    isActive: true,
-    sortOrder: 190,
-    accentColorValue: 0xff8e44ad,
-  },
-  safety_beacon: {
-    title: 'Safety Beacon',
-    condition: 'Complete 100 safe check-ins during hikes',
-    category: 'Safety habit',
-    iconName: 'health_and_safety',
-    rewardPoints: 500,
-    rewardType: 'cumulative',
-    metricKey: 'check_in_completed',
-    targetCount: 100,
-    isActive: true,
-    sortOrder: 200,
-    accentColorValue: 0xff9b51e0,
-  },
-  security_guardian: {
-    title: 'Security Guardian',
-    condition: 'Protect your account with both Authenticator and a passkey',
-    category: 'Account security',
-    iconName: 'verified_user',
-    rewardPoints: 150,
-    rewardType: 'cumulative',
-    metricKey: 'security_factor_type_bound',
-    targetCount: 2,
-    isActive: true,
-    sortOrder: 45,
-    accentColorValue: 0xff2f80ed,
-  },
-  community_helper: {
-    title: 'Community Helper',
-    condition: 'Submit a hazard report later confirmed by others',
-    category: 'Community',
-    iconName: 'volunteer_activism',
-    rewardPoints: 140,
-    rewardType: 'one_time',
-    metricKey: 'hazard_report_approved',
-    targetCount: 1,
-    isActive: true,
-    sortOrder: 50,
-    accentColorValue: 0xffeb5757,
-  },
-  trail_storyteller: {
-    title: 'Trail Storyteller',
-    condition: 'Share your first public trail post',
-    category: 'Community',
-    iconName: 'forum',
-    rewardPoints: 100,
-    rewardType: 'one_time',
-    metricKey: 'community_post_created',
-    targetCount: 1,
-    isActive: true,
-    sortOrder: 210,
-    accentColorValue: 0xfff2994a,
-  },
-  community_voice: {
-    title: 'Community Voice',
-    condition: 'Share 5 public trail posts',
-    category: 'Community',
-    iconName: 'forum',
-    rewardPoints: 250,
-    rewardType: 'cumulative',
-    metricKey: 'community_post_created',
-    targetCount: 5,
-    isActive: true,
-    sortOrder: 220,
-    accentColorValue: 0xffe67e22,
-  },
-  hazard_sentinel: {
-    title: 'Hazard Sentinel',
-    condition: 'Submit 5 hazard reports confirmed by others',
-    category: 'Community safety',
-    iconName: 'warning',
-    rewardPoints: 320,
-    rewardType: 'cumulative',
-    metricKey: 'hazard_report_approved',
-    targetCount: 5,
-    isActive: true,
-    sortOrder: 230,
-    accentColorValue: 0xffd63031,
-  },
-  team_guardian: {
-    title: 'Team Guardian',
-    condition: 'Complete 3 team hikes without a separation emergency',
-    category: 'Team hike',
-    iconName: 'groups',
-    rewardPoints: 160,
-    rewardType: 'cumulative',
-    metricKey: 'team_hike_completed',
-    targetCount: 3,
-    isActive: true,
-    sortOrder: 60,
-    accentColorValue: 0xff00a99d,
-  },
-  first_team_hike: {
-    title: 'Better Together',
-    condition: 'Complete your first safe team hike',
-    category: 'Team hike',
-    iconName: 'groups',
-    rewardPoints: 100,
-    rewardType: 'one_time',
-    metricKey: 'team_hike_completed',
-    targetCount: 1,
-    isActive: true,
-    sortOrder: 170,
-    accentColorValue: 0xff00a99d,
-  },
-  trail_crew: {
-    title: 'Trail Crew',
-    condition: 'Complete 10 team hikes without a separation emergency',
-    category: 'Team hike',
-    iconName: 'groups',
-    rewardPoints: 350,
-    rewardType: 'cumulative',
-    metricKey: 'team_hike_completed',
-    targetCount: 10,
-    isActive: true,
-    sortOrder: 180,
-    accentColorValue: 0xff00796b,
-  },
-});
+const achievementSeedDefinitions = achievementCatalog.rules.achievements;
 
 function isIncompleteRegistration(user) {
   return Boolean(user && !user.passwordHash && user.requiresOnboarding === true
@@ -2886,6 +2537,15 @@ async function publicHikerDetails(db, userId) {
   return { profile, achievements, hikeHistory };
 }
 
+// listUpcomingHikeJoinRequests: Read host-only counts and decision history through a public-field projection.
+exports.listUpcomingHikeJoinRequests = onCall({}, async request => {
+  const {phoneNumber: hostPhone} = authenticatedPhoneFor(request, 'Sign in to view join requests.');
+  return require('./upcoming_hike_request_inbox').listRequests({
+    db: admin.firestore(), hostPhone, input: request.data || {}, ErrorType: HttpsError,
+    documentId: FieldPath.documentId(),
+  });
+});
+
 exports.loadUpcomingHikeJoinRequest = onCall({}, async (request) => {
   const { phoneNumber: hostPhone } = authenticatedPhoneFor(
     request,
@@ -3773,6 +3433,7 @@ function publicProfileFromUserDocument(document) {
   return {
     userId: document.id,
     phoneNumber,
+    isAdmin: isAdminUser(data),
     displayName: username || 'Hiker',
     handle: `@hiker${phoneKeyFor(phoneNumber).slice(-4)}`,
     photoURL,
@@ -9740,7 +9401,12 @@ exports.fetchWeatherForTrail = onCall(
 
     let weather;
     try {
-      weather = await require('./trail_weather').sharedTrailWeather(db, latitude, longitude);
+      // Upcoming-hike reload uses the same cache and lease, with a 15-minute
+      // eligibility threshold. Other forecast reads retain the three-hour TTL.
+      const options = request.data?.refreshIfOlderThanMinutes === 15
+        ? {maxAgeMs: 15 * 60 * 1000}
+        : {};
+      weather = await require('./trail_weather').sharedTrailWeather(db, latitude, longitude, options);
     } catch (error) {
       logger.warn('Shared weather refresh unavailable', { trailId, message: error.message });
       throw new HttpsError('unavailable', 'Weather refresh unavailable. Please try again shortly.');
@@ -10061,31 +9727,41 @@ function groupChatMessagePreview(message) {
   return 'New message';
 }
 
+let achievementDefinitionsReady;
+// Migrate only missing descriptive fields and retire unsupported rules; never revoke earned points.
 async function ensureAchievementDefinitions() {
-  const db = admin.firestore();
-  const entries = Object.entries(achievementSeedDefinitions);
-  await db.runTransaction(async (transaction) => {
-    const references = entries.map(([id]) => db.collection('achievements').doc(id));
-    const snapshots = await Promise.all(
-      references.map((reference) => transaction.get(reference))
-    );
-    const nowIso = new Date().toISOString();
-    snapshots.forEach((snapshot, index) => {
-      if (snapshot.exists) {
-        return;
-      }
-      const [achievementId, definition] = entries[index];
-      transaction.create(references[index], {
-        achievementId,
-        ...definition,
-        rewardsSafeBehaviour: true,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAtLocal: nowIso,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAtLocal: nowIso,
+  if (achievementDefinitionsReady) return achievementDefinitionsReady;
+  achievementDefinitionsReady = (async () => {
+    const db = admin.firestore();
+    const catalogRef = db.collection('achievementCatalog').doc('current');
+    const state = await catalogRef.get();
+    if (Number(state.data()?.version) >= achievementCatalog.rules.version) return;
+    const existing = await db.collection('achievements').get();
+    const ids = new Set([...existing.docs.map(doc => doc.id), ...Object.keys(achievementSeedDefinitions)]);
+    const refs = [...ids].map(id => db.collection('achievements').doc(id));
+    await db.runTransaction(async tx => {
+      const [catalog, snapshots] = await Promise.all([tx.get(catalogRef), Promise.all(refs.map(ref => tx.get(ref)))]);
+      if (Number(catalog.data()?.version) >= achievementCatalog.rules.version) return;
+      snapshots.forEach((snapshot, index) => {
+        const id = refs[index].id, definition = snapshot.data() || achievementSeedDefinitions[id];
+        if (!definition) return;
+        const visible = achievementCatalog.visible({...definition, achievementId:id});
+        if (!visible) {
+          if (snapshot.exists) tx.set(refs[index], {isActive:false, retired:true,
+            retirementReason:'This activity is no longer supported.'}, {merge:true});
+          return;
+        }
+        const content = achievementCatalog.contentFor(definition);
+        const missing = Object.fromEntries(Object.entries(content).filter(([key]) => !String(definition[key] || '').trim()));
+        if (!snapshot.exists) tx.create(refs[index], {achievementId:id, ...definition,
+          ...content, createdAtLocal:new Date().toISOString()});
+        else if (Object.keys(missing).length) tx.set(refs[index], missing, {merge:true});
       });
+      tx.set(catalogRef, {version:achievementCatalog.rules.version,
+        revision:Number(catalog.data()?.revision || 0)+1, updatedAtLocal:new Date().toISOString()}, {merge:true});
     });
-  });
+  })().catch(error => { achievementDefinitionsReady = null; throw error; });
+  return achievementDefinitionsReady;
 }
 
 function hikerLevelForPoints(points) {
@@ -10107,153 +9783,19 @@ function hikerLevelForPoints(points) {
   };
 }
 
-function serverEventReceiptId(prefix, ...values) {
-  return crypto
-    .createHash('sha256')
-    .update([prefix, ...values].join(':'))
-    .digest('hex');
-}
-
 // applyAchievementMetricServer: Use event receipts to apply reward progress and point totals once.
-async function applyAchievementMetricServer({
-  userId,
-  metricKey,
-  eventKey,
-  increment = 1,
-  condition = '',
-}) {
-  if (
-    !validFirestoreDocumentId(userId)
-    || !/^[a-z0-9_]{1,80}$/.test(String(metricKey || ''))
-    || !eventKey
-    || !Number.isInteger(increment)
-    || increment < 1
-    || increment > 1000
-  ) {
-    return;
-  }
+async function applyAchievementMetricServer({userId, metricKey, eventKey, increment = 1}) {
+  const metric = achievementCatalog.metricFor(metricKey);
+  if (!validFirestoreDocumentId(userId) || !metric || !eventKey || !Number.isInteger(increment)
+    || increment < 1 || increment > metric.maxIncrement) return;
   await ensureAchievementDefinitions();
-  const db = admin.firestore();
-  const definitions = await db
-    .collection('achievements')
-    .where('metricKey', '==', metricKey)
-    .get();
-  for (const definitionDocument of definitions.docs) {
-    const achievementId = definitionDocument.id;
-    const definitionReference = definitionDocument.ref;
-    const progressReference = db
-      .collection('userAchievements')
-      .doc(`${userId}_${achievementId}`);
-    const userReference = db.collection('users').doc(userId);
-    const receiptReference = db
-      .collection('achievementEventReceipts')
-      .doc(serverEventReceiptId('achievement', eventKey, userId, achievementId));
-    await db.runTransaction(async (transaction) => {
-      const [receipt, definitionSnapshot, progressSnapshot, userSnapshot] =
-        await Promise.all([
-          transaction.get(receiptReference),
-          transaction.get(definitionReference),
-          transaction.get(progressReference),
-          readUser(userReference, ["achievements"], transaction),
-        ]);
-      if (receipt.exists) {
-        return;
-      }
-      const nowIso = new Date().toISOString();
-      const definition = definitionSnapshot.data() || {};
-      if (
-        !definitionSnapshot.exists
-        || definition.isActive === false
-        || !userSnapshot.exists
-      ) {
-        transaction.create(receiptReference, {
-          eventKey: String(eventKey).slice(0, 500),
-          userId,
-          achievementId,
-          applied: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          createdAtLocal: nowIso,
-        });
-        return;
-      }
-      const existing = progressSnapshot.data() || {};
-      const rewardType = String(definition.rewardType || '') === 'cumulative'
-        ? 'cumulative'
-        : 'one_time';
-      const targetCount = rewardType === 'one_time'
-        ? 1
-        : Math.max(1, Math.min(1000000000, Number(definition.targetCount || 1)));
-      const wasUnlocked = existing.isUnlocked === true
-        || existing.awardedAt != null
-        || existing.awardedAtLocal != null;
-      const previousProgress = Math.max(
-        0,
-        Math.min(targetCount, Number(existing.progressCount || 0))
-      );
-      const nextProgress = wasUnlocked || rewardType === 'one_time'
-        ? targetCount
-        : Math.min(targetCount, previousProgress + increment);
-      const isUnlocked = wasUnlocked || nextProgress >= targetCount;
-      const newlyUnlocked = !wasUnlocked && isUnlocked;
-      const rewardPoints = Math.max(
-        0,
-        Math.min(1000000000, Number(definition.rewardPoints || 0))
-      );
-      transaction.set(
-        progressReference,
-        {
-          userAchievementId: progressReference.id,
-          userId,
-          achievementId,
-          achievementTitle: String(definition.title || '').slice(0, 160),
-          rewardType,
-          metricKey,
-          targetCount,
-          progressCount: nextProgress,
-          isUnlocked,
-          ...(condition ? { condition: String(condition).slice(0, 500) } : {}),
-          ...(newlyUnlocked
-            ? {
-                pointsAwarded: rewardPoints,
-                awardedAt: admin.firestore.FieldValue.serverTimestamp(),
-                awardedAtLocal: nowIso,
-              }
-            : {}),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAtLocal: nowIso,
-        },
-        { merge: true }
-      );
-      if (newlyUnlocked) {
-        const currentPoints = Math.max(
-          0,
-          Number(userSnapshot.data()?.achievementPoints || 0)
-        );
-        const totalPoints = currentPoints + rewardPoints;
-        const level = hikerLevelForPoints(totalPoints);
-        setUser(transaction, userReference, {
-            achievementPoints: totalPoints,
-            hikerLevel: level.number,
-            hikerLevelName: level.name,
-            hikerLevelBadge: level.badgeLabel,
-            achievementSummaryUpdatedAt:
-              admin.firestore.FieldValue.serverTimestamp(),
-            achievementSummaryUpdatedAtLocal: nowIso,
-          }, { merge: true });
-      }
-      transaction.create(receiptReference, {
-        eventKey: String(eventKey).slice(0, 500),
-        userId,
-        achievementId,
-        applied: true,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAtLocal: nowIso,
-      });
-    });
-  }
+  const progressCount = await achievementProgressStore.recordEvents({db:admin.firestore(), userId, metricKey,
+    events:[{eventKey, increment}]});
+  await reconcileAchievementMetricServer({userId, metricKey, progressCount});
 }
 
-async function applyCompletedHikeAchievements({ userId, sessionId, trailId }) {
+// Emit completed-session measurements using stable identities for repeated uploads.
+async function applyCompletedHikeAchievements({ userId, sessionId, trailId, hike = {} }) {
   let trail = {};
   if (validFirestoreDocumentId(trailId)) {
     const trailSnapshot = await admin
@@ -10268,12 +9810,14 @@ async function applyCompletedHikeAchievements({ userId, sessionId, trailId }) {
     trailId,
     state: trail.state,
     country: trail.country,
+    ...achievementCatalog.completedQuantities(hike),
   });
   for (const achievementEvent of events) {
     await applyAchievementMetricServer({ userId, ...achievementEvent });
   }
 }
 
+// Evaluate every matching active rule against its lifetime total and award each badge once.
 async function reconcileAchievementMetricServer({
   userId,
   metricKey,
@@ -10303,6 +9847,7 @@ async function reconcileAchievementMetricServer({
       const definition = definitionSnapshot.data() || {};
       if (
         !definitionSnapshot.exists
+        || !achievementCatalog.visible({...definition, achievementId:definitionDocument.id})
         || definition.isActive === false
         || !userSnapshot.exists
       ) {
@@ -10318,10 +9863,8 @@ async function reconcileAchievementMetricServer({
       const wasUnlocked = existing.isUnlocked === true
         || existing.awardedAt != null
         || existing.awardedAtLocal != null;
-      const previousProgress = Math.max(
-        0,
-        Math.min(targetCount, Number(existing.progressCount || 0))
-      );
+      const previousProgress = existing.metricKey && existing.metricKey !== metricKey ? 0 : Math.max(
+        0, Math.min(targetCount, Number(existing.progressCount || 0)));
       const nextProgress = Math.max(
         previousProgress,
         Math.min(targetCount, normalizedProgress)
@@ -10340,6 +9883,11 @@ async function reconcileAchievementMetricServer({
           userId,
           achievementId: definitionDocument.id,
           achievementTitle: String(definition.title || '').slice(0, 160),
+          ...achievementCatalog.contentFor(definition),
+          condition:String(definition.condition || ''), category:String(definition.category || ''),
+          iconName:String(definition.iconName || ''), rewardPoints:Number(definition.rewardPoints || 0),
+          sortOrder:Number(definition.sortOrder || 0), accentColorValue:Number(definition.accentColorValue || 0),
+          isActive:definition.isActive !== false,
           rewardType,
           metricKey,
           targetCount,
@@ -10402,76 +9950,70 @@ exports.getMyAchievementProgressHash = onCall({}, async (request) => {
 });
 
 // syncMyAchievementProgress: Reconcile progress from canonical server events while retaining idempotent reward accounting.
-exports.syncMyAchievementProgress = onCall({}, async (request) => {
-  const { uid } = authenticatedPhoneFor(
-    request,
-    'Sign in to synchronize achievement progress.'
-  );
-  const db = admin.firestore();
-  const userReference = db.collection('users').doc(uid);
-  const userSnapshot = await readUser(userReference, ["achievements","profile"]);
-  if (!userSnapshot.exists) {
-    throw new HttpsError('failed-precondition', 'Your profile is unavailable.');
-  }
-  if (Number(userSnapshot.data()?.achievementCatalogSyncVersion || 0) >= 3) {
-    return { synchronized: true, alreadyCurrent: true };
-  }
-
-  const hikeSnapshot = await db
-    .collection('hikeSessions')
-    .where('userId', '==', uid)
-    .limit(500)
-    .get();
-  const completedHikes = hikeSnapshot.docs
-    .map((document) => ({ sessionId: document.id, ...document.data() }))
-    .filter((hike) => String(hike.status || '') === 'completed');
-  const trailIds = [
-    ...new Set(
-      completedHikes
-        .map((hike) => String(hike.trailId || '').trim())
-        .filter(validFirestoreDocumentId)
-    ),
-  ];
-  const trailSnapshots = trailIds.length === 0
-    ? []
-    : await db.getAll(
-        ...trailIds.map((trailId) => db.collection('trails').doc(trailId))
-      );
-  const malaysiaStates = new Set();
-  for (const trailSnapshot of trailSnapshots) {
-    const trail = trailSnapshot.data() || {};
-    if (achievementSlug(trail.country) === 'malaysia') {
-      const state = malaysiaStateSlug(trail.state);
-      if (state) malaysiaStates.add(state);
-    }
-  }
-
-  await reconcileAchievementMetricServer({
-    userId: uid,
-    metricKey: 'hike_completed',
-    progressCount: completedHikes.length,
-  });
-  await reconcileAchievementMetricServer({
-    userId: uid,
-    metricKey: 'distinct_trail_completed',
-    progressCount: trailIds.length,
-  });
-  await reconcileAchievementMetricServer({
-    userId: uid,
-    metricKey: 'malaysia_state_hiked',
-    progressCount: malaysiaStates.size,
-  });
-  await setUser(null, userReference, {
-      achievementCatalogSyncVersion: 3,
-      achievementCatalogSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
-      achievementCatalogSyncedAtLocal: new Date().toISOString(),
-    }, { merge: true });
-  return {
-    synchronized: true,
-    completedHikes: completedHikes.length,
-    distinctTrails: trailIds.length,
-    malaysiaStates: malaysiaStates.size,
+exports.syncMyAchievementProgress = onCall({timeoutSeconds:120}, async request => {
+  const {uid} = authenticatedPhoneFor(request, 'Sign in to synchronize achievement progress.');
+  await ensureAchievementDefinitions();
+  const db = admin.firestore(), userReference = db.collection('users').doc(uid);
+  const [userSnapshot, catalogSnapshot, definitions] = await Promise.all([
+    readUser(userReference, ['achievements','profile']), db.collection('achievementCatalog').doc('current').get(),
+    db.collection('achievements').get()]);
+  if (!userSnapshot.exists) throw new HttpsError('failed-precondition','Your profile is unavailable.');
+  const revision = Number(catalogSnapshot.data()?.revision || 0);
+  if (Number(userSnapshot.data()?.achievementCatalogSyncVersion) >= achievementCatalog.rules.version
+    && Number(userSnapshot.data()?.achievementCatalogRevision) === revision) return {synchronized:true, alreadyCurrent:true};
+  const grouped = new Map(achievementCatalog.rules.metrics.map(metric => [metric.key,new Map()]));
+  // Collect stable event identities, so a live trigger racing historical reconciliation cannot count twice.
+  const collect = event => {
+    if (!grouped.has(event.metricKey) || !event.eventKey) return;
+    grouped.get(event.metricKey).set(event.eventKey,{eventKey:event.eventKey, increment:Number(event.increment || 1)});
   };
+  // Page through owner-scoped data rather than silently truncating lifetime history at 500 hikes.
+  const scan = async (query, visit) => {
+    let last;
+    while (true) {
+      let page = query.orderBy(admin.firestore.FieldPath.documentId()).limit(300);
+      if (last) page = page.startAfter(last);
+      const snapshot = await page.get();
+      for (const doc of snapshot.docs) await visit(doc);
+      if (snapshot.docs.length < 300) break;
+      last = snapshot.docs[snapshot.docs.length-1];
+    }
+  };
+  const completed = [];
+  await scan(db.collection('hikeSessions').where('userId','==',uid), doc => {
+    const hike = doc.data(); if (hike.status === 'completed') completed.push({sessionId:doc.id,...hike});
+  });
+  const trailIds = [...new Set(completed.map(hike => String(hike.trailId || '')).filter(validFirestoreDocumentId))];
+  const trails = new Map();
+  for (let offset=0;offset<trailIds.length;offset+=100) {
+    const docs = await db.getAll(...trailIds.slice(offset,offset+100).map(id=>db.collection('trails').doc(id)));
+    for (const doc of docs) trails.set(doc.id,doc.data() || {});
+  }
+  for (const hike of completed) {
+    const trail = trails.get(hike.trailId) || {};
+    for (const event of completedHikeAchievementEvents({sessionId:hike.sessionId,trailId:hike.trailId,
+      state:trail.state,country:trail.country,...achievementCatalog.completedQuantities(hike)})) collect(event);
+  }
+  const byId = new Map(definitions.docs.map(doc=>[doc.id,doc.data()]));
+  // Existing server receipts retain valid past activity even if a story or resolved report was later removed.
+  await scan(db.collection('achievementEventReceipts').where('userId','==',uid), doc => {
+    const receipt=doc.data(); if (receipt.applied !== true) return;
+    collect({metricKey:receipt.metricKey || byId.get(receipt.achievementId)?.metricKey,
+      eventKey:receipt.eventKey,increment:receipt.increment || 1});
+  });
+  await scan(db.collection('communityPosts').where('authorId','==',uid), doc => {
+    if (doc.data().visibility === 'public') collect({metricKey:'community_post_created',eventKey:`community-post:${doc.id}`});
+  });
+  await scan(db.collection('hazardReports').where('reportedBy','==',uid), doc => {
+    if (doc.data().status === 'verified') collect({metricKey:'hazard_report_approved',eventKey:`hazard-approved:${doc.id}`});
+  });
+  for (const [metricKey,events] of grouped) {
+    const progressCount = await achievementProgressStore.recordEvents({db,userId:uid,metricKey,events:[...events.values()]});
+    await reconcileAchievementMetricServer({userId:uid,metricKey,progressCount});
+  }
+  await setUser(null,userReference,{achievementCatalogSyncVersion:achievementCatalog.rules.version,
+    achievementCatalogRevision:revision,achievementCatalogSyncedAtLocal:new Date().toISOString()}, {merge:true});
+  return {synchronized:true,completedHikes:completed.length};
 });
 
 exports.manageAchievementDefinition = onCall(
@@ -10496,24 +10038,29 @@ exports.manageAchievementDefinition = onCall(
     const db = admin.firestore();
     if (action === 'setActive') {
       const achievementId = String(request.data?.achievementId || '').trim();
-      if (!validFirestoreDocumentId(achievementId)) {
-        throw new HttpsError('invalid-argument', 'The achievement is invalid.');
-      }
-      await db.collection('achievements').doc(achievementId).set(
-        {
-          isActive: request.data?.isActive === true,
-          updatedByAdminId: uid,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAtLocal: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-      return { achievementId };
+      if (!validFirestoreDocumentId(achievementId)) throw new HttpsError('invalid-argument','The achievement is invalid.');
+      const isActive = request.data?.isActive === true;
+      await db.runTransaction(async tx => {
+        const reference = db.collection('achievements').doc(achievementId);
+        const snapshot = await tx.get(reference);
+        const definition = snapshot.data() || {};
+        if (!snapshot.exists || !achievementCatalog.visible({...definition,achievementId})) {
+          throw new HttpsError('not-found','This achievement is no longer available.');
+        }
+        if ((definition.isActive !== false) === isActive) return;
+        tx.set(reference,{isActive,updatedByAdminId:uid,updatedAt:admin.firestore.FieldValue.serverTimestamp(),
+          updatedAtLocal:new Date().toISOString()},{merge:true});
+        tx.set(db.collection('achievementCatalog').doc('current'),{revision:admin.firestore.FieldValue.increment(1)},{merge:true});
+      });
+      return {achievementId,isActive};
     }
     if (action !== 'save') {
       throw new HttpsError('invalid-argument', 'The achievement action is invalid.');
     }
     const raw = request.data?.achievement;
+    let validated;
+    try { validated = achievementCatalog.validateDefinition(raw); }
+    catch (error) { throw new HttpsError('invalid-argument',error.message); }
     const title = String(raw?.title || '').trim().slice(0, 160);
     const requirement = String(raw?.condition || '').trim().slice(0, 500);
     const metricKey = String(raw?.metricKey || '').trim();
@@ -10534,7 +10081,8 @@ exports.manageAchievementDefinition = onCall(
       ? 'cumulative'
       : 'one_time';
     const nowIso = new Date().toISOString();
-    await reference.set(
+    const batch = db.batch();
+    batch.set(reference,
       {
         achievementId,
         title,
@@ -10547,6 +10095,8 @@ exports.manageAchievementDefinition = onCall(
         targetCount: rewardType === 'one_time'
           ? 1
           : Math.round(boundedNumber(raw?.targetCount, 1, 1000000000, 1)),
+        ...validated,
+        retired:false,
         isActive: raw?.isActive !== false,
         sortOrder: Math.round(boundedNumber(raw?.sortOrder, -100000, 100000, 0)),
         accentColorValue: Math.round(
@@ -10565,6 +10115,9 @@ exports.manageAchievementDefinition = onCall(
       },
       { merge: true }
     );
+    batch.set(db.collection('achievementCatalog').doc('current'), {revision:admin.firestore.FieldValue.increment(1),
+      updatedAtLocal:nowIso}, {merge:true});
+    await batch.commit();
     return { achievementId };
   }
 );
@@ -10600,7 +10153,7 @@ exports.awardAchievementsForStartedHike = onDocumentCreated(
     await revokeTerminalHikeShare(hike);
     await updateTeamParticipantForHike(hike, 'ended');
     await applyCompletedHikeAchievements({ userId: String(hike.userId || ''),
-      sessionId: event.params.sessionId, trailId: String(hike.trailId || '') });
+      sessionId: event.params.sessionId, trailId: String(hike.trailId || ''), hike });
   }
 );
 
@@ -10644,6 +10197,7 @@ exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
       userId,
       sessionId: event.params.sessionId,
       trailId: String(after.trailId || ''),
+      hike: after,
     });
   }
 );
@@ -10727,26 +10281,6 @@ exports.preserveDeletedHikeTerminalState = onDocumentDeleted(
         recordedAt: admin.firestore.FieldValue.serverTimestamp(),
         recordedAtLocal: new Date().toISOString(),
       }, { merge: true });
-  }
-);
-
-exports.awardAchievementForCheckIn = onDocumentCreated(
-  { document: 'checkIns/{checkInId}', region: 'asia-southeast1' },
-  async (event) => {
-    const checkIn = event.data.data() || {};
-    const userId = String(checkIn.userId || '');
-    const phoneNumber = String(checkIn.userPhoneNumber || '');
-    if (
-      userId !== userDocumentIdForPhone(phoneNumber)
-      || String(checkIn.status || '') !== 'safe'
-    ) {
-      return;
-    }
-    await applyAchievementMetricServer({
-      userId,
-      metricKey: 'check_in_completed',
-      eventKey: `check-in:${event.params.checkInId}`,
-    });
   }
 );
 
@@ -12176,9 +11710,18 @@ exports.sendChatReminder = onCall({secrets: [greenApiInstanceId, greenApiToken],
     if (!chat.exists || data.isDeleted === true || !members.includes(senderPhone) || !members.includes(recipientPhone)) {
       throw new HttpsError('permission-denied', 'This chat reminder is not available.');
     }
-    const departure = dateMillis(data.departureTimeLocal);
+    const hikeId = String(data.hikeSessionId || '').trim();
+    if (!validFirestoreDocumentId(hikeId)) {
+      throw new HttpsError('failed-precondition', 'This chat has no upcoming hike to remind participants about.');
+    }
+    const hikeSnapshot = await tx.get(getFirestore().collection('upcomingHikes').doc(hikeId));
+    const hike = hikeSnapshot.data() || {};
+    if (!hikeSnapshot.exists || hike.isDeleted === true || hike.teamLaunchConsumed === true) {
+      throw new HttpsError('failed-precondition', 'This upcoming hike is no longer available.');
+    }
+    const departure = dateMillis(hike.departureTimeLocal || hike.departureTime);
     const cooldown = reminderCooldown(departure);
-    if (cooldown === null || data.hikeEndedAtLocal || data.hikeEndedAt) {
+    if (!Number.isFinite(departure) || cooldown === null || data.hikeEndedAtLocal || data.hikeEndedAt) {
       throw new HttpsError('failed-precondition', 'The hike has already started or ended.');
     }
     const record = getFirestore().collection('chatReminderCooldowns').doc(contentHash([chatId, recipientPhone]));
@@ -12191,8 +11734,11 @@ exports.sendChatReminder = onCall({secrets: [greenApiInstanceId, greenApiToken],
     }
     const now = Date.now();
     tx.set(record, {lastRequestedAtMillis: now});
-    tx.create(notice, {senderPhone, recipientPhone, chatId,
-      chatName: String(data.customName || data.trailName || 'your HikerCircle chat').replace(/[\x00-\x1f]/g, '').slice(0, 100),
+    const chatName = String(data.customName || defaultFormedHikeGroupName(data));
+    const message = require('./chat_upcoming_hike_reminder').buildUpcomingHikeReminder({
+      hike, chatName, zone: hike.timeZone || data.timeZone,
+    });
+    tx.create(notice, {senderPhone, recipientPhone, chatId, hikeId, chatName, message,
       status: 'pending', createdAt: FieldValue.serverTimestamp()});
     return {nextAllowedAtMillis: now + cooldown, requestedAtMillis: now,
       departureMillis: Number.isFinite(departure) ? departure : null};
@@ -12211,12 +11757,43 @@ async function deliverChatReminder(reference) {
     return snapshot.data();
   });
   if (!notice) return;
+  // Older pending outbox rows have no schedule snapshot. Upgrade them without
+  // asking the client for message text or repeating an already-attempted send.
+  let message = notice.message;
+  if (typeof message !== 'string' || !message.trim()) {
+    if (!validFirestoreDocumentId(notice.chatId)) {
+      await reference.update({status: 'failed', reason: 'upcoming_hike_unavailable'});
+      return;
+    }
+    try {
+      const chatSnapshot = await getFirestore().collection('groupChats').doc(notice.chatId).get();
+      const chat = chatSnapshot.data() || {};
+      const hikeId = String(notice.hikeId || chat.hikeSessionId || '');
+      const hikeSnapshot = validFirestoreDocumentId(hikeId)
+        ? await getFirestore().collection('upcomingHikes').doc(hikeId).get() : null;
+      const hike = hikeSnapshot?.data() || {};
+      if (!hikeSnapshot?.exists || hike.isDeleted === true || hike.teamLaunchConsumed === true
+          || !Number.isFinite(dateMillis(hike.departureTimeLocal || hike.departureTime))
+          || dateMillis(hike.departureTimeLocal || hike.departureTime) <= Date.now()) {
+        await reference.update({status: 'failed', reason: 'upcoming_hike_unavailable'});
+        return;
+      }
+      message = require('./chat_upcoming_hike_reminder').buildUpcomingHikeReminder({
+        hike, chatName: chat.customName || defaultFormedHikeGroupName(chat),
+        zone: hike.timeZone || chat.timeZone,
+      });
+    } catch (error) {
+      // No provider request happened, so a transient schedule read is safe to retry.
+      await reference.update({status: 'pending', attemptedAt: FieldValue.delete()});
+      throw error;
+    }
+  }
   try {
     const credentials = greenApiCredentials();
     const response = await fetch(greenApiEndpoint('sendMessage', credentials), {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({chatId: `${notice.recipientPhone.replace(/\D/g, '')}@c.us`,
-        message: `HikerCircle reminder: A participant in ${notice.chatName} would like you to check the chat. Open HikerCircle to review the latest messages and hike arrangements.`}),
+        message}),
       signal: AbortSignal.timeout(12_000),
     });
     const body = await response.json().catch(() => null);

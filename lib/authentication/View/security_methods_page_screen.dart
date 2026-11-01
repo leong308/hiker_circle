@@ -87,166 +87,97 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
   Future<void> _remove(MfaFactor factor, bool canRemove) =>
       _screenModel.commandRemove(factor, canRemove);
 
-  /// Builds this widget from its current presentation state.
+  /// Uses Profile's shared header, section labels and inset settings cards.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Scaffold(
-      appBar: PageHeaderAppBar(title: const Text('Login security')),
+      backgroundColor: theme.brightness == Brightness.dark
+          ? const Color(0xFF0C120F)
+          : const Color(0xFFF2F2F7),
       body: SafeArea(
         child: Stack(
           children: [
             RefreshIndicator(
-              onRefresh: () async {
-                _reload();
-                await _statusFuture;
-              },
-              child: FutureBuilder<MfaStatus>(
-                future: _statusFuture,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const HikerCircleLoadingView(
-                      message: 'Loading login security…',
-                      detail: 'Checking your bound verification methods.',
-                    );
-                  }
-                  if (snapshot.hasError || !snapshot.hasData) {
-                    return ListView(
-                      padding: const EdgeInsets.all(20),
-                      children: [
-                        Text(
-                          'Unable to load security methods.',
-                          style: theme.textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton(
-                          onPressed: _reload,
-                          child: const Text('Try again'),
-                        ),
-                      ],
-                    );
-                  }
-                  final status = snapshot.data!;
-                  final hasTotp = status.methods.contains('totp');
-                  final hasPasskey = status.methods.contains('passkey');
-                  final passkeysEnabled = nativePasskeysEnabledForBuild();
-                  return ListView(
-                    padding: const EdgeInsets.fromLTRB(18, 12, 18, 30),
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: scheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(Icons.shield_rounded, color: scheme.primary),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    passkeysEnabled
-                                        ? '${status.methods.length} of 2 method types protected'
-                                        : hasTotp
-                                        ? 'Authenticator is protecting this account'
-                                        : 'Add Authenticator to protect this account',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.w700),
+              onRefresh: _screenModel.commandRefresh,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 30),
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 640),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          PageHeader(
+                            title: 'Login security',
+                            subtitle: 'Manage how you verify your login',
+                            onBack: () => Navigator.of(context).maybePop(),
+                          ),
+                          const SizedBox(height: 20),
+                          FutureBuilder<MfaStatus>(
+                            future: _statusFuture,
+                            builder: (context, snapshot) {
+                              if (snapshot.connectionState ==
+                                  ConnectionState.waiting) {
+                                return const HikerCircleLoadingView(
+                                  message: 'Loading login security…',
+                                  detail: 'Checking your verification methods.',
+                                  padding: EdgeInsets.symmetric(vertical: 20),
+                                );
+                              }
+                              if (snapshot.hasError || !snapshot.hasData) {
+                                return _SecurityCard(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(18),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        const _SecurityMethodTile(
+                                          icon: Icons.cloud_off_rounded,
+                                          title: 'Could not load your methods',
+                                          subtitle:
+                                              'Check your connection and try again.',
+                                        ),
+                                        const SizedBox(height: 12),
+                                        FilledButton.icon(
+                                          onPressed: _reload,
+                                          icon: const Icon(
+                                            Icons.refresh_rounded,
+                                          ),
+                                          label: const Text('Try again'),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    !passkeysEnabled
-                                        ? 'Native passkeys are unavailable with personal iOS signing. Authenticator remains fully supported.'
-                                        : hasTotp && hasPasskey
-                                        ? 'Both methods are bound. Security Guardian achievement progress is complete.'
-                                        : 'At least one method must always remain. Bind both to complete the Security Guardian achievement.',
-                                  ),
-                                ],
+                                );
+                              }
+                              return _buildMethods(snapshot.data!);
+                            },
+                          ),
+                          const SizedBox(height: 22),
+                          const SectionLabel(label: 'Coming next'),
+                          const SizedBox(height: 8),
+                          const _MoreSecurityMethodsCard(),
+                          const SizedBox(height: 18),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Text(
+                              'Changes may require a recent two-step login. Your fingerprint, face data and device PIN stay on your device.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                                height: 1.5,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      Text(
-                        'Bound methods',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      for (final factor in status.factors)
-                        Card(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          child: ListTile(
-                            leading: Icon(
-                              factor.type == 'passkey'
-                                  ? Icons.fingerprint_rounded
-                                  : Icons.password_rounded,
-                              color: scheme.primary,
-                            ),
-                            title: Text(factor.label),
-                            subtitle: Text(
-                              factor.type == 'passkey'
-                                  ? 'Passkey · protected by device security'
-                                  : 'Authenticator · 6 digits every 30 seconds',
-                            ),
-                            trailing: IconButton(
-                              tooltip: status.canRemove
-                                  ? 'Remove'
-                                  : 'Add another method first',
-                              onPressed: _busy
-                                  ? null
-                                  : () => _remove(factor, status.canRemove),
-                              icon: const Icon(Icons.delete_outline_rounded),
-                            ),
                           ),
-                        ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Add a method',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                        ],
                       ),
-                      const SizedBox(height: 8),
-                      if (!hasTotp)
-                        OutlinedButton.icon(
-                          onPressed: _busy ? null : _addAuthenticator,
-                          icon: const Icon(Icons.password_rounded),
-                          label: const Text('Add Authenticator'),
-                        ),
-                      if (!hasPasskey && passkeysEnabled) ...[
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: _busy ? null : _addPasskey,
-                          icon: const Icon(Icons.fingerprint_rounded),
-                          label: const Text('Add passkey'),
-                        ),
-                      ] else if (!hasPasskey) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          personalSigningPasskeyMessage,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      Text(
-                        'Removing a method requires a recent two-step login. HikerCircle never receives your fingerprint, face data, or device PIN.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  );
-                },
+                    ),
+                  ),
+                ],
               ),
             ),
             if (_busy)
@@ -262,6 +193,75 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Keeps existing enrollment and removal commands in the redesigned layout.
+  Widget _buildMethods(MfaStatus status) {
+    final presentation = _screenModel.commandPresentation(status);
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SecurityOverview(presentation: presentation),
+        const SizedBox(height: 22),
+        const SectionLabel(label: 'Verification methods'),
+        const SizedBox(height: 8),
+        _BoundSecurityMethods(status: status, busy: _busy, onRemove: _remove),
+        if (presentation.canAddAuthenticator || presentation.canAddPasskey) ...[
+          const SizedBox(height: 22),
+          const SectionLabel(label: 'Add a method'),
+          const SizedBox(height: 8),
+          _SecurityCard(
+            child: Column(
+              children: [
+                if (presentation.canAddAuthenticator)
+                  _SecurityMethodTile(
+                    icon: Icons.password_rounded,
+                    title: 'Add Authenticator',
+                    subtitle:
+                        'Verify your login with one-time codes from an authenticator app.',
+                    onTap: _busy ? null : _addAuthenticator,
+                    trailing: Icon(
+                      Icons.add_circle_outline_rounded,
+                      color: colors.primary,
+                    ),
+                  ),
+                if (presentation.canAddAuthenticator &&
+                    presentation.canAddPasskey)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 72),
+                    child: Divider(height: 1),
+                  ),
+                if (presentation.canAddPasskey)
+                  _SecurityMethodTile(
+                    icon: Icons.fingerprint_rounded,
+                    title: 'Add passkey',
+                    subtitle: 'Use your device security to verify your login.',
+                    onTap: _busy ? null : _addPasskey,
+                    trailing: Icon(
+                      Icons.add_circle_outline_rounded,
+                      color: colors.primary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        if (!presentation.passkeysEnabled && !presentation.hasPasskey) ...[
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              'Passkeys are unavailable in this version. Use Authenticator to verify your login.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: colors.onSurfaceVariant,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 

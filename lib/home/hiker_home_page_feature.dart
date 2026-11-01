@@ -1,3 +1,5 @@
+import 'ModelView/upcoming_hike_start_resolver.dart';
+import '../achievements/Model/achievement_catalog.dart';
 import '../core/widgets/section_label.dart';
 import 'View/hike_safety_settings_page.dart';
 import 'Model/hike_safety_preferences.dart';
@@ -76,6 +78,7 @@ import '../sos/Data/emergency_contacts_repository.dart';
 import '../sos/Data/location_snapshot_service.dart';
 import '../sos/Data/nearby_sos_event_repository.dart';
 import 'View/find_hike_page.dart';
+import 'View/upcoming_hike_request_scope.dart';
 import '../sos/Data/sos_alert_repository.dart';
 import '../sos/Data/sos_device_alert_service.dart';
 import '../sos/Model/sos_models.dart';

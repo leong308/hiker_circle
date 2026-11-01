@@ -79,6 +79,8 @@ class CommunityPostOptions extends StatelessWidget {
   const CommunityPostOptions({
     super.key,
     required this.isAdmin,
+    this.isOwnPost = false,
+    this.onEdit,
     this.onHide,
     this.onRemove,
     this.onDelete,
@@ -86,6 +88,8 @@ class CommunityPostOptions extends StatelessWidget {
   });
 
   final bool isAdmin;
+  final bool isOwnPost;
+  final VoidCallback? onEdit;
   final VoidCallback? onHide;
   final VoidCallback? onRemove;
   final VoidCallback? onDelete;
@@ -94,8 +98,11 @@ class CommunityPostOptions extends StatelessWidget {
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
-    final canModerate = isAdmin && (onHide != null || onRemove != null);
-    if (!canModerate && onDelete == null) return const SizedBox.shrink();
+    final canModerate =
+        isAdmin && !isOwnPost && (onHide != null || onRemove != null);
+    if (!canModerate && onDelete == null && onEdit == null) {
+      return const SizedBox.shrink();
+    }
     return PopupMenuButton<String>(
       tooltip: canModerate ? 'Moderate story' : 'Story options',
       enabled: !busy,
@@ -108,6 +115,8 @@ class CommunityPostOptions extends StatelessWidget {
           : const Icon(Icons.more_horiz_rounded),
       onSelected: (action) {
         switch (action) {
+          case 'edit':
+            onEdit?.call();
           case 'hide':
             if (isAdmin) onHide?.call();
           case 'remove':
@@ -117,6 +126,11 @@ class CommunityPostOptions extends StatelessWidget {
         }
       },
       itemBuilder: (_) => [
+        if (onEdit != null)
+          const PopupMenuItem(
+            value: 'edit',
+            child: _OptionLabel(icon: Icons.edit_outlined, label: 'Edit story'),
+          ),
         if (canModerate) ...[
           const PopupMenuItem<String>(
             enabled: false,
@@ -146,7 +160,7 @@ class CommunityPostOptions extends StatelessWidget {
             value: 'delete',
             child: _OptionLabel(
               icon: Icons.delete_outline_rounded,
-              label: isAdmin ? 'Delete my story' : 'Delete story',
+              label: 'Delete story',
             ),
           ),
       ],

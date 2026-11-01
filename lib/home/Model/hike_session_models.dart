@@ -10,6 +10,8 @@ import 'trail_gear_plan.dart';
 import 'path_deviation_policy.dart';
 import 'location_update_interval.dart';
 import 'dart:math' as math;
+import '../../circle/Model/shared_community_post.dart';
+export '../../circle/Model/shared_community_post.dart';
 
 import '../../sos/Model/sos_models.dart';
 import '../../trail/Model/trail_models.dart';
@@ -2183,6 +2185,18 @@ class UpcomingHike {
   final int departureReminderCount;
   final bool departureReminderSentByMe;
 
+  /// Matches the host and participants without depending on phone formatting.
+  bool isParticipant(String phoneNumber) {
+    final key = _modelPhoneKey(phoneNumber);
+    if (key.isEmpty) return false;
+    return _modelPhoneKey(creatorPhone) == key ||
+        participantPhones.any((phone) => _modelPhoneKey(phone) == key);
+  }
+
+  /// Discovery and non-member taps always show details with joining controls.
+  bool opensJoinDetailsFor(String phoneNumber, {bool discovery = false}) =>
+      discovery || !isParticipant(phoneNumber);
+
   /// Returns requires join approval.
   bool get requiresJoinApproval => joinPolicy != 'open';
 
@@ -2424,18 +2438,16 @@ class UpcomingHikeJoinRequestReview {
   }
 }
 
-/// Represents hike reminder preference.
+/// Stores the two departure reminder choices; repeats end before hike start.
 class HikeReminderPreference {
-  /// Creates hike reminder preference.
+  /// Creates a personal reminder schedule.
   const HikeReminderPreference({
     this.enabled = true,
     this.firstReminderMinutesBefore = 120,
     this.repeatIntervalMinutes = 30,
-    this.finalReminderMinutesBefore = 15,
-    this.maximumReminders = 4,
   });
 
-  /// Creates hike reminder preference from a cloud record.
+  /// Reads current choices or imports the first/frequency choices of an old plan.
   factory HikeReminderPreference.fromFirestore(Map<String, dynamic> data) {
     return HikeReminderPreference(
       enabled: data['enabled'] != false,
@@ -2447,11 +2459,6 @@ class HikeReminderPreference {
         data['repeatIntervalMinutes'],
         fallback: 30,
       ),
-      finalReminderMinutesBefore: _modelIntFrom(
-        data['finalReminderMinutesBefore'],
-        fallback: 15,
-      ),
-      maximumReminders: _modelIntFrom(data['maximumReminders'], fallback: 4),
     ).normalized();
   }
 
@@ -2468,16 +2475,12 @@ class HikeReminderPreference {
     1440,
   ];
   static const repeatIntervalOptions = <int>[0, 15, 30, 60, 120, 360];
-  static const finalReminderOptions = <int>[5, 10, 15, 30, 60];
-  static const maximumReminderOptions = <int>[1, 2, 3, 4, 5, 6, 7, 8];
 
   final bool enabled;
   final int firstReminderMinutesBefore;
   final int repeatIntervalMinutes;
-  final int finalReminderMinutesBefore;
-  final int maximumReminders;
 
-  /// Leave a minute to save the plan rather than offering a time already due.
+  /// Leaves a minute to save rather than offering a reminder already due.
   static List<int> availableFirstReminders(DateTime departure, DateTime now) {
     final earliest = now.add(const Duration(minutes: 1));
     return firstReminderOptions
@@ -2489,7 +2492,7 @@ class HikeReminderPreference {
         .toList();
   }
 
-  /// Used when editing/saving a plan, never while delivering its reminders.
+  /// Fits new or edited choices to the remaining time without replaying misses.
   HikeReminderPreference fitToDeparture(DateTime departure, DateTime now) {
     final value = normalized();
     final options = availableFirstReminders(departure, now);
@@ -2497,36 +2500,27 @@ class HikeReminderPreference {
     final first = options.contains(value.firstReminderMinutesBefore)
         ? value.firstReminderMinutesBefore
         : options.last;
-    final finalBefore = math.min(value.finalReminderMinutesBefore, first);
-    final repeat = first - value.repeatIntervalMinutes >= finalBefore
-        ? value.repeatIntervalMinutes
-        : 0;
-    final capacity = repeat == 0 ? 1 : (first - finalBefore) ~/ repeat + 1;
-    return value.copyWith(
-      firstReminderMinutesBefore: first,
-      repeatIntervalMinutes: repeat,
-      finalReminderMinutesBefore: finalBefore,
-      maximumReminders: math.min(value.maximumReminders, capacity),
-    );
+    return value.copyWith(firstReminderMinutesBefore: first);
   }
 
-  /// Fixed departure-relative slots. Missed slots never move to the present.
+  /// Lists fixed slots strictly before departure and after the supplied instant.
   List<DateTime> scheduledTimes(DateTime departure, {DateTime? after}) {
     final value = normalized();
     if (!value.enabled) return const [];
     final result = <DateTime>[];
-    var minutes = value.firstReminderMinutesBefore;
-    for (var index = 0; index < value.maximumReminders; index++) {
+    for (
+      var minutes = value.firstReminderMinutesBefore;
+      minutes > 0;
+      minutes -= value.repeatIntervalMinutes
+    ) {
       final time = departure.subtract(Duration(minutes: minutes));
       if (after == null || time.isAfter(after)) result.add(time);
       if (value.repeatIntervalMinutes == 0) break;
-      minutes -= value.repeatIntervalMinutes;
-      if (minutes < value.finalReminderMinutesBefore) break;
     }
     return result;
   }
 
-  /// Computes normalized.
+  /// Validates choices and uses Once only when no repeat fits before departure.
   HikeReminderPreference normalized() {
     final first = firstReminderOptions.contains(firstReminderMinutesBefore)
         ? firstReminderMinutesBefore
@@ -2534,29 +2528,18 @@ class HikeReminderPreference {
     final repeat = repeatIntervalOptions.contains(repeatIntervalMinutes)
         ? repeatIntervalMinutes
         : 30;
-    final finalBefore =
-        finalReminderOptions.contains(finalReminderMinutesBefore)
-        ? finalReminderMinutesBefore
-        : 15;
-    final maximum = maximumReminderOptions.contains(maximumReminders)
-        ? maximumReminders
-        : 4;
     return HikeReminderPreference(
       enabled: enabled,
       firstReminderMinutesBefore: first,
-      repeatIntervalMinutes: repeat,
-      finalReminderMinutesBefore: finalBefore.clamp(5, first),
-      maximumReminders: repeat == 0 ? 1 : maximum,
+      repeatIntervalMinutes: repeat < first ? repeat : 0,
     );
   }
 
-  /// Returns a copy with the supplied fields changed.
+  /// Returns validated choices with the supplied values changed.
   HikeReminderPreference copyWith({
     bool? enabled,
     int? firstReminderMinutesBefore,
     int? repeatIntervalMinutes,
-    int? finalReminderMinutesBefore,
-    int? maximumReminders,
   }) {
     return HikeReminderPreference(
       enabled: enabled ?? this.enabled,
@@ -2564,21 +2547,17 @@ class HikeReminderPreference {
           firstReminderMinutesBefore ?? this.firstReminderMinutesBefore,
       repeatIntervalMinutes:
           repeatIntervalMinutes ?? this.repeatIntervalMinutes,
-      finalReminderMinutesBefore:
-          finalReminderMinutesBefore ?? this.finalReminderMinutesBefore,
-      maximumReminders: maximumReminders ?? this.maximumReminders,
     ).normalized();
   }
 
-  /// Serializes this value for cloud storage.
+  /// Marks new or edited schedules as version two for the server scheduler.
   Map<String, dynamic> toFirestore() {
     final value = normalized();
     return {
+      'schemaVersion': 2,
       'enabled': value.enabled,
       'firstReminderMinutesBefore': value.firstReminderMinutesBefore,
       'repeatIntervalMinutes': value.repeatIntervalMinutes,
-      'finalReminderMinutesBefore': value.finalReminderMinutesBefore,
-      'maximumReminders': value.maximumReminders,
     };
   }
 }
@@ -2878,6 +2857,7 @@ class ChatMessage {
     this.sendStatus = SendStatus.sent,
     this.attachment,
     this.senderPhotoURL = '',
+    this.sharedPost,
   });
 
   final String id;
@@ -2891,6 +2871,7 @@ class ChatMessage {
   final SendStatus sendStatus;
   final ChatAttachment? attachment;
   final String senderPhotoURL;
+  final SharedCommunityPost? sharedPost;
 
   /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
@@ -2905,6 +2886,7 @@ class ChatMessage {
       if (senderPhotoURL.trim().isNotEmpty)
         'senderPhotoURL': senderPhotoURL.trim(),
       if (attachment != null) 'attachment': attachment!.toFirestore(),
+      if (sharedPost != null) 'sharedPost': sharedPost!.toMap(),
     };
   }
 
@@ -2921,6 +2903,7 @@ class ChatMessage {
       senderName: _modelStringFrom(data['senderName']),
       senderPhotoURL: _modelStringFrom(data['senderPhotoURL']),
       text: _modelStringFrom(data['text']),
+      sharedPost: SharedCommunityPost.fromMap(data['sharedPost']),
       sentAt: _modelDateFromValue(data['sentAtLocal']) ?? DateTime.now(),
       isSystemMessage: data['isSystemMessage'] == true,
       seenBy: seenBy,
@@ -2943,6 +2926,7 @@ class ChatMessage {
     SendStatus sendStatus = SendStatus.sending,
     ChatAttachment? attachment,
     String senderPhotoURL = '',
+    SharedCommunityPost? sharedPost,
   }) {
     return ChatMessage(
       id: localId,
@@ -2954,6 +2938,7 @@ class ChatMessage {
       sendStatus: sendStatus,
       attachment: attachment,
       senderPhotoURL: senderPhotoURL,
+      sharedPost: sharedPost,
     );
   }
 }

@@ -8,6 +8,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 import 'app/Data/app_settings_controller.dart';
+import 'achievements/Model/achievement_catalog.dart';
 import 'app/Data/firebase_bootstrap.dart';
 import 'app/View/hiker_circle_app.dart';
 import 'core/config/google_api_config.dart';
@@ -49,6 +50,7 @@ Future<void> main() async {
       await rootBundle.loadString('assets/animations/gps_location.LICENSE.txt'),
     );
   });
+  await AchievementCatalog.load();
   final settings = AppSettingsController.instance;
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   // Only the public Mapbox token is packaged; provider secrets stay in Firebase.

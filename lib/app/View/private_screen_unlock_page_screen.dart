@@ -66,7 +66,7 @@ class _PrivateScreenUnlockPageState extends State<PrivateScreenUnlockPage> {
               Text(
                 _failed
                     ? 'Biometric verification was not completed. Try again, or sign out to verify your account again.'
-                    : 'Use your enrolled biometrics to open your private screens.',
+                    : 'Use Face ID or fingerprints to unlock HikerCircle.',
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),

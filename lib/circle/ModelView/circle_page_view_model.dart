@@ -469,13 +469,6 @@ class _CirclePageStateViewModel extends ChangeNotifier {
     await effectShowCommunityPersonProfile(person);
   }
 
-  /// Creates team.
-  void commandCreateTeam() {
-    effectShowCircleMessage(
-      'Create a real team session from Home > Start Hike > Team Hike.',
-    );
-  }
-
   /// Releases resources owned by this instance.
   @override
   void dispose() {
@@ -503,6 +496,109 @@ class _CirclePageStateViewModel extends ChangeNotifier {
 
   final Set<String> stateModeratingPostIds = {};
 
+  late final Future<Map<String, dynamic>?> Function(Map<String, dynamic>)
+  effectPresentEditPost;
+
+  /// Loads an exact linked post without relying on the currently loaded feed.
+  Future<_CommunityPost?> commandLoadLinkedPost(String postId) async {
+    try {
+      final row = await readHikerCircleRepository().loadCommunityPost(
+        session: readSession(),
+        postId: postId,
+      );
+      if (!mounted) return null;
+      if (row == null) {
+        effectShowCircleMessage('This story is no longer available.');
+        return null;
+      }
+      return _communityPostFromFirestore(row);
+    } catch (_) {
+      if (mounted) {
+        effectShowCircleMessage('Unable to open this story. Please try again.');
+      }
+      return null;
+    }
+  }
+
+  /// Opens an author's editor with current media paths and revision checks.
+  Future<_CommunityPost?> commandEditCommunityPost(_CommunityPost post) async {
+    final id = post.postId;
+    if (id == null ||
+        id.isEmpty ||
+        stateModeratingPostIds.contains(id) ||
+        stateDeletingPostIds.contains(id) ||
+        stateLikingPostIds.contains(id)) {
+      return null;
+    }
+    _publish(() => stateModeratingPostIds.add(id));
+    try {
+      final original = await readHikerCircleRepository().loadCommunityPost(
+        session: readSession(),
+        postId: id,
+      );
+      if (!mounted) return null;
+      if (original == null || original['isOwnPost'] != true) {
+        effectShowCircleMessage('This story is no longer available to edit.');
+        return null;
+      }
+      final saved = await effectPresentEditPost(original);
+      if (!mounted || saved == null) return null;
+      final updated = _communityPostFromFirestore(saved);
+      _publish(() {
+        // Invalidate any older feed refresh that started before this edit.
+        ++stateFeedGeneration;
+        stateIsLoadingPosts = false;
+        stateIsLoadingMorePosts = false;
+        statePosts = statePosts
+            .map((item) => item.postId == id ? updated : item)
+            .toList();
+      });
+      effectShowCircleMessage('Your story was updated.');
+      return updated;
+    } catch (_) {
+      if (mounted) {
+        effectShowCircleMessage('Unable to open the editor. Please try again.');
+      }
+      return null;
+    } finally {
+      if (mounted) _publish(() => stateModeratingPostIds.remove(id));
+    }
+  }
+
+  /// Queues a linked preview for either a direct or group conversation.
+  Future<void> commandSharePost(_CommunityPost post, GroupChat chat) async {
+    final id = post.postId;
+    if (id == null || id.isEmpty) return;
+    final preview = SharedCommunityPost(
+      postId: id,
+      authorName: post.author.substring(0, math.min(post.author.length, 160)),
+      caption: post.body.substring(0, math.min(post.body.length, 600)),
+      trailName: post.trail.substring(0, math.min(post.trail.length, 160)),
+    );
+    final now = DateTime.now();
+    final session = readSession();
+    try {
+      await readHikerCircleRepository().sendGroupChatMessage(
+        chatId: chat.id,
+        senderPhone: session.phoneNumber,
+        senderName: session.username,
+        text: preview.summary,
+        localId: 'share_${now.microsecondsSinceEpoch}',
+        sentAt: now,
+        sharedPost: preview,
+      );
+      if (mounted) {
+        effectShowCircleMessage(
+          'Post shared to ${chat.displayNameFor(session.phoneNumber)}.',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        effectShowCircleMessage('Unable to share the post right now.');
+      }
+    }
+  }
+
   bool stateBuddyRequestsSheetOpen = false;
 
   /// Deletes community post.
@@ -520,11 +616,12 @@ class _CirclePageStateViewModel extends ChangeNotifier {
         postId: id,
       );
       if (mounted) {
-        _publish(
-          () => statePosts = statePosts
-              .where((item) => item.postId != id)
-              .toList(),
-        );
+        _publish(() {
+          ++stateFeedGeneration;
+          stateIsLoadingPosts = false;
+          stateIsLoadingMorePosts = false;
+          statePosts = statePosts.where((item) => item.postId != id).toList();
+        });
         effectShowCircleMessage('Your story was deleted.');
       }
       return true;

@@ -260,25 +260,36 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     );
   }
 
-  /// Computes acknowledge planned reminder preference.
+  /// Acknowledges the sent choices, including pending records in the old format.
   Future<void> acknowledgePlannedReminderPreference({
     required String ownerPhoneNumber,
     required String hikeId,
     required HikeReminderPreference preference,
   }) async {
     final database = await _openDatabase();
-    // A late acknowledgement must never clear a newer local preference edit.
-    await database.update(
-      'planned_hike_state',
-      {'reminder_sync_pending': 0},
-      where:
-          'owner_phone_number = ? AND upcoming_hike_id = ? AND reminder_preference_json = ?',
-      whereArgs: [
-        ownerPhoneNumber.trim(),
-        hikeId,
-        jsonEncode(preference.normalized().toFirestore()),
-      ],
-    );
+    final expected = jsonEncode(preference.normalized().toFirestore());
+    await database.transaction((transaction) async {
+      final rows = await transaction.query(
+        'planned_hike_state',
+        columns: ['reminder_preference_json'],
+        where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+        whereArgs: [ownerPhoneNumber.trim(), hikeId],
+      );
+      if (rows.isEmpty) return;
+      final raw = rows.single['reminder_preference_json'];
+      if (raw is! String || raw.isEmpty) return;
+      final current = HikeReminderPreference.fromFirestore(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      );
+      // A late receipt must never clear a newer local preference edit.
+      if (jsonEncode(current.toFirestore()) != expected) return;
+      await transaction.update(
+        'planned_hike_state',
+        {'reminder_sync_pending': 0, 'reminder_preference_json': expected},
+        where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+        whereArgs: [ownerPhoneNumber.trim(), hikeId],
+      );
+    });
   }
 
   /// Creates upcoming hike reminders table.

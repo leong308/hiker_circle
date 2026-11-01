@@ -18,7 +18,7 @@ class NextHikeBriefing extends StatefulWidget {
   final String phoneNumber;
   final PlannedHike? plannedHike;
   final Trail? trail;
-  final VoidCallback? onReview;
+  final Future<void> Function()? onReview;
   final bool isVisible;
   final HikeBriefingWeatherService? weatherService;
   final bool isNextHike;
@@ -86,8 +86,9 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
     _screenModel = _NextHikeBriefingStateViewModel(
       readHike: () => widget.hike,
       readIsVisible: () => widget.isVisible,
-      readTrail: () => widget.trail,
+      readTrail: () => widget.trail ?? widget.plannedHike?.trail,
       readWeatherService: () => widget.weatherService,
+      readOnReview: () => widget.onReview,
     )..addListener(_renderScreenModel);
 
     WidgetsBinding.instance.addObserver(this);
@@ -115,6 +116,7 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
       _retryAt = null;
       _seed();
     }
+    _seed();
     _tick();
   }
 
@@ -183,14 +185,9 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(
-                        hike.hikeType == 'team' ? 'Group hike' : 'Solo hike',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.end,
-                        style: Theme.of(
-                          context,
-                        ).textTheme.labelSmall?.copyWith(color: scheme.primary),
+                      UpcomingHikePeopleButton(
+                        hike: hike,
+                        viewerPhone: widget.phoneNumber,
                       ),
                       HikeDepartureExpiryLabel(
                         departure: hike.departureTime,
@@ -261,28 +258,42 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
             title: hike.hikeType == 'team'
                 ? 'Start team readiness'
                 : 'Final preparation review',
-            onTap: widget.onReview,
-            leading: Stack(
-              alignment: Alignment.center,
-              children: [
-                SizedBox.expand(
-                  child: CircularProgressIndicator(
-                    value: plan == null || plan.checklistTotal == 0
-                        ? 0
-                        : plan.checklistCompleted / plan.checklistTotal,
-                    strokeWidth: 3,
-                    backgroundColor: scheme.outlineVariant,
+            onTap: widget.onReview == null || _screenModel.stateOpeningReview
+                ? null
+                : () => _screenModel.commandOpenReview(),
+            leading: _screenModel.stateOpeningReview
+                ? const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox.expand(
+                        child: CircularProgressIndicator(
+                          value: plan == null || plan.checklistTotal == 0
+                              ? 0
+                              : plan.checklistCompleted / plan.checklistTotal,
+                          strokeWidth: 3,
+                          backgroundColor: scheme.outlineVariant,
+                        ),
+                      ),
+                      Icon(
+                        Icons.backpack_outlined,
+                        size: 20,
+                        color: scheme.primary,
+                      ),
+                    ],
                   ),
-                ),
-                Icon(Icons.backpack_outlined, size: 20, color: scheme.primary),
-              ],
-            ),
             subtitle: Text(
-              hike.hikeType == 'team'
-                  ? 'Prepare together and confirm when ready'
-                  : plan == null
-                  ? 'Build your trail-specific packing list'
-                  : '${plan.checklistCompleted}/${plan.checklistTotal} packed · gear & safety',
+              _screenModel.stateReviewError ??
+                  (_screenModel.stateOpeningReview
+                      ? 'Opening your hike…'
+                      : hike.hikeType == 'team'
+                      ? 'Prepare together and confirm when ready'
+                      : plan == null
+                      ? 'Build your trail-specific packing list'
+                      : '${plan.checklistCompleted}/${plan.checklistTotal} packed · gear & safety'),
             ),
           ),
         ],
@@ -365,10 +376,12 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
               height: 18,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : !available && !_beyondForecast
-          ? Tooltip(
-              message: 'Refresh hike weather',
-              child: Icon(Icons.refresh_rounded, color: scheme.primary),
+          : _screenModel.commandCanReload
+          ? IconButton(
+              tooltip: 'Reload trail forecast',
+              onPressed: () => _screenModel.commandLoad(force: true),
+              icon: const Icon(Icons.refresh_rounded),
+              color: scheme.primary,
             )
           : null,
     );
@@ -456,8 +469,8 @@ class _BriefingAction extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
-                  width: 24,
-                  height: 24,
+                  width: trailing is IconButton ? 48 : 24,
+                  height: trailing is IconButton ? 48 : 24,
                   child: Center(
                     child:
                         trailing ??

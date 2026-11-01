@@ -62,19 +62,6 @@ abstract final class _CirclePageDataActions {
   loadPublicHikerProfile(HikerCircleFirebaseRepository receiver) =>
       receiver.loadPublicHikerProfile;
 
-  /// Binds send group chat message to the selected data source.
-  static Future<void> Function({
-    ChatAttachment? attachment,
-    required String chatId,
-    required String localId,
-    required String senderName,
-    required String senderPhone,
-    required DateTime sentAt,
-    required String text,
-  })
-  sendGroupChatMessage(HikerCircleFirebaseRepository receiver) =>
-      receiver.sendGroupChatMessage;
-
   /// Binds load community post draft to the selected data source.
   static Future<CommunityPostDraftData?> Function({
     required String draftKey,

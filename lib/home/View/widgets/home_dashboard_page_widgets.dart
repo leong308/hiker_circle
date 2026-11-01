@@ -1545,7 +1545,7 @@ class _MyUpcomingHikesSection extends StatefulWidget {
   final bool isVisible;
   final PlannedHike? plannedHike;
   final String phoneNumber;
-  final void Function(UpcomingHike)? onTapHike;
+  final Future<void> Function(UpcomingHike)? onTapHike;
 
   /// Creates the presentation state for this widget.
   @override

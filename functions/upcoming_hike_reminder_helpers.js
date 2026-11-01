@@ -1,6 +1,7 @@
-// Upcoming-hike reminder eligibility combines per-user preferences, repeat limits, and departure cutoffs.
+// Departure reminders use fixed slots; version one retains its saved stop/count limits.
 'use strict';
 
+// Reads timestamps from Firestore or locally serialized preferences.
 function dateMillis(value) {
   if (value && typeof value.toMillis === 'function') return value.toMillis();
   if (value && typeof value.toDate === 'function') {
@@ -10,6 +11,7 @@ function dateMillis(value) {
   return typeof value === 'string' ? Date.parse(value) : Number.NaN;
 }
 
+// Accepts supported integer choices only.
 function allowed(value, options, fallback) {
   const number = Number(value);
   return Number.isInteger(number) && options.includes(number)
@@ -17,6 +19,7 @@ function allowed(value, options, fallback) {
     : fallback;
 }
 
+// New schedules repeat until departure; existing schedules keep their old limits.
 function normalizeUpcomingHikeReminderPreference(raw, { legacy = false } = {}) {
   const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const first = allowed(
@@ -29,6 +32,14 @@ function normalizeUpcomingHikeReminderPreference(raw, { legacy = false } = {}) {
     [0, 15, 30, 60, 120, 360],
     legacy ? 0 : 30
   );
+  if (value.schemaVersion === 2) {
+    return {
+      schemaVersion: 2,
+      enabled: value.enabled !== false,
+      firstReminderMinutesBefore: first,
+      repeatIntervalMinutes: repeat < first ? repeat : 0,
+    };
+  }
   const finalBefore = Math.min(
     first,
     allowed(
@@ -49,17 +60,18 @@ function normalizeUpcomingHikeReminderPreference(raw, { legacy = false } = {}) {
   };
 }
 
-// Match the app preview: the maximum bounds fixed slots, not a rolling window
-// beginning whenever the worker first happens to see a hike.
+// Slots never move to the present and never include the hike start itself.
 function upcomingHikeReminderTimes(preference, departureMillis) {
   if (!preference.enabled || !Number.isFinite(departureMillis)) return [];
+  const current = preference.schemaVersion === 2;
   const times = [];
   let minutes = preference.firstReminderMinutesBefore;
-  for (let index = 0; index < preference.maximumReminders; index++) {
+  for (let index = 0; minutes > 0; index++) {
+    if (!current && (index >= preference.maximumReminders
+      || minutes < preference.finalReminderMinutesBefore)) break;
     times.push(departureMillis - minutes * 60000);
     if (preference.repeatIntervalMinutes === 0) break;
     minutes -= preference.repeatIntervalMinutes;
-    if (minutes < preference.finalReminderMinutesBefore) break;
   }
   return times;
 }
@@ -96,7 +108,7 @@ function upcomingHikeReminderDue({
     : Number.NaN;
   const minutesUntil = Math.ceil((departureMillis - nowMillis) / 60000);
 
-  // The slots enforce the maximum. A lifetime count would incorrectly block
+  // Fixed slots prevent replay. A lifetime count would incorrectly block
   // a new future slot when the hiker changes their reminder preferences.
   if (sentCount > 0 && !Number.isFinite(lastSentMillis)) {
     return { due: false, preference, sentCount, minutesUntil };

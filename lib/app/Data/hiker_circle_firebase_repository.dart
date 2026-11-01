@@ -2,6 +2,7 @@
 // cloud operations and durable local queues.
 import 'conditional_cloud_cache.dart';
 import '../../achievements/Model/achievement_progress.dart';
+import '../../achievements/Model/achievement_catalog.dart';
 import '../../achievements/Data/achievement_notification_events.dart';
 export '../../achievements/Model/achievement_progress.dart'
     show achievementProgressContentHash;
@@ -23,6 +24,7 @@ import '../../core/services/open_meteo_service.dart';
 import '../../core/services/trail_geometry_storage.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../home/Model/hike_session_models.dart';
+import '../../home/Model/upcoming_hike_request_inbox.dart';
 import '../../home/Data/active_hike_live_status_service.dart';
 import '../../home/Data/planned_hike_state_service.dart';
 import '../../me/Model/hike_history_models.dart';
@@ -825,321 +827,6 @@ class HikerCircleFirebaseRepository {
     return _groupChats.doc(chatId).collection('messages');
   }
 
-  static const Map<String, Map<String, Object>> _achievementSeeds = {
-    'first_safe_hike': {
-      'title': 'First Safe Hike',
-      'condition': 'Complete first hike session',
-      'category': 'Hike milestone',
-      'iconName': 'verified_user',
-      'rewardPoints': 120,
-      'rewardType': 'one_time',
-      'metricKey': 'hike_completed',
-      'targetCount': 1,
-      'isActive': true,
-      'sortOrder': 10,
-      'accentColorValue': 0xFF34A853,
-    },
-    'trail_regular': {
-      'title': 'Trail Regular',
-      'condition': 'Complete 5 hike sessions',
-      'category': 'Hike milestone',
-      'iconName': 'hiking',
-      'rewardPoints': 160,
-      'rewardType': 'cumulative',
-      'metricKey': 'hike_completed',
-      'targetCount': 5,
-      'isActive': true,
-      'sortOrder': 70,
-      'accentColorValue': 0xFF27AE60,
-    },
-    'trail_enthusiast': {
-      'title': 'Trail Enthusiast',
-      'condition': 'Complete 10 hike sessions',
-      'category': 'Hike milestone',
-      'iconName': 'hiking',
-      'rewardPoints': 220,
-      'rewardType': 'cumulative',
-      'metricKey': 'hike_completed',
-      'targetCount': 10,
-      'isActive': true,
-      'sortOrder': 80,
-      'accentColorValue': 0xFF219653,
-    },
-    'seasoned_trekker': {
-      'title': 'Seasoned Trekker',
-      'condition': 'Complete 25 hike sessions',
-      'category': 'Hike milestone',
-      'iconName': 'terrain',
-      'rewardPoints': 350,
-      'rewardType': 'cumulative',
-      'metricKey': 'hike_completed',
-      'targetCount': 25,
-      'isActive': true,
-      'sortOrder': 90,
-      'accentColorValue': 0xFF168AAD,
-    },
-    'fifty_hike_legend': {
-      'title': 'Fifty-Hike Legend',
-      'condition': 'Complete 50 hike sessions',
-      'category': 'Hike milestone',
-      'iconName': 'military_tech',
-      'rewardPoints': 500,
-      'rewardType': 'cumulative',
-      'metricKey': 'hike_completed',
-      'targetCount': 50,
-      'isActive': true,
-      'sortOrder': 100,
-      'accentColorValue': 0xFFFFB000,
-    },
-    'trail_collector': {
-      'title': 'Trail Collector',
-      'condition': 'Complete 5 different trails',
-      'category': 'Trail exploration',
-      'iconName': 'route',
-      'rewardPoints': 180,
-      'rewardType': 'cumulative',
-      'metricKey': 'distinct_trail_completed',
-      'targetCount': 5,
-      'isActive': true,
-      'sortOrder': 110,
-      'accentColorValue': 0xFF2D9CDB,
-    },
-    'route_ranger': {
-      'title': 'Route Ranger',
-      'condition': 'Complete 10 different trails',
-      'category': 'Trail exploration',
-      'iconName': 'explore',
-      'rewardPoints': 260,
-      'rewardType': 'cumulative',
-      'metricKey': 'distinct_trail_completed',
-      'targetCount': 10,
-      'isActive': true,
-      'sortOrder': 120,
-      'accentColorValue': 0xFF2F80ED,
-    },
-    'trail_atlas': {
-      'title': 'Trail Atlas',
-      'condition': 'Complete 25 different trails',
-      'category': 'Trail exploration',
-      'iconName': 'map',
-      'rewardPoints': 450,
-      'rewardType': 'cumulative',
-      'metricKey': 'distinct_trail_completed',
-      'targetCount': 25,
-      'isActive': true,
-      'sortOrder': 130,
-      'accentColorValue': 0xFF6C5CE7,
-    },
-    'state_scout': {
-      'title': 'State Scout',
-      'condition': 'Complete hikes in 3 Malaysian states',
-      'category': 'Malaysia exploration',
-      'iconName': 'travel_explore',
-      'rewardPoints': 250,
-      'rewardType': 'cumulative',
-      'metricKey': 'malaysia_state_hiked',
-      'targetCount': 3,
-      'isActive': true,
-      'sortOrder': 140,
-      'accentColorValue': 0xFF00A99D,
-    },
-    'malaysia_explorer': {
-      'title': 'Malaysia Explorer',
-      'condition': 'Complete hikes in 7 Malaysian states',
-      'category': 'Malaysia exploration',
-      'iconName': 'travel_explore',
-      'rewardPoints': 450,
-      'rewardType': 'cumulative',
-      'metricKey': 'malaysia_state_hiked',
-      'targetCount': 7,
-      'isActive': true,
-      'sortOrder': 150,
-      'accentColorValue': 0xFF00897B,
-    },
-    'malaysia_trailblazer': {
-      'title': 'Malaysia Trailblazer',
-      'condition': 'Complete hikes in all 13 Malaysian states',
-      'category': 'Malaysia exploration',
-      'iconName': 'public',
-      'rewardPoints': 800,
-      'rewardType': 'cumulative',
-      'metricKey': 'malaysia_state_hiked',
-      'targetCount': 13,
-      'isActive': true,
-      'sortOrder': 160,
-      'accentColorValue': 0xFFFFC107,
-    },
-    'prepared_adventurer': {
-      'title': 'Prepared Adventurer',
-      'condition': 'Download offline map before starting',
-      'category': 'Preparation',
-      'iconName': 'map',
-      'rewardPoints': 90,
-      'rewardType': 'one_time',
-      'metricKey': 'offline_map_verified_at_hike_start',
-      'targetCount': 1,
-      'isActive': false,
-      'sortOrder': 20,
-      'accentColorValue': 0xFF2F80ED,
-    },
-    'safety_first': {
-      'title': 'Safety First',
-      'condition': 'Complete gear checklist before departure',
-      'category': 'Preparation',
-      'iconName': 'health_and_safety',
-      'rewardPoints': 100,
-      'rewardType': 'one_time',
-      'metricKey': 'full_checklist_verified_at_departure',
-      'targetCount': 1,
-      'isActive': false,
-      'sortOrder': 30,
-      'accentColorValue': 0xFFF2994A,
-    },
-    'reliable_check_in': {
-      'title': 'Reliable Check-In',
-      'condition': 'Complete 5 scheduled check-ins during hikes',
-      'category': 'Safety habit',
-      'iconName': 'task_alt',
-      'rewardPoints': 110,
-      'rewardType': 'cumulative',
-      'metricKey': 'check_in_completed',
-      'targetCount': 5,
-      'isActive': true,
-      'sortOrder': 40,
-      'accentColorValue': 0xFF9B51E0,
-    },
-    'check_in_champion': {
-      'title': 'Check-In Champion',
-      'condition': 'Complete 25 safe check-ins during hikes',
-      'category': 'Safety habit',
-      'iconName': 'task_alt',
-      'rewardPoints': 240,
-      'rewardType': 'cumulative',
-      'metricKey': 'check_in_completed',
-      'targetCount': 25,
-      'isActive': true,
-      'sortOrder': 190,
-      'accentColorValue': 0xFF8E44AD,
-    },
-    'safety_beacon': {
-      'title': 'Safety Beacon',
-      'condition': 'Complete 100 safe check-ins during hikes',
-      'category': 'Safety habit',
-      'iconName': 'health_and_safety',
-      'rewardPoints': 500,
-      'rewardType': 'cumulative',
-      'metricKey': 'check_in_completed',
-      'targetCount': 100,
-      'isActive': true,
-      'sortOrder': 200,
-      'accentColorValue': 0xFF9B51E0,
-    },
-    'security_guardian': {
-      'title': 'Security Guardian',
-      'condition': 'Protect your account with both Authenticator and a passkey',
-      'category': 'Account security',
-      'iconName': 'verified_user',
-      'rewardPoints': 150,
-      'rewardType': 'cumulative',
-      'metricKey': 'security_factor_type_bound',
-      'targetCount': 2,
-      'isActive': true,
-      'sortOrder': 45,
-      'accentColorValue': 0xFF2F80ED,
-    },
-    'community_helper': {
-      'title': 'Community Helper',
-      'condition': 'Submit a hazard report later confirmed by others',
-      'category': 'Community',
-      'iconName': 'volunteer_activism',
-      'rewardPoints': 140,
-      'rewardType': 'one_time',
-      'metricKey': 'hazard_report_approved',
-      'targetCount': 1,
-      'isActive': true,
-      'sortOrder': 50,
-      'accentColorValue': 0xFFEB5757,
-    },
-    'trail_storyteller': {
-      'title': 'Trail Storyteller',
-      'condition': 'Share your first public trail post',
-      'category': 'Community',
-      'iconName': 'forum',
-      'rewardPoints': 100,
-      'rewardType': 'one_time',
-      'metricKey': 'community_post_created',
-      'targetCount': 1,
-      'isActive': true,
-      'sortOrder': 210,
-      'accentColorValue': 0xFFF2994A,
-    },
-    'community_voice': {
-      'title': 'Community Voice',
-      'condition': 'Share 5 public trail posts',
-      'category': 'Community',
-      'iconName': 'forum',
-      'rewardPoints': 250,
-      'rewardType': 'cumulative',
-      'metricKey': 'community_post_created',
-      'targetCount': 5,
-      'isActive': true,
-      'sortOrder': 220,
-      'accentColorValue': 0xFFE67E22,
-    },
-    'hazard_sentinel': {
-      'title': 'Hazard Sentinel',
-      'condition': 'Submit 5 hazard reports confirmed by others',
-      'category': 'Community safety',
-      'iconName': 'warning',
-      'rewardPoints': 320,
-      'rewardType': 'cumulative',
-      'metricKey': 'hazard_report_approved',
-      'targetCount': 5,
-      'isActive': true,
-      'sortOrder': 230,
-      'accentColorValue': 0xFFD63031,
-    },
-    'team_guardian': {
-      'title': 'Team Guardian',
-      'condition': 'Complete 3 team hikes without a separation emergency',
-      'category': 'Team hike',
-      'iconName': 'groups',
-      'rewardPoints': 160,
-      'rewardType': 'cumulative',
-      'metricKey': 'team_hike_completed',
-      'targetCount': 3,
-      'isActive': true,
-      'sortOrder': 60,
-      'accentColorValue': 0xFF00A99D,
-    },
-    'first_team_hike': {
-      'title': 'Better Together',
-      'condition': 'Complete your first safe team hike',
-      'category': 'Team hike',
-      'iconName': 'groups',
-      'rewardPoints': 100,
-      'rewardType': 'one_time',
-      'metricKey': 'team_hike_completed',
-      'targetCount': 1,
-      'isActive': true,
-      'sortOrder': 170,
-      'accentColorValue': 0xFF00A99D,
-    },
-    'trail_crew': {
-      'title': 'Trail Crew',
-      'condition': 'Complete 10 team hikes without a separation emergency',
-      'category': 'Team hike',
-      'iconName': 'groups',
-      'rewardPoints': 350,
-      'rewardType': 'cumulative',
-      'metricKey': 'team_hike_completed',
-      'targetCount': 10,
-      'isActive': true,
-      'sortOrder': 180,
-      'accentColorValue': 0xFF00796B,
-    },
-  };
-
   // loadTrails uses conditional cloud validation and local payloads for non-real-time trail
   // browsing.
   /// Loads trails.
@@ -1298,6 +985,36 @@ class HikerCircleFirebaseRepository {
     return data['weather'] is Map
         ? trail.copyWith(weather: weatherFromFirestore(data['weather']))
         : trail;
+  }
+
+  /// Uses the trail's shared forecast; manual reload may refresh after 15 minutes.
+  Future<TrailWeather> loadTrailWeatherForecast(
+    String trailId, {
+    bool refresh = false,
+  }) async {
+    if (trailId.trim().isEmpty) {
+      throw const FormatException(
+        'A saved trail is required for this forecast.',
+      );
+    }
+    final data = await _conditionalCache.read(
+      owner: '',
+      type: 'trail_weather',
+      id: trailId.trim(),
+      callable: 'fetchWeatherForTrail',
+      arguments: {
+        'trailId': trailId.trim(),
+        if (refresh) 'refreshIfOlderThanMinutes': 15,
+      },
+      freshness: TrailWeather.cacheFreshness,
+      online: _firebaseBootstrapResult.isAvailable,
+      force: refresh,
+    );
+    final raw = data['weather'];
+    if (raw is! Map) {
+      throw const FormatException('The trail forecast is unavailable.');
+    }
+    return TrailWeather.fromPersistence(Map<String, dynamic>.from(raw));
   }
 
   /// Reads a shared checkpoint forecast without replacing the default trailhead weather.
@@ -1583,6 +1300,61 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Invalidates host inboxes after a decision or a newly received request.
+  final ValueNotifier<int> upcomingHikeJoinRequestRevision = ValueNotifier(0);
+
+  /// Publishes a lightweight refresh signal without exposing request records.
+  void notifyUpcomingHikeJoinRequestsChanged() {
+    upcomingHikeJoinRequestRevision.value++;
+  }
+
+  /// Reads canonical pending totals for the signed-in host's visible hikes.
+  Future<Map<String, int>> loadUpcomingHikeJoinRequestCounts(
+    List<String> hikeIds,
+  ) async {
+    _throwIfFirebaseUnavailable();
+    if (hikeIds.isEmpty) return {};
+    try {
+      final result = await _resolvedFunctions
+          .httpsCallable('listUpcomingHikeJoinRequests')
+          .call({'mode': 'counts', 'hikeIds': hikeIds});
+      final counts = (result.data as Map)['counts'] as Map;
+      return {
+        for (final entry in counts.entries)
+          entry.key.toString(): (entry.value as num).toInt().clamp(0, 100000),
+      };
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to load join requests.',
+      );
+    }
+  }
+
+  /// Reads one host-only page without giving the client access to private request documents.
+  Future<UpcomingHikeRequestPage> loadUpcomingHikeJoinRequests({
+    required String hikeId,
+    required bool history,
+    String? afterRequestId,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      final result = await _resolvedFunctions
+          .httpsCallable('listUpcomingHikeJoinRequests')
+          .call({
+            'hikeId': hikeId,
+            'bucket': history ? 'history' : 'pending',
+            if (afterRequestId != null) 'afterRequestId': afterRequestId,
+          });
+      return UpcomingHikeRequestPage.fromMap(
+        Map<String, dynamic>.from(result.data as Map),
+      );
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to load join requests.',
+      );
+    }
+  }
+
   /// Loads upcoming hike join request.
   Future<UpcomingHikeJoinRequestReview> loadUpcomingHikeJoinRequest(
     String requestId,
@@ -1619,6 +1391,7 @@ class HikerCircleFirebaseRepository {
             'requestId': requestId.trim(),
             'action': accept ? 'accept' : 'reject',
           });
+      notifyUpcomingHikeJoinRequestsChanged();
       return UpcomingHikeJoinRequestReview.fromMap(
         Map<String, dynamic>.from(result.data as Map),
       );
@@ -2443,6 +2216,7 @@ class HikerCircleFirebaseRepository {
     required String localId,
     required DateTime sentAt,
     ChatAttachment? attachment,
+    SharedCommunityPost? sharedPost,
   }) async {
     final senderPhotoURL = await _photoURLForPhone(senderPhone);
     final firestoreMessageId = _firestoreMessageIdForLocalId(localId);
@@ -2454,6 +2228,7 @@ class HikerCircleFirebaseRepository {
         senderName: senderName,
         text: text,
         firestoreDocId: firestoreMessageId,
+        sharedPost: sharedPost?.toMap(),
       );
     }
 
@@ -2471,6 +2246,7 @@ class HikerCircleFirebaseRepository {
         sentAt: sentAt,
         seenBy: [senderPhone],
         attachment: attachment,
+        sharedPost: sharedPost,
         senderPhotoURL: senderPhotoURL,
       );
 
@@ -2780,6 +2556,7 @@ class HikerCircleFirebaseRepository {
                 DateTime.tryParse(row['created_at'] as String? ?? '') ??
                 DateTime.now(),
             attachment: _attachmentFromLocalRow(row),
+            sharedPost: _sharedPostFromLocalRow(row),
           ),
         )
         .toList();
@@ -2812,6 +2589,7 @@ class HikerCircleFirebaseRepository {
             DateTime.now(),
         sendStatus: status,
         attachment: _attachmentFromLocalRow(row),
+        sharedPost: _sharedPostFromLocalRow(row),
       );
     }).toList();
   }
@@ -2834,6 +2612,9 @@ class HikerCircleFirebaseRepository {
             'send_status': m.sendStatus == SendStatus.sent ? 'sent' : 'pending',
             'retry_count': 0,
             'firestore_doc_id': '',
+            'shared_post_json': m.sharedPost == null
+                ? ''
+                : jsonEncode(m.sharedPost!.toMap()),
             'attachment_json': m.attachment == null
                 ? ''
                 : jsonEncode(m.attachment!.toFirestore()),
@@ -2891,6 +2672,7 @@ class HikerCircleFirebaseRepository {
           senderPhone: senderPhone,
           senderName: senderName,
           text: text,
+          sharedPost: _sharedPostFromLocalRow(row),
           sentAt: sentAt,
           seenBy: [senderPhone],
         );
@@ -2921,6 +2703,18 @@ class HikerCircleFirebaseRepository {
         );
         await _localDatabase.incrementPendingMessageRetry(localId);
       }
+    }
+  }
+
+  /// Restores a shared post from the durable message cache or retry queue.
+  SharedCommunityPost? _sharedPostFromLocalRow(Map<String, dynamic> row) {
+    try {
+      final raw = row['shared_post_json'];
+      return raw is String && raw.isNotEmpty
+          ? SharedCommunityPost.fromMap(jsonDecode(raw))
+          : null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -3117,6 +2911,9 @@ class HikerCircleFirebaseRepository {
                       .doc(_userIdFor(session))
                       .set({
                         ...preference.normalized().toFirestore(),
+                        // Remove retired choices while preserving delivery receipts.
+                        'finalReminderMinutesBefore': FieldValue.delete(),
+                        'maximumReminders': FieldValue.delete(),
                         'hikeId': hikeId,
                         'ownerUserId': _userIdFor(session),
                         'ownerPhoneNumber': session.phoneNumber,
@@ -3410,11 +3207,15 @@ class HikerCircleFirebaseRepository {
   }
 
   /// Finds a participant-authorized launch for the selected upcoming hike.
-  Future<TeamHikeSession?> loadTeamHikeForUpcoming(String upcomingId) async {
-    final owner = (await _localDatabase.loadSession())?.phoneNumber ?? '';
+  Future<TeamHikeSession?> loadTeamHikeForUpcoming(
+    String upcomingId, {
+    required String phoneNumber,
+  }) async {
+    _throwIfFirebaseUnavailable();
     final snapshot = await _teamHikeSessions
-        .where('participantPhoneNumbers', arrayContains: owner)
-        .get();
+        .where('participantPhoneNumbers', arrayContains: phoneNumber.trim())
+        .get()
+        .timeout(_firebaseReadTimeout);
     return snapshot.docs
         .map(_teamHikeSessionFromDocument)
         .whereType<TeamHikeSession>()
@@ -3932,16 +3733,6 @@ class HikerCircleFirebaseRepository {
         continue;
       }
       try {
-        if (operation.payload['status'] == 'safe') {
-          final id =
-              operation.payload['checkInId']?.toString() ?? operation.entityId;
-          await recordLocalAchievementEvents(
-            session: session,
-            events: [
-              AchievementMetricEvent('check_in_completed', 'check-in:$id'),
-            ],
-          );
-        }
         await _resolvedFunctions
             .httpsCallable('recordActiveHikeCheckIn')
             .call(operation.payload)
@@ -4025,6 +3816,14 @@ class HikerCircleFirebaseRepository {
         trailId: trail.trailId,
         state: trail.state,
         country: trail.isUnlisted ? '' : trail.country,
+        distanceMetres: ((summary?.distanceKm ?? 0) * 1000).round().clamp(
+          0,
+          AchievementCatalog.eventLimit('completed_hike_distance_m'),
+        ),
+        durationMinutes: (summary?.duration.inMinutes ?? 0).clamp(
+          0,
+          AchievementCatalog.eventLimit('completed_hike_duration_min'),
+        ),
       ),
     );
     // Durable local completion is the UI boundary. Cloud completion, route
@@ -4664,23 +4463,58 @@ class HikerCircleFirebaseRepository {
     draftKey: draftKey,
   );
 
-  /// Loads admin hazard reports.
-  Future<List<Map<String, dynamic>>> loadAdminHazardReports({
+  /// Watches lifecycle metadata without dropping older or undated reports.
+  Stream<List<Map<String, dynamic>>> watchAdminHazardReports({
     required AppSession session,
-  }) async {
+  }) async* {
     _throwIfAdminUnavailable(session);
-    try {
-      final snapshot = await _hazardReports
-          .orderBy('reportedAtLocal', descending: true)
-          .limit(50)
-          .get();
-      return snapshot.docs.map((document) {
-        return {'hazardId': document.id, ...document.data()};
-      }).toList();
-    } on FirebaseException catch (error) {
-      throw HikerCircleFirebaseRepositoryException(
-        'Failed to load hazard reports: ${error.message ?? error.code}',
+    final uid = _captureAccountUid(session);
+    if (uid == null) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Sign in again to view safety reports.',
       );
+    }
+    await for (final snapshot in _hazardReports.snapshots()) {
+      if (!_accountStillMatches(session, uid)) {
+        yield const [];
+        throw const HikerCircleFirebaseRepositoryException(
+          'The signed-in administrator changed.',
+        );
+      }
+      yield snapshot.docs
+          .map((doc) => <String, dynamic>{...doc.data(), 'hazardId': doc.id})
+          .toList();
+    }
+  }
+
+  /// Watches recent community evidence for an administrator's report detail.
+  Stream<List<Map<String, dynamic>>> watchAdminHazardUpdates({
+    required AppSession session,
+    required String hazardId,
+  }) async* {
+    _throwIfAdminUnavailable(session);
+    final uid = _captureAccountUid(session);
+    if (uid == null || hazardId.isEmpty || hazardId.contains('/')) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'This safety report is unavailable.',
+      );
+    }
+    await for (final snapshot
+        in _hazardReports
+            .doc(hazardId)
+            .collection('updates')
+            .orderBy('createdAt', descending: true)
+            .limit(30)
+            .snapshots()) {
+      if (!_accountStillMatches(session, uid)) {
+        yield const [];
+        throw const HikerCircleFirebaseRepositoryException(
+          'The signed-in administrator changed.',
+        );
+      }
+      yield snapshot.docs
+          .map((doc) => <String, dynamic>{...doc.data(), 'id': doc.id})
+          .toList();
     }
   }
 
@@ -5321,60 +5155,6 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  /// Computes review hazard report.
-  Future<void> reviewHazardReport({
-    required AppSession session,
-    required Map<String, dynamic> report,
-    required bool approved,
-    String adminNote = '',
-  }) async {
-    _throwIfAdminUnavailable(session);
-    final hazardId = _stringFrom(report['hazardId']);
-    if (hazardId.isEmpty) {
-      throw const HikerCircleFirebaseRepositoryException(
-        'Hazard report is missing an id.',
-      );
-    }
-
-    final now = DateTime.now().toUtc();
-    final status = approved ? 'verified' : 'rejected';
-    final reportLabel = approved
-        ? 'Community Report - Admin Verified'
-        : 'Community Report - Rejected';
-    await _hazardReports.doc(hazardId).set({
-      'status': status,
-      'reportLabel': reportLabel,
-      'adminNote': adminNote.trim(),
-      'reviewedByAdminId': _userIdFor(session),
-      'reviewedByAdminPhoneNumber': session.phoneNumber,
-      'reviewedAt': FieldValue.serverTimestamp(),
-      'reviewedAtLocal': now.toIso8601String(),
-    }, SetOptions(merge: true));
-
-    if (!approved) {
-      return;
-    }
-
-    final trailId = _stringFrom(report['trailId']);
-    if (trailId.isEmpty) {
-      return;
-    }
-    final hazard = TrailHazard(
-      type: _stringFrom(report['hazardType']).isEmpty
-          ? 'Hazard'
-          : _stringFrom(report['hazardType']),
-      description: _stringFrom(report['description']),
-      severity: _titleCase(_stringFrom(report['severity'])),
-      locationLabel: _locationLabelForHazardReport(report),
-      reportedAt: _dateFromValue(report['reportedAtLocal']) ?? now,
-    );
-    await _trails.doc(trailId).set({
-      'hazards': FieldValue.arrayUnion([hazard.toFirestore()]),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': now.toIso8601String(),
-    }, SetOptions(merge: true));
-  }
-
   /// Loads more admin community posts.
   Future<List<Map<String, dynamic>>> loadMoreAdminCommunityPosts({
     required AppSession session,
@@ -5390,6 +5170,79 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Loads a specific readable post, including current author and reaction data.
+  Future<Map<String, dynamic>?> loadCommunityPost({
+    required AppSession session,
+    required String postId,
+  }) async {
+    final uid = _communityAccount(this, session);
+    if (postId.isEmpty || postId.length > 200 || postId.contains('/')) {
+      return null;
+    }
+    try {
+      final snapshot = await _communityPosts
+          .doc(postId)
+          .get()
+          .timeout(_firebaseReadTimeout);
+      if (!snapshot.exists) return null;
+      final data = snapshot.data()!;
+      // A chat preview never grants access to hidden or removed content.
+      if (data['visibility'] != 'public' &&
+          data['authorId'] != uid &&
+          !session.isAdmin) {
+        return null;
+      }
+      var liked = false;
+      if (data['visibility'] == 'public') {
+        liked =
+            (await snapshot.reference
+                    .collection('reactions')
+                    .doc(uid)
+                    .get()
+                    .timeout(_firebaseReadTimeout))
+                .exists;
+      }
+      final rows = await _hydrateCommunityAuthorLevels([
+        communityPostViewData(
+          data,
+          postId: postId,
+          viewerId: uid,
+          liked: liked,
+        ),
+      ]);
+      _requireSameAccount(session, uid);
+      return rows.single;
+    } on FirebaseException catch (error) {
+      if (error.code == 'permission-denied' || error.code == 'not-found') {
+        return null;
+      }
+      throw const HikerCircleFirebaseRepositoryException(
+        'Unable to open this story. Please try again.',
+      );
+    }
+  }
+
+  /// Edits only the signed-in author's post using its confirmed content revision.
+  Future<Map<String, dynamic>> editOwnCommunityPost({
+    required AppSession session,
+    required Map<String, dynamic> original,
+    required String caption,
+    required List<String> imageUrls,
+  }) async {
+    final uid = _communityAccount(this, session);
+    if (original['authorId'] != uid) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'You can only edit your own stories.',
+      );
+    }
+    return _editCommunityPost(
+      session: session,
+      original: original,
+      caption: caption,
+      imageUrls: imageUrls,
+    );
+  }
+
   /// Computes edit admin community post.
   Future<void> editAdminCommunityPost({
     required AppSession session,
@@ -5398,6 +5251,21 @@ class HikerCircleFirebaseRepository {
     required List<String> imageUrls,
   }) async {
     _throwIfAdminUnavailable(session);
+    await _editCommunityPost(
+      session: session,
+      original: original,
+      caption: caption,
+      imageUrls: imageUrls,
+    );
+  }
+
+  /// Retains only existing photos and invalidates cached content after confirmation.
+  Future<Map<String, dynamic>> _editCommunityPost({
+    required AppSession session,
+    required Map<String, dynamic> original,
+    required String caption,
+    required List<String> imageUrls,
+  }) async {
     final uid = _communityAccount(this, session);
     final images = _listOfMaps(original['images']);
     final selected = images
@@ -5408,7 +5276,7 @@ class HikerCircleFirebaseRepository {
         'Only existing post photos can be retained.',
       );
     }
-    await _communityCall(this, 'editCommunityPost', {
+    final result = await _communityCall(this, 'editCommunityPost', {
       'postId': original['postId'],
       'caption': caption,
       'retainedImagePaths': selected.map((image) => image['path']).toList(),
@@ -5423,6 +5291,13 @@ class HikerCircleFirebaseRepository {
     } catch (_) {
       // The edit is committed even if this phone cannot invalidate its cache.
     }
+    return {
+      ...original,
+      'caption': caption.trim(),
+      'images': selected,
+      'imageUrls': imageUrls,
+      'updatedAtMillis': result['updatedAtMillis'],
+    };
   }
 
   /// Computes moderate community post.
@@ -5483,6 +5358,7 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
     required List<AchievementMetricEvent> events,
   }) async {
+    await AchievementCatalog.load();
     await _localDatabase.updateLocalAchievementProgress(
       ownerPhoneNumber: session.phoneNumber,
       seedRows: _localAchievementSeeds(),
@@ -5497,6 +5373,7 @@ class HikerCircleFirebaseRepository {
     List<Map<String, dynamic>>? serverRows,
     bool fresh = false,
   }) async {
+    await AchievementCatalog.load();
     final rows = await _localDatabase.updateLocalAchievementProgress(
       ownerPhoneNumber: session.phoneNumber,
       seedRows: _localAchievementSeeds(),
@@ -5507,56 +5384,100 @@ class HikerCircleFirebaseRepository {
     return rows;
   }
 
-  /// Server-only approvals arrive through Firestore; banners are always local.
+  /// Watches both rule visibility and awards, so archiving never waits for the hiker's next achievement.
   Stream<List<Map<String, dynamic>>> watchUserAchievementProgress({
     required AppSession session,
   }) {
     if (!_firebaseBootstrapResult.isAvailable) return const Stream.empty();
     final uid = _userIdFor(session);
-    return _userAchievements
-        .where('userId', isEqualTo: uid)
-        .snapshots()
-        .asyncMap((snapshot) async {
-          if (!_accountStillMatches(session, uid)) {
-            return <Map<String, dynamic>>[];
+    return Stream.multi((output) {
+      List<Map<String, dynamic>>? definitions, awards;
+      var definitionsFresh = false, awardsFresh = false, closed = false;
+      var revision = 0;
+
+      /// Publishes the newest authoritative rule flags alongside this hiker's private progress.
+      Future<void> publish() async {
+        if (definitions == null || awards == null) return;
+        final generation = ++revision;
+        final currentDefinitions = [...definitions!],
+            currentAwards = [...awards!];
+        if (closed ||
+            generation != revision ||
+            !_accountStillMatches(session, uid)) {
+          return;
+        }
+        final awardsById = <String, Map<String, dynamic>>{
+          for (final row in currentAwards)
+            _stringFrom(row['achievementId']): row,
+        };
+        final known = currentDefinitions
+            .map((row) => row['achievementId'])
+            .toSet();
+        // Keep historical points for removed definitions, but never resurrect their cards from stale awards.
+        for (final row in currentAwards) {
+          if (known.add(row['achievementId']) && row['isUnlocked'] == true) {
+            currentDefinitions.add({
+              ...row,
+              'title': row['title'] ?? row['achievementTitle'],
+              'isActive': false,
+            });
           }
-          final cached = await loadCachedAchievementProgress(session: session);
-          final definitions = [...?cached?.rows];
-          if (definitions.isEmpty) definitions.addAll(_achievementSeedRows());
-          final known = definitions.map((row) => row['achievementId']).toSet();
-          final awards = <String, Map<String, dynamic>>{};
-          for (final document in snapshot.docs) {
-            final award = {
-              ...document.data(),
-              'userAchievementId': document.id,
-            };
-            final id = _stringFrom(award['achievementId']);
-            if (id.isEmpty) continue;
-            awards[id] = award;
-            if (known.add(id)) {
-              definitions.add({
-                'achievementId': id,
-                'title': award['achievementTitle'],
-                'rewardPoints': award['pointsAwarded'],
-                'rewardType': award['rewardType'],
-                'metricKey': award['metricKey'],
-                'targetCount': award['targetCount'],
-                'isActive': true,
-              });
-            }
-          }
-          if (!_accountStillMatches(session, uid)) {
-            return <Map<String, dynamic>>[];
-          }
-          return _mergeAchievementRows(
-            session: session,
-            serverRows: _achievementProgressFrom(
-              achievements: definitions,
-              userAwardsByAchievementId: awards,
-            ),
-            fresh: !snapshot.metadata.isFromCache,
-          );
-        });
+        }
+        final rows = await _mergeAchievementRows(
+          session: session,
+          serverRows: _achievementProgressFrom(
+            achievements: currentDefinitions,
+            userAwardsByAchievementId: awardsById,
+          ),
+          fresh: definitionsFresh && awardsFresh,
+        );
+        if (!closed &&
+            generation == revision &&
+            _accountStillMatches(session, uid)) {
+          output.add(rows);
+        }
+      }
+
+      /// Retains cached content if a listener temporarily loses access or connectivity.
+      void report(Object error, StackTrace stack) {
+        if (!closed) output.addError(error, stack);
+      }
+
+      final definitionSubscription = _achievements
+          .orderBy('sortOrder')
+          .snapshots()
+          .listen((snapshot) {
+            definitions = snapshot.docs
+                .map((doc) => {'achievementId': doc.id, ...doc.data()})
+                .toList();
+            definitionsFresh = !snapshot.metadata.isFromCache;
+            unawaited(
+              publish().catchError(
+                (Object error, StackTrace stack) => report(error, stack),
+              ),
+            );
+          }, onError: report);
+      final awardSubscription = _userAchievements
+          .where('userId', isEqualTo: uid)
+          .snapshots()
+          .listen((snapshot) {
+            awards = snapshot.docs
+                .map((doc) => {'userAchievementId': doc.id, ...doc.data()})
+                .toList();
+            awardsFresh = !snapshot.metadata.isFromCache;
+            unawaited(
+              publish().catchError(
+                (Object error, StackTrace stack) => report(error, stack),
+              ),
+            );
+          }, onError: report);
+      output.onCancel = () {
+        closed = true;
+        revision++;
+        unawaited(definitionSubscription.cancel());
+        unawaited(awardSubscription.cancel());
+      };
+    });
   }
 
   /// Loads cached achievement progress.
@@ -5787,6 +5708,7 @@ class HikerCircleFirebaseRepository {
     final snapshot = await _achievements.orderBy('sortOrder').get();
     return snapshot.docs
         .map((document) => {'achievementId': document.id, ...document.data()})
+        .where(AchievementCatalog.visible)
         .toList();
   }
 
@@ -5845,11 +5767,7 @@ class HikerCircleFirebaseRepository {
   }
 
   /// Computes achievement seed rows.
-  List<Map<String, dynamic>> _achievementSeedRows() {
-    return _achievementSeeds.entries.map((entry) {
-      return {'achievementId': entry.key, ...entry.value};
-    }).toList();
-  }
+  List<Map<String, dynamic>> _achievementSeedRows() => AchievementCatalog.seeds;
 
   /// Computes achievement progress from.
   List<Map<String, dynamic>> _achievementProgressFrom({
@@ -5857,13 +5775,18 @@ class HikerCircleFirebaseRepository {
     required Map<String, Map<String, dynamic>> userAwardsByAchievementId,
   }) {
     final rows = achievements
+        .where((row) {
+          final award = userAwardsByAchievementId[row['achievementId']];
+          return AchievementCatalog.visible(row) ||
+              award?['isUnlocked'] == true ||
+              award?['awardedAt'] != null ||
+              award?['awardedAtLocal'] != null;
+        })
         .map((achievement) {
           final achievementId = _stringFrom(achievement['achievementId']);
           final award = userAwardsByAchievementId[achievementId];
           final isActive = achievement['isActive'] != false;
-          if (!isActive && award == null) {
-            return <String, dynamic>{};
-          }
+
           final awardedAt = award == null
               ? null
               : _dateFromValue(award['awardedAt']) ??
@@ -5897,6 +5820,7 @@ class HikerCircleFirebaseRepository {
                 : condition,
             'category': category.isEmpty ? 'Safety' : category,
             'iconName': iconName.isEmpty ? 'emoji_events' : iconName,
+            ...AchievementCatalog.content(achievement),
             'rewardPoints': _intFrom(achievement['rewardPoints']),
             'pointsAwarded': isUnlocked
                 ? (_intFrom(award?['pointsAwarded']) > 0
@@ -5966,6 +5890,7 @@ class HikerCircleFirebaseRepository {
         return {
           ...row,
           'authorProfileLoaded': true,
+          'authorIsAdmin': profile['isAdmin'] == true,
           'authorPhoneNumber': _stringFrom(profile['phoneNumber']),
           'authorHandle': _stringFrom(profile['handle']),
           if (username.isNotEmpty) 'authorName': username,
@@ -6692,20 +6617,6 @@ class HikerCircleFirebaseRepository {
       return value;
     }
     return '${value[0].toUpperCase()}${value.substring(1)}';
-  }
-
-  /// Computes location label for hazard report.
-  String _locationLabelForHazardReport(Map<String, dynamic> report) {
-    final locationLabel = _stringFrom(report['locationLabel']);
-    if (locationLabel.isNotEmpty) {
-      return locationLabel;
-    }
-    final latitude = report['latitude'];
-    final longitude = report['longitude'];
-    if (latitude is num && longitude is num) {
-      return '${latitude.toDouble().toStringAsFixed(5)}, ${longitude.toDouble().toStringAsFixed(5)}';
-    }
-    return _stringFrom(report['trailName']);
   }
 
   /// Computes new trail id.

@@ -3,21 +3,8 @@
 
 const crypto = require('crypto');
 
-const MALAYSIA_STATE_SLUGS = new Set([
-  'johor',
-  'kedah',
-  'kelantan',
-  'malacca',
-  'negeri-sembilan',
-  'pahang',
-  'penang',
-  'perak',
-  'perlis',
-  'sabah',
-  'sarawak',
-  'selangor',
-  'terengganu',
-]);
+const catalog = require('./achievement_catalog');
+const MALAYSIA_STATE_SLUGS = new Set(catalog.rules.malaysiaStates);
 
 function achievementSlug(value) {
   return String(value || '')
@@ -40,7 +27,7 @@ function malaysiaStateSlug(value) {
 }
 
 // completedHikeAchievementEvents: Use stable event keys so retries cannot award the same hike, trail, or state twice.
-function completedHikeAchievementEvents({ sessionId, trailId, state, country }) {
+function completedHikeAchievementEvents({ sessionId, trailId, state, country, distanceMetres = 0, durationMinutes = 0 }) {
   const normalizedSessionId = String(sessionId || '').trim();
   if (!normalizedSessionId) return [];
 
@@ -65,6 +52,13 @@ function completedHikeAchievementEvents({ sessionId, trailId, state, country }) 
       eventKey: `malaysia-state-hiked:${normalizedState}`,
     });
   }
+  for (const [metricKey, increment, prefix] of [
+    ['completed_hike_distance_m',distanceMetres,'completed-distance'],
+    ['completed_hike_duration_min',durationMinutes,'completed-duration']]) {
+    if (Number.isInteger(increment) && increment > 0 && increment <= catalog.metricFor(metricKey).maxIncrement) {
+      events.push({metricKey,eventKey:`${prefix}:${normalizedSessionId}`,increment});
+    }
+  }
   return events;
 }
 
@@ -77,7 +71,8 @@ function achievementProgressHash({ definitions = [], awards = [] }) {
     .map((definition) => {
       const achievementId = String(definition.achievementId || '');
       const award = awardsById.get(achievementId);
-      if (definition.isActive === false && !award) return null;
+      const historicAward = award?.isUnlocked === true || award?.awardedAt != null || award?.awardedAtLocal != null;
+      if ((!catalog.visible(definition) && !historicAward) || definition.isActive === false && !award) return null;
       const rewardType = String(definition.rewardType || '') === 'cumulative'
         ? 'cumulative'
         : 'one_time';
@@ -101,6 +96,7 @@ function achievementProgressHash({ definitions = [], awards = [] }) {
       String(definition.condition || ''),
       String(definition.category || ''),
       String(definition.iconName || ''),
+      ...Object.values(catalog.contentFor(definition)),
       rewardPoints,
       isUnlocked
         ? (Number(award?.pointsAwarded || 0) > 0

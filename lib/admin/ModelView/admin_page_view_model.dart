@@ -102,27 +102,3 @@ class _AdminPageStateViewModel extends ChangeNotifier {
     }
   }
 }
-
-/// Owns the state and non-visual actions of _AchievementEditorSheet.
-class _AchievementEditorSheetStateViewModel extends ChangeNotifier {
-  /// Creates achievement editor sheet state view model.
-  _AchievementEditorSheetStateViewModel();
-
-  bool _disposed = false;
-
-  /// Whether this instance is still active.
-  bool get mounted => !_disposed;
-
-  /// Computes positive integer validator.
-  String? commandPositiveIntegerValidator(String? value) {
-    final parsed = int.tryParse(value?.trim() ?? '');
-    return parsed == null || parsed <= 0 ? 'Enter a positive number.' : null;
-  }
-
-  /// Releases resources owned by this instance.
-  @override
-  void dispose() {
-    _disposed = true;
-    super.dispose();
-  }
-}

@@ -2,6 +2,7 @@
 // offline hike, SOS, chat and cache records.
 import '../../core/services/content_hash.dart';
 import '../../achievements/Model/achievement_progress.dart';
+import '../../achievements/Model/achievement_catalog.dart';
 import '../../achievements/Model/achievement_notification.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -448,6 +449,7 @@ class LocalSessionDatabase {
   Future<LocalAchievementProgressCache?> loadAchievementProgressCache({
     required String ownerPhoneNumber,
   }) async {
+    await AchievementCatalog.load();
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty) return null;
     final database = await _openDatabase();
@@ -464,6 +466,10 @@ class LocalSessionDatabase {
       final achievements = decoded
           .whereType<Map>()
           .map((row) => Map<String, dynamic>.from(row))
+          .where(
+            (row) =>
+                AchievementCatalog.visible(row) || row['isUnlocked'] == true,
+          )
           .toList(growable: false);
       if (achievements.isEmpty) return null;
       return LocalAchievementProgressCache(
@@ -2338,7 +2344,7 @@ class LocalSessionDatabase {
 
     final opening = SecureLocalDatabase.open(
       databasePath,
-      version: 33,
+      version: 35,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2716,6 +2722,26 @@ class LocalSessionDatabase {
               whereArgs: [row['owner_phone_number'], row['upcoming_hike_id']],
             );
           }
+        }
+        if (oldVersion < 35) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'pending_messages',
+            columnName: 'shared_post_json',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+        }
+        if (oldVersion < 34) {
+          // Remove only the retired assistant's conversation and clear markers.
+          await _createOfflineFirstTables(database);
+          await database.delete(
+            'local_preferences',
+            where: 'preference_key IN (?, ?)',
+            whereArgs: [
+              'assistant_conversation_v1',
+              'assistant_conversation_cleared_v1',
+            ],
+          );
         }
       },
     );
@@ -3177,6 +3203,7 @@ class LocalSessionDatabase {
         retry_count INTEGER NOT NULL DEFAULT 0,
         firestore_doc_id TEXT DEFAULT '',
         attachment_json TEXT DEFAULT '',
+        shared_post_json TEXT NOT NULL DEFAULT '',
         owner_phone_number TEXT NOT NULL DEFAULT '',
         updated_at TEXT,
         last_error TEXT NOT NULL DEFAULT ''
@@ -3548,6 +3575,7 @@ class LocalSessionDatabase {
     String firestoreDocId = '',
     String sendStatus = 'pending',
     String? ownerPhoneNumber,
+    Map<String, dynamic>? sharedPost,
   }) async {
     final database = await _openDatabase();
     await database.insert('pending_messages', {
@@ -3556,6 +3584,7 @@ class LocalSessionDatabase {
       'sender_phone': senderPhone,
       'sender_name': senderName,
       'text': text,
+      'shared_post_json': sharedPost == null ? '' : jsonEncode(sharedPost),
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'send_status': sendStatus,
       'retry_count': 0,

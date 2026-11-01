@@ -145,68 +145,18 @@ class _AdminDashboardCard extends StatelessWidget {
   );
 }
 
-/// Displays the hazard reports section.
-class _HazardReportsSection extends StatelessWidget {
-  /// Creates hazard reports section.
-  const _HazardReportsSection({
-    required this.hazardReports,
-    required this.isSaving,
-    required this.onApprove,
-    required this.onReject,
-  });
-
-  final List<Map<String, dynamic>> hazardReports;
-  final bool isSaving;
-  final ValueChanged<Map<String, dynamic>> onApprove;
-  final ValueChanged<Map<String, dynamic>> onReject;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SectionLabel(label: 'Hazard Reports'),
-        const SizedBox(height: 8),
-        Column(
-          children: [
-            if (hazardReports.isEmpty)
-              const _EmptyState(message: 'No hazard reports to review.')
-            else
-              for (var index = 0; index < hazardReports.length; index++) ...[
-                AdminPanel(
-                  padding: EdgeInsets.zero,
-                  child: _HazardAdminRow(
-                    report: hazardReports[index],
-                    isSaving: isSaving,
-                    onApprove: () => onApprove(hazardReports[index]),
-                    onReject: () => onReject(hazardReports[index]),
-                  ),
-                ),
-                if (index != hazardReports.length - 1)
-                  const SizedBox(height: 12),
-              ],
-          ],
-        ),
-      ],
-    );
-  }
-}
-
 /// Displays the achievement management section.
 class _AchievementManagementSection extends StatelessWidget {
   /// Creates achievement management section.
   const _AchievementManagementSection({
     required this.achievements,
     required this.isSaving,
-    required this.onAdd,
     required this.onEdit,
     required this.onToggleActive,
   });
 
   final List<Map<String, dynamic>> achievements;
   final bool isSaving;
-  final VoidCallback onAdd;
   final ValueChanged<Map<String, dynamic>> onEdit;
   final ValueChanged<Map<String, dynamic>> onToggleActive;
 
@@ -222,11 +172,6 @@ class _AchievementManagementSection extends StatelessWidget {
         Row(
           children: [
             const Expanded(child: SectionLabel(label: 'Achievement Rules')),
-            FilledButton.icon(
-              onPressed: isSaving ? null : onAdd,
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('Add rule'),
-            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -282,7 +227,7 @@ class _AchievementAdminRow extends StatelessWidget {
     final isActive = achievement['isActive'] != false;
     final isCumulative = _stringFrom(achievement['rewardType']) == 'cumulative';
     final target = isCumulative
-        ? 'Target ${_intFrom(achievement['targetCount'])}'
+        ? 'Target ${AchievementCatalog.quantity(_stringFrom(achievement['metricKey']), _intFrom(achievement['targetCount']))}'
         : 'One-time';
     return Padding(
       padding: const EdgeInsets.all(14),
@@ -323,7 +268,7 @@ class _AchievementAdminRow extends StatelessWidget {
                       ),
                     ),
                     _AdminStatusPill(
-                      label: isActive ? 'Active' : 'Archived',
+                      label: isActive ? 'Active' : 'Inactive',
                       color: isActive
                           ? _AdminColors.green
                           : _AdminColors.secondaryTextFor(context),
@@ -367,77 +312,11 @@ class _AchievementAdminRow extends StatelessWidget {
               IconButton(
                 tooltip: isActive
                     ? 'Archive achievement'
-                    : 'Activate achievement',
+                    : 'Unarchive achievement',
                 onPressed: isSaving ? null : onToggleActive,
                 icon: Icon(
                   isActive ? Icons.archive_rounded : Icons.unarchive_rounded,
                 ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Displays the hazard admin row.
-class _HazardAdminRow extends StatelessWidget {
-  /// Creates hazard admin row.
-  const _HazardAdminRow({
-    required this.report,
-    required this.isSaving,
-    required this.onApprove,
-    required this.onReject,
-  });
-
-  final Map<String, dynamic> report;
-  final bool isSaving;
-  final VoidCallback onApprove;
-  final VoidCallback onReject;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    final status = _stringFrom(report['status']).isEmpty
-        ? 'unverified'
-        : _stringFrom(report['status']);
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _CircleIcon(icon: Icons.report_problem_rounded),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _AdminTextBlock(
-                  title: _stringFrom(report['hazardType']).isEmpty
-                      ? 'Hazard report'
-                      : _stringFrom(report['hazardType']),
-                  subtitle:
-                      '${_stringFrom(report['trailName'])} - ${_stringFrom(report['severity']).toUpperCase()} - $status',
-                  body: _stringFrom(report['description']),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed: isSaving ? null : onApprove,
-                icon: const Icon(Icons.verified_rounded),
-                label: const Text('Approve'),
-              ),
-              OutlinedButton.icon(
-                onPressed: isSaving ? null : onReject,
-                icon: const Icon(Icons.block_rounded),
-                label: const Text('Reject'),
               ),
             ],
           ),

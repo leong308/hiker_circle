@@ -837,7 +837,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     final seenPhones = msg.seenBy;
     final senderPhone = msg.senderPhone;
     final unseenPhones = allPhones
-        .where((p) => !seenPhones.contains(p))
+        .where((p) => p != senderPhone && !seenPhones.contains(p))
         .toList();
     final seenOthers = seenPhones.where((p) => p != senderPhone).toList();
     final totalOthers = allPhones.where((p) => p != senderPhone).length;
@@ -900,9 +900,6 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                     phone: phone,
                     isYou: phone == widget.session.phoneNumber,
                     username: widget.session.username,
-                    onReminder: phone == widget.session.phoneNumber
-                        ? null
-                        : () => _sendReminder(phone),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -934,9 +931,6 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                     phone: phone,
                     isYou: phone == widget.session.phoneNumber,
                     username: widget.session.username,
-                    onReminder: phone == widget.session.phoneNumber
-                        ? null
-                        : () => _sendReminder(phone),
                   ),
                 ),
             ],
@@ -1200,6 +1194,21 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                               isFirstInBlock: isFirstInBlock,
                               isLastInBlock: isLastInBlock,
                               currentUserPhotoBytes: widget.session.photoBytes,
+                              onOpenSharedPost: msg.sharedPost == null
+                                  ? null
+                                  : () => Navigator.of(context).push(
+                                      MaterialPageRoute<void>(
+                                        builder: (_) => Scaffold(
+                                          body: CirclePage(
+                                            session: widget.session,
+                                            hikerCircleRepository:
+                                                widget.repository,
+                                            initialPostId:
+                                                msg.sharedPost!.postId,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                               onTickTap: isMe && !isPending
                                   ? () => _showReadReceipts(msg)
                                   : null,
@@ -1560,6 +1569,7 @@ class _MessageBubble extends StatelessWidget {
     this.isLastInBlock = true,
     this.currentUserPhotoBytes,
     this.onTickTap,
+    this.onOpenSharedPost,
   });
 
   final ChatMessage message;
@@ -1573,6 +1583,7 @@ class _MessageBubble extends StatelessWidget {
   final bool isLastInBlock;
   final Uint8List? currentUserPhotoBytes;
   final VoidCallback? onTickTap;
+  final VoidCallback? onOpenSharedPost;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -1694,7 +1705,12 @@ class _MessageBubble extends StatelessWidget {
                           if (message.text.isNotEmpty)
                             const SizedBox(height: 8),
                         ],
-                        if (message.text.isNotEmpty)
+                        if (message.sharedPost != null)
+                          SharedCommunityPostCard(
+                            post: message.sharedPost!,
+                            onOpen: onOpenSharedPost ?? () {},
+                          )
+                        else if (message.text.isNotEmpty)
                           _LinkedMessageText(
                             text: message.text,
                             textColor: isMe
@@ -1723,7 +1739,14 @@ class _MessageBubble extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 4),
-                            statusIndicator,
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: onTickTap,
+                              child: Padding(
+                                padding: const EdgeInsets.all(3),
+                                child: statusIndicator,
+                              ),
+                            ),
                           ],
                         ),
                       ],

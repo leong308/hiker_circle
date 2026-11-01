@@ -89,6 +89,12 @@ abstract final class PreferredTimeZone {
     );
   }
 
+  /// Converts an instant for compact labels using the selected app time zone.
+  static DateTime localDateTime(DateTime instant, String? timeZoneId) {
+    ensureInitialized();
+    return time_zone.TZDateTime.from(instant.toUtc(), _location(timeZoneId));
+  }
+
   /// Formats instant.
   static String formatInstant(DateTime instant, String? timeZoneId) {
     ensureInitialized();

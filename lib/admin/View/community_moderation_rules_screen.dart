@@ -114,7 +114,7 @@ class _ModerationRulesSheet extends StatelessWidget {
                   icon: Icons.checklist_rounded,
                   title: 'Review categories',
                   description:
-                      'Categories describe the concern, while the source label explains how it was detected. A category alone does not mean Gemini checked the content.',
+                      'Categories describe the concern, while the source label explains how it was detected. A category alone does not identify which rule matched.',
                   child: _ReviewCategoryList(),
                 ),
                 const SizedBox(height: 16),
@@ -169,7 +169,7 @@ class _DetectionSources extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Text(
-          'The server checks public text every 30 minutes. Sensitive text stays in the app backend and is not sent to Gemini by this checker.',
+          'The server checks public text every 30 minutes. Checks run within HikerCircle’s backend using the rules below.',
           style: TextStyle(color: AdminUi.muted(context), height: 1.5),
         ),
         const SizedBox(height: 14),
@@ -190,14 +190,8 @@ class _DetectionSources extends StatelessWidget {
         ),
         Divider(color: AdminUi.border(context), height: 24),
         const _SourceLabel(
-          icon: Icons.auto_awesome_outlined,
-          label: 'Gemini',
-          description:
-              'Shown only when a saved flag identifies Gemini. The current checker does not use Gemini.',
-        ),
-        const _SourceLabel(
           icon: Icons.history_rounded,
-          label: 'Local rules / Source unavailable',
+          label: 'Earlier checks / Source unavailable',
           description:
               'Older flags may not include the exact rule or a recognized source. Their original reason remains available.',
         ),

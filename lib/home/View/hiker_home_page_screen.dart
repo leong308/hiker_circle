@@ -1116,7 +1116,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         if (_presentedTeamReadinessKeys.contains(entry.key)) {
           continue;
         }
-        await _openTeamHikeInvite(entry.value.id);
+        await _openTeamHikeInvite(entry.value.id, allowReopen: false);
       }
     } finally {
       _isDrainingTeamReadiness = false;
@@ -1998,13 +1998,17 @@ class _HikerHomePageState extends State<HikerHomePage>
       }
       return;
     }
-    if (uri.host == 'upcoming-hike' && uri.path == '/view') {
+    if (uri.host == 'upcoming-hike' &&
+        const ['/view', '/details'].contains(uri.path)) {
       final hikeId = uri.queryParameters['upcomingHikeId'] ?? '';
       if (hikeId.isNotEmpty) {
         unawaited(
           _openUpcomingHikeFromDeepLink(
             hikeId,
-            showChargingReminder: uri.queryParameters['chargePhone'] == '1',
+            showChargingReminder:
+                uri.path == '/view' &&
+                uri.queryParameters['chargePhone'] == '1',
+            showJoinDetails: uri.path == '/details',
             hazardId: uri.queryParameters['hazardId'],
           ),
         );
@@ -2101,7 +2105,13 @@ class _HikerHomePageState extends State<HikerHomePage>
         : await _HikerHomePageDataActions.loadAchievementNotification(
             hikerCircleRepository.localDatabase,
           )(widget.session.phoneNumber, id);
-    if (!mounted || row == null || row['isUnlocked'] != true) return;
+    if (!mounted ||
+        row == null ||
+        row['isUnlocked'] != true ||
+        !AchievementCatalog.visible(row) ||
+        (!widget.session.isAdmin && row['isActive'] == false)) {
+      return;
+    }
     final open = await showAchievementUnlockedPopup(context, row);
     if (!mounted || !open) return;
     await _presentOpenEarnedAchievementEffect1();
@@ -2132,11 +2142,14 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<void> _openUpcomingHikeFromDeepLink(
     String hikeId, {
     bool showChargingReminder = false,
+    bool showJoinDetails = false,
     String? hazardId,
   }) async {
     // Cold-start notification callbacks and the native link channel can both
     // deliver the same tap. Keep one instance of each destination per hike.
     final chargingOnly = showChargingReminder && hazardId == null;
+    // Both the upgraded FCM link and an older native /view callback can arrive
+    // for one tap. Share the same key so only one hike destination is presented.
     final openKey =
         '$hikeId:${chargingOnly ? "charge" : hazardId ?? "details"}';
     if (!mounted || !_openingUpcomingHikeDeepLinkIds.add(openKey)) {
@@ -2153,6 +2166,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       await _openUpcomingHikeNotificationDestination(
         hikeId,
         hazardId: hazardId,
+        showJoinDetails: showJoinDetails,
       );
     } catch (error) {
       debugPrint('Unable to open the upcoming hike reminder: $error');
@@ -2171,6 +2185,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<void> _openUpcomingHikeNotificationDestination(
     String hikeId, {
     String? hazardId,
+    bool showJoinDetails = false,
   }) async {
     await _upcomingPlanningRestoreFuture;
     await _waitForActiveHikeRestore();
@@ -2181,7 +2196,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     for (final state in localStates) {
       // Hazard taps recheck the shared schedule; saved gear remains in the
       // local preparation resolver, but obsolete membership must not grant UI actions.
-      if (hazardId != null) break;
+      if (hazardId != null || showJoinDetails) break;
       if (state.upcomingHike.id != hikeId &&
           'local_pending_${state.creationKey}' != hikeId) {
         continue;
@@ -2262,11 +2277,15 @@ class _HikerHomePageState extends State<HikerHomePage>
       hike,
       availableTrails: notificationTrails,
       hazardId: hazardId,
+      showJoinDetails: showJoinDetails,
     );
   }
 
   /// Opens upcoming hike join request.
-  Future<void> _openUpcomingHikeJoinRequest(String requestId) async {
+  Future<void> _openUpcomingHikeJoinRequest(
+    String requestId, {
+    bool allowReopen = false,
+  }) async {
     final normalizedId = requestId.trim();
     final now = DateTime.now();
     _recentUpcomingJoinRequestAttempts.removeWhere(
@@ -2277,8 +2296,10 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (!mounted ||
         !RegExp(r'^join_[a-f0-9]{48}$').hasMatch(normalizedId) ||
         _activeUpcomingJoinRequestReviewId == normalizedId ||
-        _completedUpcomingJoinRequestReviewIds.contains(normalizedId) ||
-        (recentAttempt != null &&
+        (!allowReopen &&
+            _completedUpcomingJoinRequestReviewIds.contains(normalizedId)) ||
+        (!allowReopen &&
+            recentAttempt != null &&
             now.difference(recentAttempt) < const Duration(seconds: 30))) {
       return;
     }
@@ -3105,9 +3126,8 @@ class _HikerHomePageState extends State<HikerHomePage>
             loadRouteAnalysis: draft.trail.isUnlisted
                 ? null
                 : (force) => _analyzeGearRoute(plan, force: force),
-            loadWeather: () => HikeBriefingWeatherService.shared.fetch(
-              plan.trail.latitude,
-              plan.trail.longitude,
+            loadWeather: () => HikeBriefingWeatherService.shared.fetchForTrail(
+              plan.trail,
               force: true,
             ),
           ),
@@ -3617,7 +3637,20 @@ class _HikerHomePageState extends State<HikerHomePage>
     UpcomingHike hike, {
     Iterable<Trail>? availableTrails,
     String? hazardId,
+    bool showJoinDetails = false,
   }) async {
+    if (hike.opensJoinDetailsFor(
+      widget.session.phoneNumber,
+      discovery: showJoinDetails,
+    )) {
+      await showUpcomingHikePopup(
+        context,
+        hike: hike,
+        session: widget.session,
+        repository: hikerCircleRepository,
+      );
+      return;
+    }
     if (activeHike?.sourceUpcomingHikeId == hike.id) {
       _revealActiveHike();
       return;
@@ -3654,6 +3687,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       } else {
         final team = await hikerCircleRepository.loadTeamHikeForUpcoming(
           hike.id,
+          phoneNumber: widget.session.phoneNumber,
         );
         if (team != null) {
           await _openTeamHikeInvite(team.id);
@@ -3735,11 +3769,8 @@ class _HikerHomePageState extends State<HikerHomePage>
                     loadBatteryLevel: _readBatteryLevel,
                     loadRouteAnalysis: (force) =>
                         _analyzeGearRoute(plan, force: force),
-                    loadWeather: () => HikeBriefingWeatherService.shared.fetch(
-                      plan.trail.latitude,
-                      plan.trail.longitude,
-                      force: true,
-                    ),
+                    loadWeather: () => HikeBriefingWeatherService.shared
+                        .fetchForTrail(plan.trail, force: true),
                     onCancel: () => _cancelUpcomingHike(hike),
                   ),
                 ),
@@ -3996,40 +4027,19 @@ class _HikerHomePageState extends State<HikerHomePage>
     required HikeSessionDraft draft,
     PlannedHike? preparation,
   }) async {
-    var teamLaunch =
-        draft.hikeType == HikeType.team && draft.teamBuddies.isNotEmpty;
+    final resolved = await _screenModel.commandResolveUpcomingStart(
+      hike,
+      draft,
+    );
+    if (!mounted) return false;
+    hike = resolved.hike;
+    draft = resolved.draft;
+    final teamLaunch = resolved.isTeam;
     if (!teamLaunch &&
         (preparation == null || !preparation.requiredGearReady)) {
       await _showUpcomingHikeDetails(hike);
       return activeHike?.sourceUpcomingHikeId == hike.id;
     }
-    try {
-      final current =
-          await _HikerHomePageDataActions.loadParticipantUpcomingHikeForSafety(
-            hikerCircleRepository,
-          )(hikeId: hike.id, session: widget.session);
-      if (current == null) {
-        throw const HikerCircleFirebaseRepositoryException(
-          'This hike is no longer upcoming.',
-        );
-      }
-      hike = current;
-      final currentRoster = _draftForUpcomingHike(current, draft.trail);
-      draft = draft.copyWith(
-        hikeType: currentRoster.hikeType,
-        teamBuddies: currentRoster.teamBuddies,
-        clearSoloDistanceAcknowledgement:
-            draft.hikeType == HikeType.team &&
-            currentRoster.hikeType == HikeType.solo,
-      );
-    } on HikerCircleFirebaseRepositoryException catch (error) {
-      if (!error.allowsOfflineFallback) rethrow;
-      // The existing offline start remains available. The report gate below
-      // requires explicit consent whenever current reports cannot be fetched.
-    }
-    if (!mounted) return false;
-    teamLaunch =
-        draft.hikeType == HikeType.team && draft.teamBuddies.isNotEmpty;
     if (preparation != null) {
       draft = _applyReviewedPreparation(draft, preparation);
     }
@@ -4231,7 +4241,10 @@ class _HikerHomePageState extends State<HikerHomePage>
   String? _navigatingTeamSessionId;
 
   /// Opens team hike invite.
-  Future<void> _openTeamHikeInvite(String teamHikeSessionId) async {
+  Future<void> _openTeamHikeInvite(
+    String teamHikeSessionId, {
+    bool allowReopen = true,
+  }) async {
     if (_navigatingTeamSessionId == teamHikeSessionId) {
       return;
     }
@@ -4258,9 +4271,13 @@ class _HikerHomePageState extends State<HikerHomePage>
         );
       }
       final readinessKey = _teamReadinessKey(pendingSession);
-      if (readinessKey != null &&
-          !_presentedTeamReadinessKeys.add(readinessKey)) {
-        return;
+      if (readinessKey != null) {
+        if (!_screenModel.teamReadinessNavigation.claim(
+          readinessKey,
+          allowReopen: allowReopen,
+        )) {
+          return;
+        }
       }
       Trail? trail = pendingSession.sharedDraft?.trail;
       for (final candidate in trails) {
@@ -5353,44 +5370,51 @@ class _HikerHomePageState extends State<HikerHomePage>
                 ))
             ? plannedHike
             : null;
-        return HomeDashboardPage(
-          phoneNumber: widget.session.phoneNumber,
-          myUpcomingHikes: myUpcomingHikes,
-          plannedHike: activePlannedHike,
-          trails: trails,
-          isLoadingTrails: isLoadingLiveData,
-          activeHike: activeHike,
-          isVisible: selectedTabIndex == 0,
-          onStartHike: _startHikeFromDashboard,
-          onFindHike: () => _openFindHike(),
-          onTapUpcomingHike: _showUpcomingHikeDetails,
-          onOpenTrailDetail: openTrailDetail,
-          onAddTrailByAdmin: widget.session.isAdmin
-              ? () => unawaited(addTrailByAdminFromHome())
-              : null,
-          onReviewTrailRequestsByAdmin:
-              widget.session.isAdmin && _hasPendingUndiscoveredTrailRequests
-              ? () => unawaited(_openUndiscoveredTrailRequests())
-              : null,
-          onEditTrailByAdmin: widget.session.isAdmin
-              ? editTrailByAdminFromHome
-              : null,
-          onDeleteTrailByAdmin: widget.session.isAdmin
-              ? deleteTrailByAdminFromHome
-              : null,
-          onActiveHikeChanged: (updatedHike) {
-            setState(() {
-              activeHike = updatedHike;
-            });
-            _syncActiveHikeServices(updatedHike, forceLiveStatus: true);
-          },
-          onPlannedHikeChanged: _updatePlannedHike,
-          onCheckInRequested: checkInActiveHike,
-          onPingTeamMember: _pingTeamMember,
-          onEndHike: () => unawaited(_endActiveHikeSession()),
-          fallStillnessSnapshot: fallStillnessMonitor.snapshot,
-          onCancelFallStillnessSos: () =>
-              _cancelFallStillnessSos('Phone tap response received'),
+        return UpcomingHikeRequestHost(
+          session: widget.session,
+          repository: hikerCircleRepository,
+          hikes: myUpcomingHikes,
+          visible: selectedTabIndex == 0 && activeHike == null,
+          onReview: (id) => _openUpcomingHikeJoinRequest(id, allowReopen: true),
+          child: HomeDashboardPage(
+            phoneNumber: widget.session.phoneNumber,
+            myUpcomingHikes: myUpcomingHikes,
+            plannedHike: activePlannedHike,
+            trails: trails,
+            isLoadingTrails: isLoadingLiveData,
+            activeHike: activeHike,
+            isVisible: selectedTabIndex == 0,
+            onStartHike: _startHikeFromDashboard,
+            onFindHike: () => _openFindHike(),
+            onTapUpcomingHike: _showUpcomingHikeDetails,
+            onOpenTrailDetail: openTrailDetail,
+            onAddTrailByAdmin: widget.session.isAdmin
+                ? () => unawaited(addTrailByAdminFromHome())
+                : null,
+            onReviewTrailRequestsByAdmin:
+                widget.session.isAdmin && _hasPendingUndiscoveredTrailRequests
+                ? () => unawaited(_openUndiscoveredTrailRequests())
+                : null,
+            onEditTrailByAdmin: widget.session.isAdmin
+                ? editTrailByAdminFromHome
+                : null,
+            onDeleteTrailByAdmin: widget.session.isAdmin
+                ? deleteTrailByAdminFromHome
+                : null,
+            onActiveHikeChanged: (updatedHike) {
+              setState(() {
+                activeHike = updatedHike;
+              });
+              _syncActiveHikeServices(updatedHike, forceLiveStatus: true);
+            },
+            onPlannedHikeChanged: _updatePlannedHike,
+            onCheckInRequested: checkInActiveHike,
+            onPingTeamMember: _pingTeamMember,
+            onEndHike: () => unawaited(_endActiveHikeSession()),
+            fallStillnessSnapshot: fallStillnessMonitor.snapshot,
+            onCancelFallStillnessSos: () =>
+                _cancelFallStillnessSos('Phone tap response received'),
+          ),
         );
       case 'SOS':
         return SosPage(
@@ -5422,9 +5446,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           session: widget.session,
           phoneNumber: widget.session.phoneNumber,
           onSignOut: _signOutAndClearActiveHike,
-          onStartHike: (trail) => openStartHikeWizard(trail),
           onRescheduleExpiredHike: _rescheduleExpiredHike,
-          onOpenSos: openSosTab,
           onOpenNotificationLink: (link) =>
               _handleDeepLink(link, allowRepeat: true),
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
@@ -6522,19 +6544,26 @@ class _HikerHomePageState extends State<HikerHomePage>
       );
 
   /// Presents the open upcoming weather effect1 UI.
-  Future<void> _presentOpenUpcomingWeatherEffect1(UpcomingHike forecastHike) =>
-      showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        showDragHandle: true,
-        builder: (_) => HikingForecastSheet(
-          hike: forecastHike,
-          service: HikeBriefingWeatherService.shared,
-          elevationGain: plannedHike?.upcomingHikeId == forecastHike.id
-              ? plannedHike!.trail.elevationGainMeters
-              : 0,
-        ),
-      );
+  Future<void> _presentOpenUpcomingWeatherEffect1(UpcomingHike forecastHike) {
+    final trail =
+        trails
+            .where((trail) => trail.trailId == forecastHike.trailId)
+            .firstOrNull ??
+        (plannedHike?.upcomingHikeId == forecastHike.id
+            ? plannedHike?.trail
+            : null);
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => HikingForecastSheet(
+        hike: forecastHike,
+        weather: trail?.weather,
+        service: HikeBriefingWeatherService.shared,
+        elevationGain: trail?.elevationGainMeters ?? 0,
+      ),
+    );
+  }
 
   /// Presents the handle deep link effect1 UI.
   void _presentHandleDeepLinkEffect1() =>
@@ -6587,17 +6616,10 @@ class _HikerHomePageState extends State<HikerHomePage>
       if (!progressReady.isCompleted) {
         progressReady.complete(dialogContext);
       }
-      return const PopScope(
-        canPop: false,
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          child: HikerCircleLoadingToast(
-            message: 'Loading upcoming hike…',
-            detail: 'Getting the latest hike and trail details.',
-            compact: true,
-          ),
-        ),
+      return const HikerCircleLoadingDialog(
+        message: 'Loading upcoming hike…',
+        detail: 'Getting the latest hike and trail details.',
+        compact: true,
       );
     },
   );
@@ -6617,17 +6639,10 @@ class _HikerHomePageState extends State<HikerHomePage>
       if (!progressReady.isCompleted) {
         progressReady.complete(dialogContext);
       }
-      return const PopScope(
-        canPop: false,
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          child: HikerCircleLoadingToast(
-            message: 'Checking join request…',
-            detail: 'Confirming the hike and request status.',
-            compact: true,
-          ),
-        ),
+      return const HikerCircleLoadingDialog(
+        message: 'Checking join request…',
+        detail: 'Confirming the hike and request status.',
+        compact: true,
       );
     },
   );
@@ -6679,17 +6694,10 @@ class _HikerHomePageState extends State<HikerHomePage>
       if (!progressReady.isCompleted) {
         progressReady.complete(dialogContext);
       }
-      return const PopScope(
-        canPop: false,
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          child: HikerCircleLoadingToast(
-            message: 'Opening group chat…',
-            detail: 'Loading the hike team and recent messages.',
-            compact: true,
-          ),
-        ),
+      return const HikerCircleLoadingDialog(
+        message: 'Opening group chat…',
+        detail: 'Loading the hike team and recent messages.',
+        compact: true,
       );
     },
   );

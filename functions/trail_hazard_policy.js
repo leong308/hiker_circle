@@ -1,4 +1,4 @@
-// Server-owned trail issue categories and risk framing. Community evidence remains unverified until reviewed.
+// Server-owned trail issue categories, community lifecycle and risk framing.
 'use strict';
 
 const HAZARD_POLICY_VERSION = 2;
@@ -64,6 +64,18 @@ function hazardExpiry(report) {
   return classifyHazard(report?.hazardType).hazardCategory === 'Weather' && Number.isFinite(limit)
     ? Math.min(explicit, limit) : explicit;
 }
+// Group reports by the community workflow; expiry does not require a status write.
+function hazardLifecycleStage(report, now = Date.now()) {
+  const status = String(report?.status || '').trim().toLowerCase();
+  if (['rejected', 'deleted'].includes(status)) return null;
+  const count = typeof report?.resolutionCount === 'number' && Number.isFinite(report.resolutionCount)
+    ? Math.max(0, report.resolutionCount) : 0;
+  const expiry = hazardExpiry(report);
+  if (status === 'resolved' || count >= 3 || status === 'expired'
+      || (Number.isFinite(expiry) && now >= expiry)) return 'Resolved';
+  return count > 0 || (typeof report?.resolutionId === 'string' && report.resolutionId.trim())
+    ? 'Resolving' : 'Reported';
+}
 // Suppress terminal and expired reports before notifying hikers.
 function isActiveHazard(report, now = Date.now()) {
   return !!report && !['resolved', 'rejected', 'deleted', 'expired'].includes(String(report.status || '').toLowerCase())
@@ -118,6 +130,6 @@ function hazardAlertMessages(report, {duringHike = false} = {}) {
 
 module.exports = {HAZARD_POLICY_VERSION, HAZARD_CATEGORIES, TYPE_CATEGORIES, REPORT_LIFETIME_MS,
   CRITICAL_WEATHER_LIFETIME_MS, NORMAL_WEATHER_LIFETIME_MS, hazardLifetimeMs,
-  classifyHazard, dateMillis, hazardExpiry, isActiveHazard, reportCycle,
+  classifyHazard, dateMillis, hazardExpiry, hazardLifecycleStage, isActiveHazard, reportCycle,
   upcomingHazardRecipients, isUpcomingHazardHike, hazardAlertMessages,
   activeHazardRecipients, isActiveHazardHike, UPCOMING_START_GRACE_MS};
