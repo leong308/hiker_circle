@@ -174,13 +174,13 @@ Future<void> _publishCommunity(
 }) async {
   r._throwIfFirebaseUnavailable();
   final uid = _communityAccount(r, session);
-  if (caption.length > 5000 ||
+  if (caption.length > communityPostCaptionLimit ||
       images.length > 6 ||
       images.any(
         (image) => image.bytes.isEmpty || image.bytes.length > 10 * 1024 * 1024,
       )) {
     throw const HikerCircleFirebaseRepositoryException(
-      'Use up to 5,000 characters and six photos, each up to 10 MB.',
+      'Use up to $communityPostCaptionLimitLabel characters and six photos, each up to 10 MB.',
     );
   }
   if (caption.trim().isEmpty && images.isEmpty && activeHike == null) {

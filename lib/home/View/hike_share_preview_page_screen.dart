@@ -401,12 +401,15 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage>
   );
 
   /// Presents the share externally effect1 UI.
-  void _presentShareExternallyEffect1() =>
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Shorten your caption to 300 words before sharing.'),
+  void _presentShareExternallyEffect1() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Keep your caption within 300 words and $communityPostCaptionLimitLabel characters before sharing.',
         ),
-      );
+      ),
+    );
+  }
 }
 
 /// Displays the hike attachment.

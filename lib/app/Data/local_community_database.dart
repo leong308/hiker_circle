@@ -639,7 +639,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     if (ownerPhoneNumber.trim().isEmpty ||
         draftKey.isEmpty ||
         postId.isEmpty ||
-        caption.length > 5000 ||
+        caption.length > communityPostCaptionLimit ||
         images.length > 6) {
       throw ArgumentError('Invalid community draft.');
     }

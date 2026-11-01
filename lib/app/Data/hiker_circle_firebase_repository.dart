@@ -7,6 +7,7 @@ import '../../achievements/Data/achievement_notification_events.dart';
 export '../../achievements/Model/achievement_progress.dart'
     show achievementProgressContentHash;
 import '../../core/services/content_hash.dart';
+import '../../circle/Model/community_post_limits.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -5340,6 +5341,11 @@ class HikerCircleFirebaseRepository {
     required List<String> imageUrls,
   }) async {
     final uid = _communityAccount(this, session);
+    if (caption.length > communityPostCaptionLimit) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Keep your story within $communityPostCaptionLimitLabel characters.',
+      );
+    }
     final images = _listOfMaps(original['images']);
     final selected = images
         .where((image) => imageUrls.contains(image['url']))

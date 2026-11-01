@@ -1,6 +1,5 @@
 part of '../community_post_composer_feature.dart';
 
-const communityPostCaptionLimit = 5000;
 const communityPostPhotoLimit = 6;
 
 /// The same editor is used for a new story and the end-of-hike share preview.
@@ -293,8 +292,8 @@ class CommunityPostEditorState extends State<CommunityPostEditor> {
                       maxLength,
                     }) => Text(
                       widget.captionWordLimit == null
-                          ? '$currentLength / 5,000 characters'
-                          : '${countWords(_caption.text)} / ${widget.captionWordLimit} words',
+                          ? '$currentLength / $communityPostCaptionLimitLabel characters'
+                          : '${countWords(_caption.text)} / ${widget.captionWordLimit} words · $currentLength / $communityPostCaptionLimitLabel characters',
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: isCaptionValid ? quiet : colors.error,
                       ),
@@ -314,7 +313,7 @@ class CommunityPostEditorState extends State<CommunityPostEditor> {
                   ),
                   semanticCounterText: widget.captionWordLimit == null
                       ? '${_caption.text.characters.length} of $communityPostCaptionLimit characters'
-                      : '${countWords(_caption.text)} of ${widget.captionWordLimit} words',
+                      : '${countWords(_caption.text)} of ${widget.captionWordLimit} words and ${_caption.text.characters.length} of $communityPostCaptionLimit characters',
                   filled: false,
                   border: InputBorder.none,
                   enabledBorder: InputBorder.none,
