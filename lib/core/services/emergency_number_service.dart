@@ -6,17 +6,14 @@ import 'dart:convert';
 
 import 'package:emergency_helpline/emergency_helpline.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/google_api_config.dart';
 
 /// Represents emergency number resolver.
 abstract interface class EmergencyNumberResolver {
   /// Resolves.
-  Future<EmergencyDialTarget> resolve({
-    double? latitude,
-    double? longitude,
-    String? fallbackCountryCode,
-  });
+  Future<EmergencyDialTarget> resolve({double? latitude, double? longitude});
 }
 
 /// Represents emergency dial target.
@@ -65,15 +62,73 @@ class EmergencyCountryNumbers {
 typedef EmergencyCountryLookup =
     Future<EmergencyCountryNumbers?> Function(String countryCode);
 
+/// Stores one complete location-confirmed dial target for offline use on this device.
+class EmergencyDialTargetCache {
+  /// Creates the device-local cache without loading preferences until needed.
+  const EmergencyDialTargetCache();
+
+  static const key = 'emergencyDialTarget.v1';
+
+  /// Restores the number and its country together; incomplete or corrupt records are ignored.
+  Future<EmergencyDialTarget?> load() async {
+    try {
+      final raw = await SharedPreferencesAsync().getString(key);
+      if (raw == null) return null;
+      final data = jsonDecode(raw);
+      if (data is! Map<String, dynamic> || data['version'] != 1) return null;
+      final number = data['number'];
+      final code = data['countryCode'];
+      final name = data['countryName'];
+      if (number is! String ||
+          !RegExp(r'^\+?[0-9]{2,15}$').hasMatch(number) ||
+          code is! String ||
+          !RegExp(r'^[A-Z]{2}$').hasMatch(code) ||
+          name is! String ||
+          name.trim().isEmpty) {
+        return null;
+      }
+      return EmergencyDialTarget(
+        number: number,
+        countryCode: code,
+        countryName: name,
+        isLocationBased: false,
+        isFallback: false,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// One JSON write prevents a number from being restored with a different country.
+  Future<void> save(EmergencyDialTarget target) async {
+    if (!target.isLocationBased || target.isFallback) return;
+    try {
+      await SharedPreferencesAsync().setString(
+        key,
+        jsonEncode({
+          'version': 1,
+          'number': target.number,
+          'countryCode': target.countryCode,
+          'countryName': target.countryName,
+        }),
+      );
+    } catch (_) {
+      // A storage failure must not disable a successfully resolved dial action.
+    }
+  }
+}
+
 /// Represents emergency number service.
 class EmergencyNumberService implements EmergencyNumberResolver {
   /// Creates emergency number service.
   EmergencyNumberService({
     http.Client? client,
     EmergencyCountryLookup? countryLookup,
+    EmergencyDialTargetCache? cache,
     String? googleGeocodingApiKey,
     String? geoapifyApiKey,
   }) : _client = client,
+       _cache = cache ?? const EmergencyDialTargetCache(),
        _countryLookup = countryLookup ?? _lookupBundledCountry,
        _googleGeocodingApiKey =
            googleGeocodingApiKey ?? GoogleApiConfig.geocodingApiKey,
@@ -81,18 +136,25 @@ class EmergencyNumberService implements EmergencyNumberResolver {
 
   static const Duration _requestTimeout = Duration(seconds: 8);
   static const String _internationalMobileFallback = '112';
+  static const malaysiaFallback = EmergencyDialTarget(
+    number: '999',
+    countryCode: 'MY',
+    countryName: 'Malaysia',
+    isLocationBased: false,
+    isFallback: true,
+  );
 
   final http.Client? _client;
+  final EmergencyDialTargetCache _cache;
   final EmergencyCountryLookup _countryLookup;
   final String _googleGeocodingApiKey;
   final String _geoapifyApiKey;
 
-  /// Resolves.
+  /// Uses a detected country, then the saved complete target, then Malaysia / 999.
   @override
   Future<EmergencyDialTarget> resolve({
     double? latitude,
     double? longitude,
-    String? fallbackCountryCode,
   }) async {
     final hasCoordinate = _isCoordinateValid(latitude, longitude);
     _CountryMatch? country;
@@ -101,38 +163,42 @@ class EmergencyNumberService implements EmergencyNumberResolver {
       country = await _countryAt(latitude!, longitude!);
     }
 
-    final normalizedFallbackCode = _normalizeCountryCode(fallbackCountryCode);
-    country ??= normalizedFallbackCode == null
-        ? null
-        : _CountryMatch(code: normalizedFallbackCode, name: null);
+    final cached = await _cache.load();
+    if (country == null) return cached ?? malaysiaFallback;
 
-    final countryCode = country?.code;
-    if (countryCode != null) {
-      try {
-        final numbers = await _countryLookup(countryCode);
-        final number = _dialableNumber(numbers?.ambulance);
-        if (number != null) {
-          return EmergencyDialTarget(
-            number: number,
-            countryCode: countryCode,
-            countryName:
-                _nonEmpty(country?.name) ??
-                _nonEmpty(numbers?.countryName) ??
-                countryCode,
-            isLocationBased: hasCoordinate && country?.fromCoordinate == true,
-            isFallback: false,
-          );
-        }
-      } catch (_) {
-        // Keep the emergency action usable if the bundled catalogue cannot load.
-      }
+    final countryCode = country.code;
+    EmergencyCountryNumbers? numbers;
+    try {
+      numbers = await _countryLookup(countryCode);
+    } catch (_) {
+      // A same-country saved target remains usable if the bundled catalogue cannot load.
+    }
+    final number =
+        _dialableNumber(numbers?.ambulance) ??
+        (countryCode == 'MY' ? '999' : null) ??
+        (cached?.countryCode == countryCode ? cached?.number : null);
+    if (number != null) {
+      final target = EmergencyDialTarget(
+        number: number,
+        countryCode: countryCode,
+        countryName:
+            _nonEmpty(country.name) ??
+            _nonEmpty(numbers?.countryName) ??
+            (cached?.countryCode == countryCode ? cached?.countryName : null) ??
+            (countryCode == 'MY' ? 'Malaysia' : countryCode),
+        isLocationBased: true,
+        isFallback: false,
+      );
+      await _cache.save(target);
+      return target;
     }
 
+    // Preserve the existing mobile fallback for an identified country with no catalogue entry.
     return EmergencyDialTarget(
       number: _internationalMobileFallback,
       countryCode: countryCode,
-      countryName: _nonEmpty(country?.name) ?? countryCode,
-      isLocationBased: hasCoordinate && country?.fromCoordinate == true,
+      countryName: _nonEmpty(country.name) ?? countryCode,
+      isLocationBased: true,
       isFallback: true,
     );
   }
@@ -254,7 +320,6 @@ class EmergencyNumberService implements EmergencyNumberResolver {
       return _CountryMatch(
         code: code,
         name: _nonEmpty(first['country']?.toString()),
-        fromCoordinate: true,
       );
     } catch (_) {
       return null;
@@ -272,7 +337,6 @@ class EmergencyNumberService implements EmergencyNumberResolver {
       return _CountryMatch(
         code: code,
         name: _nonEmpty(component['long_name']?.toString()),
-        fromCoordinate: true,
       );
     }
     return null;
@@ -326,13 +390,8 @@ class EmergencyNumberService implements EmergencyNumberResolver {
 /// Represents country match.
 class _CountryMatch {
   /// Creates country match.
-  const _CountryMatch({
-    required this.code,
-    required this.name,
-    this.fromCoordinate = false,
-  });
+  const _CountryMatch({required this.code, required this.name});
 
   final String code;
   final String? name;
-  final bool fromCoordinate;
 }

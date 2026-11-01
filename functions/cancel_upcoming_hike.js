@@ -1,6 +1,7 @@
 // Cancellation and personal withdrawal share the launch transaction's schedule
 // and team reads, so a racing activation cannot be mistaken for an unstarted hike.
 'use strict';
+const {createHash} = require('node:crypto');
 const {classifyHazard, dateMillis, isActiveHazard} = require('./trail_hazard_policy');
 
 const PHONE = /^\+[1-9]\d{7,14}$/;
@@ -11,13 +12,21 @@ const validId = value => typeof value === 'string' && value.length > 0 && value.
   && !value.includes('/') && !/[\u0000-\u001f]/.test(value);
 
 async function cancelUpcomingHike(
-  db, {hikeId, uid, phoneNumber, withdrawSelf = false, hazardId = '', now = Date.now()},
+  db, {hikeId, uid, phoneNumber, withdrawSelf = false, hazardId = '', creationKey = '', now = Date.now()},
   HttpsError, timestamp,
 ) {
   const reference = db.collection('upcomingHikes').doc(hikeId);
+  const hash = creationKey ? createHash('sha256').update(`${uid}:${creationKey}`).digest('hex') : '';
+  if (creationKey && (!/^[A-Za-z0-9_-]{8,240}$/.test(creationKey) || hikeId !== `upcoming_${hash.slice(0, 40)}` || withdrawSelf)) {
+    throw new HttpsError('invalid-argument', 'The schedule identity is invalid.');
+  }
+  const intent = hash ? db.collection('upcomingHikeIntents').doc(hash) : null;
   return db.runTransaction(async transaction => {
     const snapshot = await transaction.get(reference);
-    if (!snapshot.exists) throw new HttpsError('not-found', 'This hike is no longer available.');
+    if (!snapshot.exists) {
+      if (intent) { transaction.set(intent, {cancelled: true, owner: uid, cancelledAt: timestamp()}); return {cancelled: true}; }
+      throw new HttpsError('not-found', 'This hike is no longer available.');
+    }
     const hike = snapshot.data();
     const personal = withdrawSelf === true;
     const isHost = hike.creatorUserId === uid && hike.creatorPhone === phoneNumber;
@@ -114,6 +123,7 @@ async function cancelUpcomingHike(
     const nowIso = new Date(now).toISOString();
     const updatedAt = timestamp();
     if (!personal) {
+      if (intent) transaction.set(intent, {cancelled: true, owner: uid, cancelledAt: timestamp()});
       transaction.update(reference, {isDeleted: true, cancelledByUserId: uid, cancelledAt: updatedAt,
         ...(hazardAction ? {cancelledForHazardId: hazardId, updatedAt, updatedAtLocal: nowIso} : {})});
       if (teamReference) {

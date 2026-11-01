@@ -73,7 +73,7 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
         _preferenceReadGeneration++;
         _publish(() {
           stateGroupChatNotificationsEnabled = preferences.notificationsEnabled;
-          stateMutedUntil = preferences.mutedUntilFor(readChat().id);
+          // Local mutes are restored independently from downloaded account preferences.
         });
       },
     );

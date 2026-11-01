@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../core/services/hiker_ble_service.dart';
 import '../core/widgets/loading_toast.dart';
 import 'View/sos_button_pairing_sheet.dart';
+import 'View/widgets/paired_sos_button_card.dart';
 part 'View/paired_sos_button_page_screen.dart';
 part 'ModelView/paired_sos_button_page_view_model.dart';
 

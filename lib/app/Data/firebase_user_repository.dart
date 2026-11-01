@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../Model/app_session.dart';
 import 'firebase_bootstrap.dart';
 import 'user_module_paths.dart';
+import '../../core/models/account_role.dart';
 
 /// Represents firebase user repository exception.
 class FirebaseUserRepositoryException implements Exception {
@@ -73,6 +74,16 @@ class FirebaseUserRepository {
         .map((event) => event.data() ?? <String, dynamic>{});
   }
 
+  /// Publishes confirmed account roles independently of mobile-session changes.
+  Stream<Map<String, dynamic>> watchAccountState(String phoneNumber) => _users
+      .doc(documentIdForPhoneNumber(phoneNumber))
+      .snapshots(includeMetadataChanges: true)
+      .where(
+        (event) =>
+            !event.metadata.isFromCache && !event.metadata.hasPendingWrites,
+      )
+      .map((event) => event.data() ?? <String, dynamic>{});
+
   /// Refreshes bound session.
   Future<AppSession> refreshBoundSession(AppSession session) async {
     if (!_firebaseBootstrapResult.isAvailable) {
@@ -120,6 +131,7 @@ class FirebaseUserRepository {
 
       return session.copyWith(
         isAdmin: _isAdmin(data),
+        isSuperAdmin: AccountRole.fromAccount(data) == AccountRole.superadmin,
         username: _username(data),
         requiresOnboarding: _requiresOnboarding(data),
         isOnboardingProfileComplete: _isProfileSetupComplete(data),
@@ -205,13 +217,7 @@ class FirebaseUserRepository {
     if (data == null) {
       return false;
     }
-    final role = _stringFrom(data['role']).toLowerCase();
-    final roles = data['roles'];
-    return data['isAdmin'] == true ||
-        role == 'admin' ||
-        role == 'super_admin' ||
-        (roles is Iterable &&
-            roles.any((value) => _stringFrom(value).toLowerCase() == 'admin'));
+    return AccountRole.fromAccount(data) != AccountRole.hiker;
   }
 
   /// Computes requires onboarding.

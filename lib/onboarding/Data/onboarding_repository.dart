@@ -187,6 +187,14 @@ class OnboardingRepository {
 
   Future<void> _invalidateProfile(AppSession session) async {
     try {
+      await _cache.invalidateTypes(
+        owner: session.phoneNumber,
+        types: const {
+          'public_profiles',
+          'public_hiker_profile',
+          'achievement_leaderboard',
+        },
+      );
       await _cache.invalidate(
         owner: session.phoneNumber,
         type: 'profile',

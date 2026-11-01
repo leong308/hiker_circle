@@ -10,6 +10,42 @@ class _FirstAidGuidePageStateViewModel extends ChangeNotifier {
   /// Whether this instance is still active.
   bool get mounted => !_disposed;
 
+  /// Resolves from an available location; the service owns offline country/number recovery.
+  Future<EmergencyDialTarget> commandResolveEmergencyTarget({
+    double? latitude,
+    double? longitude,
+    EmergencyNumberResolver? resolver,
+  }) async {
+    if (!_hasValidCoordinate(latitude, longitude)) {
+      try {
+        final location =
+            LocationSnapshotService.instance.latestLocation ??
+            await LocationSnapshotService.instance.refresh();
+        latitude = location?.latitude;
+        longitude = location?.longitude;
+      } catch (_) {
+        latitude = null;
+        longitude = null;
+      }
+    }
+    return (resolver ?? EmergencyNumberService()).resolve(
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
+
+  /// Rejects incomplete or invalid coordinates before requesting a device snapshot.
+  static bool _hasValidCoordinate(double? latitude, double? longitude) {
+    return latitude != null &&
+        longitude != null &&
+        latitude.isFinite &&
+        longitude.isFinite &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        longitude >= -180 &&
+        longitude <= 180;
+  }
+
   /// Loads topics.
   Future<List<FirstAidTopic>> commandLoadTopics() async {
     try {

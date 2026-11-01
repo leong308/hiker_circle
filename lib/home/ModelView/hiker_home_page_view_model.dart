@@ -644,12 +644,32 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
         return;
       }
       stateBleEventSubscription = stateBleService.events.listen(
-        effectHandleBleEvent,
+        (event) {
+          if (event is HikerBleStatusEvent &&
+              {
+                'paired_button_presence_changed',
+                'paired_button_notice',
+              }.contains(event.status)) {
+            unawaited(
+              SosButtonNotificationHistory.synchronize(
+                owner: readSession().phoneNumber,
+                ble: stateBleService,
+                database: stateHikerCircleRepository.localDatabase,
+              ),
+            );
+          }
+          effectHandleBleEvent(event);
+        },
         onError: (Object error, StackTrace stackTrace) {
           debugPrint('BLE event stream stopped: $error');
         },
       );
       await stateBleService.startSosButtonMonitor();
+      await SosButtonNotificationHistory.synchronize(
+        owner: readSession().phoneNumber,
+        ble: stateBleService,
+        database: stateHikerCircleRepository.localDatabase,
+      );
     } catch (error) {
       // BLE is an optional transport. A disabled adapter, denied permission,
       // or unavailable native bridge must not become an uncaught launch error.
@@ -752,6 +772,16 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
         session: requestedSession,
         synchronizePending: () async {
           await Future.wait<void>([
+            commandRunReconnectStep(
+              'submitted feedback',
+              () => FeedbackRepository().flushPendingSubmission(),
+            ),
+            commandRunReconnectStep(
+              'read receipts',
+              () => stateHikerCircleRepository.syncPendingReadReceipts(
+                phoneNumber: requestedSession.phoneNumber,
+              ),
+            ),
             commandRunReconnectStep(
               'upcoming hike plans',
               () => stateHikerCircleRepository.flushPendingUpcomingHikes(
@@ -980,15 +1010,27 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
   }
 
   /// Shows foreground notification.
-  void commandShowForegroundNotification(RemoteMessage message) {
+  Future<void> commandShowForegroundNotification(RemoteMessage message) async {
+    if (await ChatMuteStore.suppress(
+      message.data,
+      owner: readSession().phoneNumber,
+    )) {
+      return;
+    }
     unawaited(
       DeviceNotificationLogService.recordFcmMessage(
         message,
         ownerPhoneNumber: readSession().phoneNumber,
       ),
     );
-    final title = message.notification?.title ?? 'HikerCircle update';
-    final body = message.notification?.body ?? 'Tap to view details.';
+    final title =
+        message.notification?.title ??
+        message.data['title']?.toString() ??
+        'HikerCircle update';
+    final body =
+        message.notification?.body ??
+        message.data['body']?.toString() ??
+        'Tap to view details.';
     final type = message.data['type'];
     if (type == 'upcoming_hike_join_request') {
       stateHikerCircleRepository.notifyUpcomingHikeJoinRequestsChanged();
@@ -1165,10 +1207,9 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
       if (!mounted || revision != stateUpcomingPlanningRevision) {
         return;
       }
-      final consumed = {
-        for (final state in states)
-          if (state.isConsumed) state.upcomingHike.id,
-      };
+      final consumed = await stateHikerCircleRepository
+          .loadLocallyHiddenUpcomingHikeIds(readSession().phoneNumber);
+      if (!mounted || revision != stateUpcomingPlanningRevision) return;
       final checklist = {
         for (final state in states)
           state.upcomingHike.id: state.completedChecklistItems,
@@ -1214,10 +1255,9 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
       if (!mounted || revision != stateUpcomingPlanningRevision) {
         return;
       }
-      final consumed = {
-        for (final state in states)
-          if (state.isConsumed) state.upcomingHike.id,
-      };
+      final consumed = await stateHikerCircleRepository
+          .loadLocallyHiddenUpcomingHikeIds(readSession().phoneNumber);
+      if (!mounted || revision != stateUpcomingPlanningRevision) return;
       final checklist = {
         for (final state in states)
           state.upcomingHike.id: state.completedChecklistItems,

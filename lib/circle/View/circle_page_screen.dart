@@ -204,8 +204,8 @@ class _CirclePageState extends State<CirclePage> {
       _screenModel.commandLoadCurrentUserPhoto();
 
   /// Delegates load community people to the ViewModel.
-  Future<void> _loadCommunityPeople() =>
-      _screenModel.commandLoadCommunityPeople();
+  Future<void> _loadCommunityPeople({bool force = false}) =>
+      _screenModel.commandLoadCommunityPeople(force: force);
 
   /// Releases resources owned by this instance.
   @override
@@ -329,8 +329,8 @@ class _CirclePageState extends State<CirclePage> {
   }
 
   /// Ignore stale refresh responses so an earlier feed request cannot replace a newer result.
-  Future<void> _loadCommunityPosts() =>
-      _screenModel.commandLoadCommunityPosts();
+  Future<void> _loadCommunityPosts({bool force = false}) =>
+      _screenModel.commandLoadCommunityPosts(force: force);
 
   /// Page after the last post ID and discard duplicate IDs when merging the next feed batch.
   Future<void> _loadMoreCommunityPosts() =>
@@ -749,8 +749,8 @@ class _CirclePageState extends State<CirclePage> {
           onRefresh: _selectedSection == _CircleSection.community
               ? () async {
                   await Future.wait([
-                    _loadCommunityPosts(),
-                    _loadCommunityPeople(),
+                    _loadCommunityPosts(force: true),
+                    _loadCommunityPeople(force: true),
                   ]);
                 }
               : () async => _loadPinnedChats(),
@@ -1648,7 +1648,7 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
       ),
       body: RefreshIndicator(
         color: _CircleColors.green,
-        onRefresh: _loadComments,
+        onRefresh: () => _screenModel.commandLoadComments(force: true),
         child: SingleChildScrollView(
           controller: _scroll,
           physics: const AlwaysScrollableScrollPhysics(),

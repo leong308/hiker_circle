@@ -127,6 +127,12 @@ Future<Map<String, dynamic>> _communityCall(
   Map<String, dynamic> payload,
 ) async {
   r._throwIfFirebaseUnavailable();
+  String? cacheOwner;
+  try {
+    cacheOwner = await r._cloudReadOwner();
+  } catch (_) {
+    // Cache maintenance must not prevent the authoritative write attempt.
+  }
   try {
     final response = await r._resolvedFunctions
         .httpsCallable(
@@ -138,6 +144,20 @@ Future<Map<String, dynamic>> _communityCall(
       throw const HikerCircleFirebaseRepositoryException(
         'The community server returned an invalid response.',
       );
+    }
+    if (cacheOwner != null) {
+      try {
+        await r._conditionalCache.invalidateTypes(
+          owner: cacheOwner,
+          types: const {
+            'cloud_community_posts',
+            'cloud_community_post',
+            'cloud_community_comments',
+          },
+        );
+      } catch (_) {
+        // A confirmed post/reaction change stays successful if local cleanup fails.
+      }
     }
     return Map<String, dynamic>.from(response.data as Map);
   } on FirebaseFunctionsException catch (error) {
@@ -284,8 +304,9 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
   String? afterPostId,
   String? authorId,
   bool admin = false,
+  bool force = false,
 }) async {
-  final owner = session?.phoneNumber ?? '';
+  final owner = session?.phoneNumber ?? await r._cloudReadOwner();
   final viewer = session == null ? '' : r._userIdFor(session);
 
   /// Computes same account.
@@ -320,59 +341,83 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
     }
   }
 
-  if (!r._firebaseBootstrapResult.isAvailable) return cached();
+  if (!r._firebaseBootstrapResult.isAvailable && admin) return cached();
   if (!sameAccount()) return [];
   try {
-    Query<Map<String, dynamic>> query = r._communityPosts;
-    if (authorId != null) {
-      query = query.where('authorId', isEqualTo: authorId);
-    } else if (!admin) {
-      query = query.where('visibility', isEqualTo: 'public');
-    }
-    query = query
-        .orderBy('createdAt', descending: true)
-        .orderBy(FieldPath.documentId, descending: true);
-    if (afterPostId != null) {
-      final cursor = await r._communityPosts
-          .doc(afterPostId)
+    final List<Map<String, dynamic>> sourceRows;
+    final bool pageComplete;
+    if (!admin) {
+      final data = await r.readCloudSnapshot(
+        owner: owner,
+        resourceType: 'community_posts',
+        force: force,
+        resourceArgs: {
+          'limit': limit.clamp(1, 100),
+          if (authorId != null) 'authorId': authorId,
+          if (afterPostId != null) 'afterPostId': afterPostId,
+        },
+      );
+      if (data['posts'] is! List) return cached();
+      sourceRows = r
+          ._snapshotRows(data, 'posts')
+          .map(
+            (post) => communityPostViewData(
+              post,
+              postId: post['postId'] as String,
+              viewerId: viewer,
+              liked: post['isLiked'] == true,
+            ),
+          )
+          .toList();
+      pageComplete = data['pageComplete'] == true;
+    } else {
+      // Moderation views keep their role-checked live query, outside public caches.
+      Query<Map<String, dynamic>> query = r._communityPosts;
+      if (authorId != null) {
+        query = query.where('authorId', isEqualTo: authorId);
+      }
+      query = query
+          .orderBy('createdAt', descending: true)
+          .orderBy(FieldPath.documentId, descending: true);
+      if (afterPostId != null) {
+        final cursor = await r._communityPosts
+            .doc(afterPostId)
+            .get()
+            .timeout(HikerCircleFirebaseRepository._firebaseReadTimeout);
+        if (!cursor.exists) return [];
+        query = query.startAfterDocument(cursor);
+      }
+      final result = await query
+          .limit(limit.clamp(1, 100))
           .get()
           .timeout(HikerCircleFirebaseRepository._firebaseReadTimeout);
-      if (!cursor.exists) return [];
-      query = query.startAfterDocument(cursor);
-    }
-    final result = await query
-        .limit(limit.clamp(1, 100))
-        .get()
-        .timeout(HikerCircleFirebaseRepository._firebaseReadTimeout);
-    final liked = <String>{};
-    if (viewer.isNotEmpty) {
-      final publicPosts = result.docs
-          .where((post) => post.data()['visibility'] == 'public')
-          .toList();
-      final reactions = await Future.wait(
-        publicPosts.map((post) async {
-          try {
-            return (await post.reference
-                    .collection('reactions')
-                    .doc(viewer)
-                    .get())
-                .exists;
-          } on FirebaseException catch (error) {
-            if (error.code == 'permission-denied' ||
-                error.code == 'not-found') {
-              return false;
+      final liked = <String>{};
+      if (viewer.isNotEmpty) {
+        final publicPosts = result.docs
+            .where((post) => post.data()['visibility'] == 'public')
+            .toList();
+        final reactions = await Future.wait(
+          publicPosts.map((post) async {
+            try {
+              return (await post.reference
+                      .collection('reactions')
+                      .doc(viewer)
+                      .get())
+                  .exists;
+            } on FirebaseException catch (error) {
+              if (error.code == 'permission-denied' ||
+                  error.code == 'not-found') {
+                return false;
+              }
+              rethrow;
             }
-            rethrow;
-          }
-        }),
-      );
-      for (var i = 0; i < reactions.length; i++) {
-        if (reactions[i]) liked.add(publicPosts[i].id);
+          }),
+        );
+        for (var i = 0; i < reactions.length; i++) {
+          if (reactions[i]) liked.add(publicPosts[i].id);
+        }
       }
-    }
-    if (!sameAccount()) return [];
-    final rows = await r._hydrateCommunityAuthorLevels(
-      result.docs
+      sourceRows = result.docs
           .map(
             (doc) => communityPostViewData(
               doc.data(),
@@ -381,8 +426,11 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
               liked: liked.contains(doc.id),
             ),
           )
-          .toList(),
-    );
+          .toList();
+      pageComplete = result.docs.length < limit.clamp(1, 100);
+    }
+    if (!sameAccount()) return [];
+    final rows = await r._hydrateCommunityAuthorLevels(sourceRows);
     // JSON-safe canonical fields + a single normalized author record in SQLite.
     if (!sameAccount()) return [];
     try {
@@ -399,7 +447,7 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
             .toList(),
         ownerPhoneNumber: owner,
         reconcileFirstPage: afterPostId == null && authorId == null && !admin,
-        pageComplete: result.docs.length < limit.clamp(1, 100),
+        pageComplete: pageComplete,
       );
     } catch (_) {
       /* A cache failure does not invalidate a successful online read. */
@@ -439,10 +487,99 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
   }
 }
 
-// _readCommunityComments paginates one thread and reconciles only the range confirmed by a
-// successful refresh.
-/// Computes community comments.
+/// Reads cached reply pages through the same hash manifest as feeds and forecasts.
 Future<List<Map<String, dynamic>>> _readCommunityComments(
+  HikerCircleFirebaseRepository r,
+  String postId, {
+  String? afterCommentId,
+  int limit = 50,
+  bool force = false,
+}) async {
+  final owner = await r._cloudReadOwner();
+  final args = <String, Object?>{
+    'postId': postId,
+    'limit': limit.clamp(1, 100),
+    if (afterCommentId != null) 'afterCommentId': afterCommentId,
+  };
+  try {
+    final snapshot = await r.readCloudSnapshot(
+      resourceType: 'community_comments',
+      resourceArgs: args,
+      owner: owner,
+      force: force,
+    );
+    if (snapshot['comments'] is! List) {
+      if (await r._cloudSnapshotRevoked('community_comments', args, owner)) {
+        return [];
+      }
+      final local = await r._localDatabase.loadCachedCommunityComments(
+        postId,
+        afterCommentId: afterCommentId,
+        limit: limit,
+      );
+      if (await r._cloudReadOwner() != owner) return [];
+      return local
+          .map(
+            (row) =>
+                _communityCommentView(row, row['commentId'] as String, postId),
+          )
+          .toList();
+    }
+    final rows = await r._hydrateCommunityAuthorLevels(
+      r
+          ._snapshotRows(snapshot, 'comments')
+          .map(
+            (row) =>
+                _communityCommentView(row, row['commentId'] as String, postId),
+          )
+          .toList(),
+    );
+    if (await r._cloudReadOwner() != owner) return [];
+    final post = _postMap(snapshot['post']);
+    if (post['visibility'] == 'public') {
+      try {
+        await r._localDatabase.cacheCommunityPosts([
+          communityPostViewData(
+            post,
+            postId: postId,
+            viewerId: owner,
+            liked: post['isLiked'] == true,
+          ),
+        ], ownerPhoneNumber: owner);
+        await r._localDatabase.cacheCommunityComments(
+          postId,
+          rows.map(r._jsonSafeMap).toList(),
+          reconcileFirstPage: afterCommentId == null,
+          pageComplete: snapshot['pageComplete'] == true,
+        );
+      } catch (_) {
+        // Confirmed replies remain usable when the legacy offline cache cannot be saved.
+      }
+    }
+    if (await r._cloudReadOwner() != owner) return [];
+    return rows;
+  } on FirebaseException catch (error) {
+    if (error.code == 'permission-denied' &&
+        (await r._localDatabase.loadSession())?.isAdmin == true) {
+      return _readCommunityCommentsDirect(
+        r,
+        postId,
+        afterCommentId: afterCommentId,
+        limit: limit,
+      );
+    }
+    if (error.code == 'permission-denied' || error.code == 'not-found') {
+      await r._localDatabase.removeCachedCommunityPost(postId);
+      throw const HikerCircleFirebaseRepositoryException(
+        'This post or its replies are no longer available.',
+      );
+    }
+    rethrow;
+  }
+}
+
+/// Keeps administrator moderation reads protected by the existing Firestore rules.
+Future<List<Map<String, dynamic>>> _readCommunityCommentsDirect(
   HikerCircleFirebaseRepository r,
   String postId, {
   String? afterCommentId,

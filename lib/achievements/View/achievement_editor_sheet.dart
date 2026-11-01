@@ -1,13 +1,28 @@
 import 'package:flutter/material.dart';
 import '../../core/widgets/section_label.dart';
+import '../../core/widgets/page_header_style.dart';
+import '../../core/widgets/settings_card.dart';
 import '../Model/achievement_catalog.dart';
 import '../ModelView/achievement_editor_view_model.dart';
+
+/// Opens both add and edit with the same protected, keyboard-aware sheet layout.
+Future<Map<String, dynamic>?> showAchievementEditorSheet(
+  BuildContext context, {
+  Map<String, dynamic>? initial,
+}) => showModalBottomSheet<Map<String, dynamic>>(
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  backgroundColor: Colors.transparent,
+  builder: (_) => AchievementEditorSheet(initial: initial),
+);
 
 /// Lets administrators author the exact public achievement details beside a verifiable tracking rule.
 class AchievementEditorSheet extends StatefulWidget {
   /// Opens a new or existing achievement for moderation.
   const AchievementEditorSheet({super.key, this.initial});
   final Map<String, dynamic>? initial;
+
   /// Creates the form presentation state.
   @override
   State<AchievementEditorSheet> createState() => _AchievementEditorSheetState();
@@ -39,188 +54,251 @@ class _AchievementEditorSheetState extends State<AchievementEditorSheet> {
     super.dispose();
   }
 
-  /// Renders authored content with consistent section labels and a visible automatic rule.
+  /// Bounds the sheet to the safe viewport above the keyboard and keeps its header visible.
   @override
-  Widget build(BuildContext context) => SafeArea(
-    child: Material(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-      clipBehavior: Clip.antiAlias,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          18,
-          20,
-          24 + MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: Form(
-          key: _form,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final keyboardHeight = MediaQuery.viewInsetsOf(
+        context,
+      ).bottom.clamp(0.0, constraints.maxHeight);
+      final availableHeight = constraints.maxHeight - keyboardHeight;
+      return Padding(
+        padding: EdgeInsets.only(bottom: keyboardHeight),
+        child: SizedBox(
+          height: availableHeight * .92,
+          child: Material(
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            clipBehavior: Clip.antiAlias,
+            child: SafeArea(
+              top: false,
+              child: Column(
                 children: [
-                  Expanded(
-                    child: Text(
-                      widget.initial == null
-                          ? 'Add achievement'
-                          : 'Edit achievement',
-                      style: Theme.of(context).textTheme.headlineSmall,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.initial == null
+                                ? 'Add achievement'
+                                : 'Edit achievement',
+                            style: PageHeaderStyle.title(
+                              context,
+                              Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        PageHeaderAction(
+                          tooltip: 'Close',
+                          icon: Icons.close_rounded,
+                          onPressed: () => Navigator.pop(context),
+                          color: Theme.of(context).colorScheme.primary,
+                          surface: Theme.of(context).colorScheme.surface,
+                        ),
+                      ],
                     ),
                   ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+                      child: Form(
+                        key: _form,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _section('Achievement', [
+                              _text('title', 'Title', maxLines: 1),
+                              DropdownButtonFormField<String>(
+                                key: ValueKey('category-${model.categoryId}'),
+                                initialValue: model.categoryId,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Category',
+                                ),
+                                items: AchievementCatalog.categories
+                                    .map(
+                                      (row) => DropdownMenuItem(
+                                        value: row['id'] as String,
+                                        child: Text(
+                                          row['label'] as String,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    model.selectCategory(value);
+                                  }
+                                },
+                              ),
+                            ]),
+                            const SizedBox(height: 24),
+                            _section('Tracking rule', [
+                              DropdownButtonFormField<String>(
+                                key: ValueKey('metric-${model.metricKey}'),
+                                initialValue: model.metricKey,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Tracked activity',
+                                ),
+                                items: model.activities
+                                    .map(
+                                      (row) => DropdownMenuItem(
+                                        value: row['key'] as String,
+                                        child: Text(
+                                          row['label'] as String,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (value) {
+                                  if (value != null) model.selectMetric(value);
+                                },
+                              ),
+                              if (model.activity['allowsOneTime'] == true)
+                                DropdownButtonFormField<String>(
+                                  key: ValueKey('mode-${model.rewardType}'),
+                                  initialValue: model.rewardType,
+                                  isExpanded: true,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Unlock when',
+                                  ),
+                                  items: const [
+                                    DropdownMenuItem(
+                                      value: 'one_time',
+                                      child: Text(
+                                        'One qualifying activity',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: 'cumulative',
+                                      child: Text(
+                                        'A target is reached',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                  onChanged: (value) {
+                                    if (value != null) {
+                                      model.selectRewardType(value);
+                                    }
+                                  },
+                                ),
+                              if (model.rewardType == 'cumulative')
+                                _number(
+                                  'targetCount',
+                                  'Target (${model.activity['unit']})',
+                                  model.validateTarget,
+                                  decimal: (model.activity['scale'] as num) > 1,
+                                ),
+                              _text('condition', 'Your goal'),
+                            ]),
+                            const SizedBox(height: 24),
+                            _section('Achievement details', [
+                              _text(
+                                'whyItMatters',
+                                'Why this achievement exists',
+                              ),
+                              _text('whatCounts', 'What counts'),
+                              _text(
+                                'rewardRecognition',
+                                'Reward and recognition',
+                              ),
+                              _number(
+                                'rewardPoints',
+                                'Reward points',
+                                model.validatePoints,
+                              ),
+                            ]),
+                            const SizedBox(height: 24),
+                            _section('Availability', [
+                              _number('sortOrder', 'Display order', null),
+                              SwitchListTile.adaptive(
+                                contentPadding: EdgeInsets.zero,
+                                secondary: Icon(
+                                  model.isActive
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                title: const Text('Active'),
+                                value: model.isActive,
+                                onChanged: (value) =>
+                                    setState(() => model.isActive = value),
+                              ),
+                            ]),
+                            const SizedBox(height: 20),
+                            FilledButton.icon(
+                              onPressed: () {
+                                if (_form.currentState?.validate() == true) {
+                                  Navigator.pop(context, model.save());
+                                }
+                              },
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size.fromHeight(48),
+                              ),
+                              icon: const Icon(Icons.save_rounded),
+                              label: const Text('Save achievement'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              const SectionLabel(label: 'Achievement'),
-              const SizedBox(height: 10),
-              _text('title', 'Title', maxLines: 1),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                key: ValueKey('category-${model.categoryId}'),
-                initialValue: model.categoryId,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Category'),
-                items: AchievementCatalog.categories
-                    .map(
-                      (row) => DropdownMenuItem(
-                        value: row['id'] as String,
-                        child: Text(row['label'] as String),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value != null) model.selectCategory(value);
-                },
-              ),
-              const SizedBox(height: 20),
-              const SectionLabel(label: 'Tracking rule'),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                key: ValueKey('metric-${model.metricKey}'),
-                initialValue: model.metricKey,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Tracked activity',
-                ),
-                items: model.activities
-                    .map(
-                      (row) => DropdownMenuItem(
-                        value: row['key'] as String,
-                        child: Text(row['label'] as String),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  if (value != null) model.selectMetric(value);
-                },
-              ),
-              const SizedBox(height: 10),
-              Text(
-                model.activity['whatCounts'] as String,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 12),
-              if (model.activity['allowsOneTime'] == true) ...[
-                DropdownButtonFormField<String>(
-                  key: ValueKey('mode-${model.rewardType}'),
-                  initialValue: model.rewardType,
-                  decoration: const InputDecoration(labelText: 'Unlock when'),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'one_time',
-                      child: Text('One qualifying activity'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'cumulative',
-                      child: Text('A target is reached'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) model.selectRewardType(value);
-                  },
-                ),
-                const SizedBox(height: 12),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  /// Reuses the app's settings surface and section label for calm, evenly spaced field groups.
+  Widget _section(String title, List<Widget> fields) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      SectionLabel(label: title),
+      const SizedBox(height: 10),
+      SettingsCard(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var index = 0; index < fields.length; index++) ...[
+                if (index > 0) const SizedBox(height: 14),
+                fields[index],
               ],
-              if (model.rewardType == 'cumulative') ...[
-                _number(
-                  'targetCount',
-                  'Target (${model.activity['unit']})',
-                  model.validateTarget,
-                  decimal: (model.activity['scale'] as num) > 1,
-                ),
-                const SizedBox(height: 12),
-              ],
-              _text(
-                'condition',
-                'Your goal',
-                hint: 'The requirement shown on the badge and its details.',
-              ),
-              const SizedBox(height: 20),
-              const SectionLabel(label: 'Hiker-facing details'),
-              const SizedBox(height: 10),
-              const Text(
-                'These descriptions appear on the achievement page. Editing them does not change the tracked activity or target.',
-              ),
-              const SizedBox(height: 12),
-              _text('whyItMatters', 'Why this achievement exists'),
-              const SizedBox(height: 12),
-              _text('whatCounts', 'What counts'),
-              const SizedBox(height: 12),
-              _text('rewardRecognition', 'Reward and recognition'),
-              const SizedBox(height: 12),
-              _number('rewardPoints', 'Reward points', model.validatePoints),
-              const SizedBox(height: 8),
-              const Text(
-                'The badge and its points are awarded once. Points contribute to the hiker’s Trail Journey level.',
-              ),
-              const SizedBox(height: 20),
-              const SectionLabel(label: 'Availability'),
-              const SizedBox(height: 10),
-              _number('sortOrder', 'Display order', null),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Active'),
-                subtitle: const Text(
-                  'Archived rules keep existing awards and stop future progress.',
-                ),
-                value: model.isActive,
-                onChanged: (value) => setState(() => model.isActive = value),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: () {
-                  if (_form.currentState?.validate() == true) {
-                    Navigator.pop(context, model.save());
-                  }
-                },
-                icon: const Icon(Icons.save_rounded),
-                label: const Text('Save achievement'),
-              ),
             ],
           ),
         ),
       ),
-    ),
+    ],
   );
 
   /// Renders a public description; suggested content can always be customized.
-  Widget _text(String field, String label, {String? hint, int maxLines = 3}) =>
-      TextFormField(
-        key: ValueKey('$field-${model.contentRevision}'),
-        initialValue: model.values[field],
-        maxLines: maxLines,
-        minLines: 1,
-        decoration: InputDecoration(
-          labelText: label,
-          helperText: hint,
-          alignLabelWithHint: maxLines > 1,
-        ),
-        onChanged: (value) => model.update(field, value),
-        validator: (value) => model.validateText(field, value),
-      );
+  Widget _text(String field, String label, {int maxLines = 3}) => TextFormField(
+    key: ValueKey('$field-${model.contentRevision}'),
+    initialValue: model.values[field],
+    maxLines: maxLines,
+    minLines: 1,
+    decoration: InputDecoration(
+      labelText: label,
+      alignLabelWithHint: maxLines > 1,
+    ),
+    onChanged: (value) => model.update(field, value),
+    validator: (value) => model.validateText(field, value),
+  );
 
   /// Renders the metric's numeric target or a presentation setting.
   Widget _number(

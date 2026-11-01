@@ -696,32 +696,22 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       _showAttachmentError('Attachments must be 25 MB or smaller.');
       return;
     }
-    if (!_isOnline) {
-      _showAttachmentError(
-        'Connect to the internet before sending an attachment.',
-      );
-      return;
-    }
     setState(() {
       _isUploadingAttachment = true;
     });
     String? optimisticMessageId;
     try {
-      final attachment =
-          await _GroupChatDetailPageDataActions.uploadGroupChatAttachment(
-            widget.repository,
-          )(
-            chatId: widget.chat.id,
-            senderPhone: widget.session.phoneNumber,
-            type: type,
-            bytes: bytes,
-            fileName: fileName,
-            contentType: contentType,
-          );
       final sentAt = DateTime.now();
       final localId =
           'attachment_${sentAt.microsecondsSinceEpoch}_${widget.session.phoneNumber.hashCode}';
       optimisticMessageId = localId;
+      final attachment = ChatAttachment(
+        type: type,
+        url: 'pending://$localId',
+        fileName: fileName,
+        contentType: contentType,
+        sizeBytes: bytes.length,
+      );
       final caption = _messageController.text.trim();
       _messageController.clear();
       final localMessage = ChatMessage(
@@ -742,9 +732,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         });
         _scrollToBottom();
       }
-      await _GroupChatDetailPageDataActions.sendGroupChatMessage(
-        widget.repository,
-      )(
+      await widget.repository.sendGroupChatMessage(
         chatId: widget.chat.id,
         senderPhone: widget.session.phoneNumber,
         senderName: widget.session.username,
@@ -752,6 +740,12 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         localId: localId,
         sentAt: sentAt,
         attachment: attachment,
+        attachmentBytes: bytes,
+        attachmentUpload: {
+          'type': type.name,
+          'fileName': fileName,
+          'contentType': contentType,
+        },
       );
     } on HikerCircleFirebaseRepositoryException catch (error) {
       if (optimisticMessageId != null && mounted) {
@@ -1871,6 +1865,19 @@ class _MessageAttachmentView extends StatelessWidget {
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
+    if (attachment.url.startsWith('pending://')) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.schedule),
+            const SizedBox(width: 8),
+            Flexible(child: Text(attachment.fileName)),
+          ],
+        ),
+      );
+    }
     switch (attachment.type) {
       case ChatAttachmentType.image:
         return GestureDetector(

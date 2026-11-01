@@ -608,6 +608,37 @@ class _HikerHomePageState extends State<HikerHomePage>
   StreamSubscription<bool>? _pendingTrailRequestsSubscription;
   bool _hasPendingUndiscoveredTrailRequests = false;
 
+  /// Rebuilds role-dependent navigation without recreating an active hike or its safety services.
+  @override
+  void didUpdateWidget(covariant HikerHomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session.isAdmin == widget.session.isAdmin) return;
+    tabs = HikerBottomNavBar.destinationsForRole(widget.session.isAdmin);
+    if (selectedTabIndex >= tabs.length) selectedTabIndex = 0;
+    _listenForAdminTrailRequests();
+  }
+
+  /// Starts privileged subscriptions only while the current account has admin access.
+  void _listenForAdminTrailRequests() {
+    unawaited(_pendingTrailRequestsSubscription?.cancel());
+    _pendingTrailRequestsSubscription = null;
+    _hasPendingUndiscoveredTrailRequests = false;
+    if (!widget.session.isAdmin) return;
+    _pendingTrailRequestsSubscription =
+        _HikerHomePageDataActions.watchPendingTrailRequests(
+          hikerCircleRepository,
+        )(session: widget.session).listen(
+          (hasPending) {
+            if (mounted && widget.session.isAdmin) {
+              setState(() => _hasPendingUndiscoveredTrailRequests = hasPending);
+            }
+          },
+          onError: (Object error) {
+            debugPrint('Trail request updates are unavailable: $error');
+          },
+        );
+  }
+
   StreamSubscription<NetworkReachabilitySnapshot>?
   _networkReachabilitySubscription;
 
@@ -894,14 +925,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         widget.session.phoneNumber,
       ),
     );
-    tabs = [
-      ...HikerBottomNavBar.standardDestinations,
-      if (widget.session.isAdmin)
-        const HikerBottomNavDestination(
-          label: 'Admin',
-          icon: Icons.admin_panel_settings_rounded,
-        ),
-    ];
+    tabs = HikerBottomNavBar.destinationsForRole(widget.session.isAdmin);
     hikerCircleRepository = HikerCircleFirebaseRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
@@ -915,23 +939,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           widget.session.phoneNumber,
           _deliverAchievementNotifications,
         );
-    if (widget.session.isAdmin) {
-      _pendingTrailRequestsSubscription =
-          _HikerHomePageDataActions.watchPendingTrailRequests(
-            hikerCircleRepository,
-          )(session: widget.session).listen(
-            (hasPending) {
-              if (mounted) {
-                setState(
-                  () => _hasPendingUndiscoveredTrailRequests = hasPending,
-                );
-              }
-            },
-            onError: (Object error) {
-              debugPrint('Trail request updates are unavailable: $error');
-            },
-          );
-    }
+    _listenForAdminTrailRequests();
     _hikeReminders = UpcomingHikeReminderService(
       database: hikerCircleRepository.localDatabase,
       notifications: DeviceHikeReminderNotifications(_localNotifications),

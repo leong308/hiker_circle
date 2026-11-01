@@ -24,6 +24,16 @@ class HikerBottomNavBar extends StatelessWidget {
     HikerBottomNavDestination(label: 'Profile', icon: Icons.person_rounded),
   ];
 
+  /// Reuses the same role-dependent destinations at startup and after live account updates.
+  static List<HikerBottomNavDestination> destinationsForRole(bool isAdmin) => [
+    ...standardDestinations,
+    if (isAdmin)
+      const HikerBottomNavDestination(
+        label: 'Admin',
+        icon: Icons.admin_panel_settings_rounded,
+      ),
+  ];
+
   final int currentIndex;
   final ValueChanged<int> onDestinationSelected;
   final List<HikerBottomNavDestination> destinations;

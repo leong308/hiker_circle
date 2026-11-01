@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/services/content_hash.dart';
 import 'local_session_database.dart';
 
+/// Chooses the read authority; durable local changes upload through their own queues.
 enum CacheReadPolicy { localFirst, cloudFirst }
 
 class CacheResourceUpdate {
@@ -48,7 +49,7 @@ typedef ConditionalCacheRequest =
       Map<String, Object?> arguments,
     );
 
-/// Local-first reads and one owner-scoped hash batch after reconnection.
+/// Coordinates local-first and cloud-first reads in one owner-scoped hash batch.
 class ConditionalCloudCache {
   ConditionalCloudCache(
     this.database,
@@ -56,6 +57,7 @@ class ConditionalCloudCache {
     String? Function()? currentOwner,
     ConditionalCacheRequest? request,
     DateTime Function()? clock,
+    this.revalidationWaitTimeout = const Duration(seconds: 8),
   }) : currentOwner = currentOwner ?? _firebaseOwner,
        _request = request,
        _clock = clock ?? DateTime.now;
@@ -73,10 +75,12 @@ class ConditionalCloudCache {
     'listMyHikeHistory',
     'loadMyHikeHistoryDetail',
     'listExpiredScheduledHikes',
+    'loadAchievementLeaderboard',
   };
   static final _updates = StreamController<CacheResourceUpdate>.broadcast();
   static final _refreshes = <String, Future<Map<String, dynamic>>>{};
   static final _refreshEpochs = <String, int>{};
+  static final _refreshVerifications = <String, bool>{};
   static final _batches = <String, Future<CacheReconciliationResult>>{};
   static final _checked = <String, DateTime>{};
   static final _epochs = <String, int>{};
@@ -85,14 +89,30 @@ class ConditionalCloudCache {
   static final _pauseCompletions = <String, Completer<void>>{};
   static final _batchResourceKeys = <String, Set<String>>{};
   static final _batchAttemptVersions = <String, int>{};
+  static final _successfulBatchAttempts = <String, int>{};
   static final _pauseOwnersZoneKey = Object();
 
+  final Duration revalidationWaitTimeout;
   final LocalSessionDatabase database;
   final FirebaseFunctions Function() functions;
   final String? Function() currentOwner;
   final ConditionalCacheRequest? _request;
   final DateTime Function() _clock;
   Stream<CacheResourceUpdate> get updates => _updates.stream;
+
+  /// Viewer-specific snapshots must never be stored in the shared public scope.
+  static const viewerScopedCloudResources = {
+    'community_posts',
+    'community_post',
+    'community_comments',
+    'chat_messages',
+  };
+
+  /// Requires an account key for reads containing private or viewer-specific data.
+  static bool _requiresOwner(String callable, Map<String, Object?> arguments) =>
+      _ownerCallables.contains(callable) ||
+      (callable == 'readCloudResource' &&
+          viewerScopedCloudResources.contains(arguments['resourceType']));
 
   static String? _firebaseOwner() {
     try {
@@ -243,6 +263,14 @@ class ConditionalCloudCache {
     }
   }
 
+  /// Marks stale fallback only on the returned map, never in hashed stored data.
+  Map<String, dynamic> _fallback(
+    _ReadResource resource,
+    Map<String, dynamic> payload,
+  ) => resource.policy == CacheReadPolicy.cloudFirst && payload.isNotEmpty
+      ? {...payload, 'cacheFallback': true}
+      : payload;
+
   Future<void> _register(_ReadResource resource) async {
     final previous = await database.loadCachedEntity(
       ownerPhoneNumber: resource.owner,
@@ -252,8 +280,12 @@ class ConditionalCloudCache {
     );
     if (previous != null &&
         (previous.payload['callable'] != resource.callable ||
-            stableContentHash(previous.payload['arguments']) !=
-                stableContentHash(resource.arguments))) {
+            stableContentHash(
+                  _ReadResource.fromDescriptor(
+                    previous,
+                  )?.reconciliationArguments,
+                ) !=
+                stableContentHash(resource.reconciliationArguments))) {
       await invalidate(
         owner: resource.owner,
         type: resource.type,
@@ -290,7 +322,7 @@ class ConditionalCloudCache {
     bool cacheOnly = false,
     bool registerForReconciliation = true,
   }) async {
-    if (owner.trim().isEmpty && _ownerCallables.contains(callable)) {
+    if (owner.trim().isEmpty && _requiresOwner(callable, arguments)) {
       throw _accountChanged();
     }
     await _requireLocalOwner(owner);
@@ -313,32 +345,49 @@ class ConditionalCloudCache {
     }
     final cached = await _cached(resource);
     await _requireLocalOwner(owner);
-    if (cacheOnly || !online) return cached?.payload ?? const {};
-    if (policy == CacheReadPolicy.localFirst &&
-        isRevalidationPausedFor(owner)) {
-      if (cached != null || _insidePendingWriteSequence(owner)) {
-        return cached?.payload ?? const {};
+    if (cacheOnly || !online) {
+      return _fallback(resource, cached?.payload ?? const {});
+    }
+    if (isRevalidationPausedFor(owner)) {
+      if (_insidePendingWriteSequence(owner) ||
+          (policy == CacheReadPolicy.localFirst && cached != null)) {
+        return _fallback(resource, cached?.payload ?? const {});
       }
       final attemptVersion = _batchAttemptVersions[resource.key] ?? 0;
       final includedInActiveBatch = _batchResourceKeys.values.any(
         (keys) => keys.contains(resource.key),
       );
-      await _waitForRevalidation(owner);
+      try {
+        await _waitForRevalidation(owner).timeout(revalidationWaitTimeout);
+      } on TimeoutException {
+        await _requireLocalOwner(owner);
+        return _fallback(resource, cached?.payload ?? const {});
+      }
       await _requireLocalOwner(owner);
       final reconciled = await _cached(resource);
       await _requireLocalOwner(owner);
-      if (reconciled != null) return reconciled.payload;
-      if (includedInActiveBatch ||
-          (_batchAttemptVersions[resource.key] ?? 0) > attemptVersion) {
+      final checkedByBatch =
+          includedInActiveBatch ||
+          (_batchAttemptVersions[resource.key] ?? 0) > attemptVersion;
+      if (checkedByBatch && !force) {
         // This resource was already checked by the one batch. An unavailable
         // result must not immediately fan out into another individual check.
-        return const {};
+        final payload = reconciled?.payload ?? const <String, dynamic>{};
+        return _successfulBatchAttempts[resource.key] ==
+                _batchAttemptVersions[resource.key]
+            ? payload
+            : _fallback(resource, payload);
+      }
+      if (!force &&
+          policy == CacheReadPolicy.localFirst &&
+          reconciled != null) {
+        return reconciled.payload;
       }
       // A screen opened after the batch captured its descriptors. Download its
       // uncached resource normally, without issuing a second manifest request.
-      return _refresh(resource);
+      return _refresh(resource, verifySource: force);
     }
-    if (!force && policy == CacheReadPolicy.localFirst && cached != null) {
+    if (!force && cached != null) {
       final validation = await _validation(resource);
       final validatedMillis =
           validation?.payload['contentHash'] == cached.payload['contentHash']
@@ -353,29 +402,58 @@ class ConditionalCloudCache {
                   isUtc: true,
                 ));
       await _requireLocalOwner(owner);
-      if ((validation?.payload['refreshRequired'] == true ||
-              _clock().toUtc().difference(checked) >= freshness) &&
-          !isRevalidationPausedFor(owner)) {
+      final needsRefresh =
+          validation?.payload['refreshRequired'] == true ||
+          _clock().toUtc().difference(checked) >= freshness;
+      if (policy == CacheReadPolicy.cloudFirst) {
+        // A completed shared hash check is a server check too. Reuse it rather
+        // than issuing a second request from each cloud-first screen.
+        if (validatedMillis != null && !needsRefresh) {
+          return (_batchAttemptVersions[resource.key] ?? 0) >
+                  (_successfulBatchAttempts[resource.key] ?? 0)
+              ? _fallback(resource, cached.payload)
+              : cached.payload;
+        }
+        return _refresh(resource);
+      }
+      if (needsRefresh && !isRevalidationPausedFor(owner)) {
         unawaited(_refresh(resource).catchError((_) => cached.payload));
       }
       return cached.payload;
     }
-    return _refresh(resource);
+    return _refresh(resource, verifySource: force);
   }
 
-  Future<Map<String, dynamic>> _refresh(_ReadResource resource) {
+  /// Manual refresh checks the source even when an automatic manifest check is already running.
+  Future<Map<String, dynamic>> _refresh(
+    _ReadResource resource, {
+    bool verifySource = false,
+  }) {
     final epoch = _epochs[resource.key] ?? 0;
     final pending = _refreshes[resource.key];
     if (pending != null && _refreshEpochs[resource.key] == epoch) {
+      if (verifySource && _refreshVerifications[resource.key] != true) {
+        return pending.then(
+          (_) => _refresh(resource, verifySource: true),
+          onError: (Object _, StackTrace _) =>
+              _refresh(resource, verifySource: true),
+        );
+      }
       return pending;
     }
-    final operation = _fetch(resource, epoch: epoch);
+    final operation = _fetch(
+      resource,
+      epoch: epoch,
+      verifySource: verifySource,
+    );
     _refreshes[resource.key] = operation;
     _refreshEpochs[resource.key] = epoch;
+    _refreshVerifications[resource.key] = verifySource;
     void clear() {
       if (identical(_refreshes[resource.key], operation)) {
         _refreshes.remove(resource.key);
         _refreshEpochs.remove(resource.key);
+        _refreshVerifications.remove(resource.key);
       }
     }
 
@@ -391,6 +469,7 @@ class ConditionalCloudCache {
   Future<Map<String, dynamic>> _fetch(
     _ReadResource resource, {
     required int epoch,
+    required bool verifySource,
   }) async {
     await _requireLocalOwner(resource.owner);
     final baseline = await _cached(resource);
@@ -406,8 +485,8 @@ class ConditionalCloudCache {
         if (baseline != null)
           'knownContentHash': baseline.payload['contentHash'],
         if (baseline != null) 'knownRevision': baseline.payload['revisionHash'],
-        // An actual refresh checks content rather than trusting a revision hint.
-        'forcePayload': true,
+        // Automatic reads compare stored hashes; explicit refresh always checks source content.
+        'forcePayload': verifySource,
       });
       _requireRemoteOwner(resource.owner);
       await _requireLocalOwner(resource.owner);
@@ -462,13 +541,13 @@ class ConditionalCloudCache {
       await _requireLocalOwner(resource.owner);
       final cached = await _cached(resource);
       await _requireLocalOwner(resource.owner);
-      if (cached != null) return cached.payload;
+      if (cached != null) return _fallback(resource, cached.payload);
       rethrow;
     } catch (_) {
       await _requireLocalOwner(resource.owner);
       final cached = await _cached(resource);
       await _requireLocalOwner(resource.owner);
-      if (cached != null) return cached.payload;
+      if (cached != null) return _fallback(resource, cached.payload);
       rethrow;
     }
   }
@@ -537,6 +616,8 @@ class ConditionalCloudCache {
     }
     if (!applied || (_epochs[resource.key] ?? 0) != epoch) return false;
     _checked[resource.key] = now;
+    _successfulBatchAttempts[resource.key] =
+        _batchAttemptVersions[resource.key] ?? 0;
     _validationVersions[resource.key] =
         (_validationVersions[resource.key] ?? 0) + 1;
     if (!unchanged && baseline?.payload['contentHash'] != hash) {
@@ -569,6 +650,27 @@ class ConditionalCloudCache {
     _updates.add(
       CacheResourceUpdate(owner: owner, type: type, id: id, invalidated: true),
     );
+  }
+
+  /// Confirmed writes invalidate related downloaded queries, never pending changes.
+  Future<void> invalidateTypes({
+    required String owner,
+    required Set<String> types,
+  }) async {
+    final descriptors = await database.loadCachedEntities(
+      ownerPhoneNumber: owner,
+      entityType: _descriptorType,
+      includeExpired: true,
+    );
+    for (final descriptor in descriptors) {
+      final resource = _ReadResource.fromDescriptor(descriptor);
+      if (resource == null ||
+          !types.contains(resource.type) ||
+          resource.key != _key(owner, resource.type, resource.id)) {
+        continue;
+      }
+      await invalidate(owner: owner, type: resource.type, id: resource.id);
+    }
   }
 
   Future<void> _invalidateIfCurrent(
@@ -738,7 +840,7 @@ class ConditionalCloudCache {
       if (resource == null ||
           resource.key != _key(resource.owner, resource.type, resource.id) ||
           (resource.owner.isEmpty &&
-              _ownerCallables.contains(resource.callable))) {
+              _requiresOwner(resource.callable, resource.arguments))) {
         skipped += 1;
         continue;
       }
@@ -764,8 +866,10 @@ class ConditionalCloudCache {
       _batchAttemptVersions[resource.key] =
           (_batchAttemptVersions[resource.key] ?? 0) + 1;
     }
+    // Firebase compares server-maintained manifests before rebuilding any unchanged projection.
     final response = await _call('reconcileMobileReadCache', {
       'expectedOwner': owner,
+      'manifestVersion': 1,
       'resources': [
         for (final resource in resources)
           {
@@ -777,6 +881,10 @@ class ConditionalCloudCache {
     }, timeout: const Duration(seconds: 125));
     _requireRemoteOwner(owner);
     await _requireLocalOwner(owner);
+    if (response['manifestVersion'] != null &&
+        response['manifestVersion'] != 1) {
+      throw const FormatException('Unsupported sync manifest version.');
+    }
     final raw = response['resources'];
     if (raw is! List) {
       throw const FormatException('Invalid cache batch result.');
@@ -879,8 +987,12 @@ class ConditionalCloudCache {
         if (!applied) {
           skipped += 1;
         } else if (result['status'] == 'unchanged') {
+          _successfulBatchAttempts[resource.key] =
+              _batchAttemptVersions[resource.key]!;
           unchanged += 1;
         } else {
+          _successfulBatchAttempts[resource.key] =
+              _batchAttemptVersions[resource.key]!;
           changed += 1;
         }
       } on FirebaseFunctionsException catch (error) {
@@ -943,6 +1055,12 @@ class _ReadResource {
   final Map<String, Object?> arguments;
   final CacheReadPolicy policy;
   final bool registered;
+
+  /// Manual weather age thresholds change refresh behavior, not snapshot identity.
+  Map<String, Object?> get reconciliationArguments =>
+      callable == 'fetchWeatherForTrail'
+      ? ({...arguments}..remove('refreshIfOlderThanMinutes'))
+      : arguments;
   Map<String, Object?> toRequest() => {
     'key': key,
     'type': type,
@@ -971,6 +1089,17 @@ class _ReadResource {
           : limit(arguments['limit'], 80);
       return 3 * count;
     }
+    if (callable == 'readCloudResource') {
+      final type = arguments['resourceType'];
+      final args = arguments['resourceArgs'];
+      final nested = args is Map ? args : const {};
+      if (type == 'trail_catalog') return 1001;
+      if (type == 'trail_hazards') return 2000;
+      if (type == 'community_posts') return 3 * limit(nested['limit'], 20);
+      if (type == 'community_comments') return limit(nested['limit'], 50) + 3;
+      if (type == 'chat_messages') return 1002;
+      return 4;
+    }
     final resource = arguments['resourceType'];
     final args = arguments['resourceArgs'];
     final nested = args is Map ? args : const {};
@@ -984,6 +1113,7 @@ class _ReadResource {
 
   Map<String, Object?> toMap() => {
     ...toRequest(),
+    'arguments': reconciliationArguments,
     'policy': policy.name,
     'workUnits': workUnits,
   };

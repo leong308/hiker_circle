@@ -39,18 +39,6 @@ abstract final class _GroupChatDetailPageDataActions {
     HikerCircleFirebaseRepository receiver,
   ) => receiver.flushPendingMessages;
 
-  /// Binds upload group chat attachment to the selected data source.
-  static Future<ChatAttachment> Function({
-    required Uint8List bytes,
-    required String chatId,
-    required String contentType,
-    required String fileName,
-    required String senderPhone,
-    required ChatAttachmentType type,
-  })
-  uploadGroupChatAttachment(HikerCircleFirebaseRepository receiver) =>
-      receiver.uploadGroupChatAttachment;
-
   /// Binds send chat reminder to the selected data source.
   static Future<Map<String, dynamic>> Function({
     required String chatId,

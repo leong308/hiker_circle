@@ -10,32 +10,7 @@ abstract final class _AdminPageDataActions {
   loadAdminDashboardAnalytics(HikerCircleFirebaseRepository receiver) =>
       receiver.loadAdminDashboardAnalytics;
 
-  /// Binds load admin achievements to the selected data source.
-  static Future<List<Map<String, dynamic>>> Function({
-    required AppSession session,
-  })
-  loadAdminAchievements(HikerCircleFirebaseRepository receiver) =>
-      receiver.loadAdminAchievements;
-
   /// Binds dump all tables to the selected data source.
   static Future<Map<String, List<Map<String, dynamic>>>> Function()
   dumpAllTables(LocalSessionDatabase receiver) => receiver.dumpAllTables;
-
-  /// Binds save achievement by admin to the selected data source.
-  static Future<String> Function({
-    required Map<String, dynamic> achievement,
-    String achievementId,
-    required AppSession session,
-  })
-  saveAchievementByAdmin(HikerCircleFirebaseRepository receiver) =>
-      receiver.saveAchievementByAdmin;
-
-  /// Binds set achievement active by admin to the selected data source.
-  static Future<void> Function({
-    required String achievementId,
-    required bool isActive,
-    required AppSession session,
-  })
-  setAchievementActiveByAdmin(HikerCircleFirebaseRepository receiver) =>
-      receiver.setAchievementActiveByAdmin;
 }

@@ -114,10 +114,11 @@ class _CirclePageStateViewModel extends ChangeNotifier {
   }
 
   /// Loads community people.
-  Future<void> commandLoadCommunityPeople() async {
+  Future<void> commandLoadCommunityPeople({bool force = false}) async {
     try {
       final profiles = await readHikerCircleRepository().loadCommunityProfiles(
         session: readSession(),
+        force: force,
       );
       if (!mounted) return;
       _publish(() {
@@ -293,7 +294,7 @@ class _CirclePageStateViewModel extends ChangeNotifier {
   }
 
   /// Ignore stale refresh responses so an earlier feed request cannot replace a newer result.
-  Future<void> commandLoadCommunityPosts() async {
+  Future<void> commandLoadCommunityPosts({bool force = false}) async {
     final generation = ++stateFeedGeneration;
     _publish(() {
       stateIsLoadingPosts = true;
@@ -304,6 +305,7 @@ class _CirclePageStateViewModel extends ChangeNotifier {
     try {
       final posts = await readHikerCircleRepository().loadCommunityPosts(
         session: readSession(),
+        force: force,
       );
       if (!mounted || generation != stateFeedGeneration) return;
       _publish(() {
@@ -797,7 +799,10 @@ class _CommunityPostDetailPageStateViewModel extends ChangeNotifier {
   }
 
   /// Loads comments.
-  Future<void> commandLoadComments({bool more = false}) async {
+  Future<void> commandLoadComments({
+    bool more = false,
+    bool force = false,
+  }) async {
     final postId = readPost().postId;
     if (postId == null || postId.isEmpty) return;
     if (more && (stateIsLoadingMore || !stateHasMoreComments)) return;
@@ -815,6 +820,7 @@ class _CommunityPostDetailPageStateViewModel extends ChangeNotifier {
     try {
       final comments = await readRepository().loadCommunityComments(
         postId: postId,
+        force: force,
         afterCommentId: more && stateComments.isNotEmpty
             ? stateComments.last.commentId
             : null,

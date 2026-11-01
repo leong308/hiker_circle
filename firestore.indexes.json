@@ -328,6 +328,7 @@
     }
   ],
   "fieldOverrides": [
+    { "collectionGroup": "syncManifests", "fieldPath": "expiresAt", "ttl": true, "indexes": [] },
     { "collectionGroup": "communityPosts", "fieldPath": "author", "indexes": [] },
     { "collectionGroup": "communityPosts", "fieldPath": "caption", "indexes": [] },
     { "collectionGroup": "communityPosts", "fieldPath": "images", "indexes": [] },

@@ -40,38 +40,15 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
     )..addListener(_renderScreenModel);
 
     _topicsFuture = _loadTopics();
-    _emergencyTargetFuture = _resolveEmergencyTarget();
+    _emergencyTargetFuture = _screenModel.commandResolveEmergencyTarget(
+      latitude: widget.emergencyLatitude,
+      longitude: widget.emergencyLongitude,
+      resolver: widget.emergencyNumberResolver,
+    );
   }
 
   /// Delegates load topics to the ViewModel.
   Future<List<FirstAidTopic>> _loadTopics() => _screenModel.commandLoadTopics();
-
-  /// Resolves emergency target.
-  Future<EmergencyDialTarget> _resolveEmergencyTarget() async {
-    var latitude = widget.emergencyLatitude;
-    var longitude = widget.emergencyLongitude;
-    if (!_hasValidCoordinate(latitude, longitude)) {
-      try {
-        final location =
-            LocationSnapshotService.instance.latestLocation ??
-            await LocationSnapshotService.instance.refresh();
-        latitude = location?.latitude;
-        longitude = location?.longitude;
-      } catch (_) {
-        latitude = null;
-        longitude = null;
-      }
-    }
-
-    final localeCountryCode =
-        WidgetsBinding.instance.platformDispatcher.locale.countryCode;
-    final resolver = widget.emergencyNumberResolver ?? EmergencyNumberService();
-    return resolver.resolve(
-      latitude: latitude,
-      longitude: longitude,
-      fallbackCountryCode: localeCountryCode,
-    );
-  }
 
   /// Delegates call emergency services to the ViewModel.
   Future<void> _callEmergencyServices(EmergencyDialTarget target) =>
@@ -82,18 +59,6 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Unable to open the dialer. Call $number.')),
     );
-  }
-
-  /// Checks whether there is valid coordinate.
-  static bool _hasValidCoordinate(double? latitude, double? longitude) {
-    return latitude != null &&
-        longitude != null &&
-        latitude.isFinite &&
-        longitude.isFinite &&
-        latitude >= -90 &&
-        latitude <= 90 &&
-        longitude >= -180 &&
-        longitude <= 180;
   }
 
   /// Builds this widget from its current presentation state.

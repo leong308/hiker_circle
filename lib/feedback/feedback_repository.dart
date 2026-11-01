@@ -269,6 +269,16 @@ class FeedbackRepository {
     );
   }
 
+  /// Replays only a form explicitly submitted with Send; ordinary drafts remain private.
+  Future<void> flushPendingSubmission() async {
+    final owner = await _localDraftOwner();
+    final saved = await loadSavedDraft(expectedOwner: owner);
+    if (saved == null || !saved.submissionAttempted) return;
+    await submit(
+      submissionForSavedDraft(saved),
+    ).timeout(const Duration(seconds: 30));
+  }
+
   /// A UI timeout leaves the original send running; retries join that work.
   Future<void> submit(FeedbackDraft draft) {
     try {

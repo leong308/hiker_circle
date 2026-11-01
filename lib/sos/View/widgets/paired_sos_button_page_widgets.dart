@@ -105,21 +105,13 @@ class _ReadinessCard extends StatelessWidget {
     required this.readiness,
     required this.loading,
     required this.onRefresh,
-    required this.onRestartMonitor,
-    required this.onOpenBluetooth,
     required this.onOpenBatterySettings,
-    required this.onLostWarningChanged,
-    required this.onLostThresholdChanged,
   });
 
   final SosButtonReadiness? readiness;
   final bool loading;
   final VoidCallback onRefresh;
-  final VoidCallback onRestartMonitor;
-  final VoidCallback onOpenBluetooth;
   final VoidCallback onOpenBatterySettings;
-  final ValueChanged<bool> onLostWarningChanged;
-  final ValueChanged<Duration> onLostThresholdChanged;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -195,83 +187,20 @@ class _ReadinessCard extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text('Monitor report: $failure'),
               ],
-              const Divider(height: 24),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Lost-button warning'),
-                subtitle: const Text(
-                  'Notify when the paired button stops appearing over BLE.',
+              if (!value.batteryOptimizationExempt)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: OutlinedButton.icon(
+                    onPressed: onOpenBatterySettings,
+                    icon: const Icon(Icons.battery_saver_rounded),
+                    label: const Text('Battery settings'),
+                  ),
                 ),
-                value: value.lostButtonWarningEnabled,
-                onChanged: onLostWarningChanged,
-              ),
-              if (value.lostButtonWarningEnabled)
-                DropdownButtonFormField<Duration>(
-                  initialValue: _supportedThreshold(value.lostButtonThreshold),
-                  decoration: const InputDecoration(
-                    labelText: 'Warn after not seen for',
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: Duration(minutes: 5),
-                      child: Text('5 minutes'),
-                    ),
-                    DropdownMenuItem(
-                      value: Duration(minutes: 15),
-                      child: Text('15 minutes'),
-                    ),
-                    DropdownMenuItem(
-                      value: Duration(minutes: 30),
-                      child: Text('30 minutes'),
-                    ),
-                    DropdownMenuItem(
-                      value: Duration(hours: 1),
-                      child: Text('1 hour'),
-                    ),
-                  ],
-                  onChanged: (duration) {
-                    if (duration != null) onLostThresholdChanged(duration);
-                  },
-                ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: onRestartMonitor,
-                    icon: const Icon(Icons.restart_alt_rounded),
-                    label: const Text('Restart monitor'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: onOpenBluetooth,
-                    icon: const Icon(Icons.bluetooth_rounded),
-                    label: const Text('Bluetooth'),
-                  ),
-                  if (!value.batteryOptimizationExempt)
-                    OutlinedButton.icon(
-                      onPressed: onOpenBatterySettings,
-                      icon: const Icon(Icons.battery_saver_rounded),
-                      label: const Text('Battery settings'),
-                    ),
-                ],
-              ),
             ],
           ],
         ),
       ),
     );
-  }
-
-  /// Computes supported threshold.
-  static Duration _supportedThreshold(Duration value) {
-    const supported = [
-      Duration(minutes: 5),
-      Duration(minutes: 15),
-      Duration(minutes: 30),
-      Duration(hours: 1),
-    ];
-    return supported.contains(value) ? value : const Duration(minutes: 15);
   }
 
   /// Computes readiness line.

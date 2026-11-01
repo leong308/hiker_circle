@@ -1,7 +1,7 @@
 part of '../admin_page_feature.dart';
 
 /// Defines the admin section choices.
-enum AdminSection { overview, hazards, rewards, tools }
+enum AdminSection { overview, hazards, users, tools }
 
 /// Defines the debug section choices.
 enum _DebugSection { firestore, local, runtime }
@@ -70,12 +70,19 @@ class _AdminPageState extends State<AdminPage> {
       );
 
   late final AdminSafetyViewModel _safetyModel;
-  List<Map<String, dynamic>> _achievements = const [];
+  late final AdminUsersViewModel _usersModel;
   bool _isLoading = false;
 
   /// Returns error message.
   String? get _errorMessage => _screenModel.commandErrorMessage;
   late AdminSection _selectedSection;
+
+  /// Drops superadmin-only controls when the shell receives a new account role.
+  @override
+  void didUpdateWidget(covariant AdminPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _usersModel.updateSession(widget.session);
+  }
 
   final _pageScroll = ScrollController();
   String _search = '';
@@ -144,6 +151,7 @@ class _AdminPageState extends State<AdminPage> {
     _pageScroll.dispose();
     _safetyModel.removeListener(_renderScreenModel);
     _safetyModel.dispose();
+    _usersModel.dispose();
 
     _screenModel.removeListener(_renderScreenModel);
     _screenModel.dispose();
@@ -162,6 +170,10 @@ class _AdminPageState extends State<AdminPage> {
     _safetyModel = AdminSafetyViewModel(
       repository: FirebaseAdminSafetyRepository(_repository, widget.session),
     )..addListener(_renderScreenModel);
+    _usersModel = AdminUsersViewModel(
+      session: widget.session,
+      repository: AdminUsersRepository(),
+    );
     _selectedSection = widget.initialSection;
     if (widget.session.isAdmin) unawaited(_loadAdminData());
   }
@@ -171,85 +183,23 @@ class _AdminPageState extends State<AdminPage> {
   Future<void> _loadAdminData() async {
     if (!widget.session.isAdmin) return;
     final revision = ++_adminDataRevision;
-    const sections = {AdminSection.rewards};
     setState(() {
       _isLoading = true;
-      _loadingSections.addAll(sections);
-      _sectionErrors.clear();
     });
     await Future.wait<void>([
       _loadAnalytics(forceRefresh: _analytics != null),
       if (_selectedSection == AdminSection.hazards || _safetyModel.hasData)
         _safetyModel.refresh(),
-      _loadSection(
-        AdminSection.rewards,
-        revision,
-        () => _AdminPageDataActions.loadAdminAchievements(_repository)(
-          session: widget.session,
-        ),
-        (data) => _achievements = data,
-      ),
+      _usersModel.refresh(),
     ]);
     if (mounted && revision == _adminDataRevision) {
       setState(() => _isLoading = false);
     }
   }
 
-  /// Delegates load section to the ViewModel.
-  Future<void> _loadSection<T>(
-    AdminSection section,
-    int revision,
-    Future<T> Function() load,
-    void Function(T) apply,
-  ) => _screenModel.commandLoadSection<T>(section, revision, load, apply);
-
-  /// Computes management content.
-  Widget _managementContent(AdminSection section, Widget child) {
-    final error = _sectionErrors[section];
-    final loading = _loadingSections.contains(section);
-    final hasData = _sectionLoadedAt.containsKey(section);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (loading) ...[
-          const LinearProgressIndicator(minHeight: 3),
-          const SizedBox(height: 12),
-        ],
-        if (error != null) ...[
-          AdminPanel(
-            key: ValueKey('admin-error-${section.name}'),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  hasData
-                      ? 'Could not refresh this section'
-                      : 'This section is unavailable',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                Text(error),
-                if (hasData) ...[
-                  const SizedBox(height: 6),
-                  const Text('Showing the last loaded records.'),
-                ],
-                TextButton.icon(
-                  onPressed: loading ? null : () => unawaited(_loadAdminData()),
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Retry'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-        ],
-        if (hasData) child,
-      ],
-    );
-  }
-
   /// Returns section load summary.
   String get _sectionLoadSummary {
+    if (_selectedSection == AdminSection.users) return '';
     if (_selectedSection == AdminSection.overview) {
       return _analyticsLoading
           ? 'Refreshing statistics…'
@@ -284,15 +234,6 @@ class _AdminPageState extends State<AdminPage> {
         ? 'Records have not loaded yet'
         : 'Updated at ${loaded.hour.toString().padLeft(2, '0')}:${loaded.minute.toString().padLeft(2, '0')}';
   }
-
-  /// Wait for the mutation and refreshed server state before showing an administrator success message.
-  Future<void> _runAdminAction({
-    required Future<void> Function() action,
-    required String successMessage,
-  }) => _screenModel.commandRunAdminAction(
-    action: action,
-    successMessage: successMessage,
-  );
 
   /// Shows snack.
   void _showSnack(String message, {bool isError = false}) {
@@ -469,53 +410,6 @@ class _AdminPageState extends State<AdminPage> {
     }
   }
 
-  /// Computes edit achievement.
-  Future<void> _editAchievement(Map<String, dynamic> achievement) async {
-    final values = await _showAchievementEditor(initial: achievement);
-    if (values == null || !mounted) {
-      return;
-    }
-    await _runAdminAction(
-      successMessage: 'Achievement updated.',
-      action: () async {
-        await _AdminPageDataActions.saveAchievementByAdmin(_repository)(
-          session: widget.session,
-          achievementId: _stringFrom(achievement['achievementId']),
-          achievement: values,
-        );
-      },
-    );
-  }
-
-  /// Toggles achievement.
-  Future<void> _toggleAchievement(Map<String, dynamic> achievement) async {
-    final nextActive = achievement['isActive'] == false;
-    await _runAdminAction(
-      successMessage: nextActive
-          ? 'Achievement activated.'
-          : 'Achievement archived.',
-      action: () async {
-        await _AdminPageDataActions.setAchievementActiveByAdmin(_repository)(
-          session: widget.session,
-          achievementId: _stringFrom(achievement['achievementId']),
-          isActive: nextActive,
-        );
-      },
-    );
-  }
-
-  /// Shows achievement editor.
-  Future<Map<String, dynamic>?> _showAchievementEditor({
-    Map<String, dynamic>? initial,
-  }) {
-    return showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => AchievementEditorSheet(initial: initial),
-    );
-  }
-
   /// Loads runtime debug data.
   void _loadRuntimeDebugData() {
     final session = widget.session;
@@ -563,7 +457,7 @@ class _AdminPageState extends State<AdminPage> {
           'loadedHazardReports': _safetyModel.reports
               .map((report) => report.data)
               .toList(),
-          'loadedAchievements': _achievements,
+          'loadedUsers': _usersModel.users.length,
           'adminError': _errorMessage,
           'debugError': _debugError,
         },
@@ -599,17 +493,11 @@ class _AdminPageState extends State<AdminPage> {
       return const _AdminLockedState();
     }
 
-    final title = switch (_selectedSection) {
-      AdminSection.overview => 'Dashboard',
-      AdminSection.hazards => 'Trail safety',
-      AdminSection.rewards => 'Rewards',
-      AdminSection.tools => 'Admin tools',
-    };
     final subtitle = switch (_selectedSection) {
       AdminSection.overview => 'System analysis and operations',
       AdminSection.hazards =>
         'Follow trail cautions from report to resolution.',
-      AdminSection.rewards => 'Create rewards and milestones for your hikers.',
+      AdminSection.users => 'Hiker usernames, phone numbers and roles.',
       AdminSection.tools => 'Support hikers and inspect app activity.',
     };
     final content = switch (_selectedSection) {
@@ -626,23 +514,9 @@ class _AdminPageState extends State<AdminPage> {
           ),
         ),
         onSafety: () => _selectSection(AdminSection.hazards),
-        onRewards: () => _selectSection(AdminSection.rewards),
       ),
       AdminSection.hazards => AdminSafetySection(model: _safetyModel),
-      AdminSection.rewards => _managementContent(
-        AdminSection.rewards,
-        _AchievementManagementSection(
-          achievements: _achievements
-              .where(
-                (row) => row.values.join(' ').toLowerCase().contains(_search),
-              )
-              .toList(),
-          isSaving: _isSaving,
-          onEdit: (achievement) => unawaited(_editAchievement(achievement)),
-          onToggleActive: (achievement) =>
-              unawaited(_toggleAchievement(achievement)),
-        ),
-      ),
+      AdminSection.users => AdminUsersSection(model: _usersModel),
       AdminSection.tools => _AdminTileGrid(
         children: [
           _AdminDashboardCard(
@@ -748,7 +622,7 @@ class _AdminPageState extends State<AdminPage> {
                           )
                         else
                           _AdminHeader(
-                            title: title,
+                            title: 'Dashboard',
                             subtitle: subtitle,
                             isLoading: _isLoading,
                             onRefresh: () => unawaited(_loadAdminData()),
@@ -769,7 +643,8 @@ class _AdminPageState extends State<AdminPage> {
                             selected: _selectedSection,
                             onSelect: _selectSection,
                           ),
-                          if (_selectedSection != AdminSection.overview) ...[
+                          if (_selectedSection != AdminSection.overview &&
+                              _selectedSection != AdminSection.users) ...[
                             const SizedBox(height: 12),
                             Text(
                               _sectionLoadSummary,
@@ -781,8 +656,7 @@ class _AdminPageState extends State<AdminPage> {
                                   ),
                             ),
                           ],
-                          if (_selectedSection != AdminSection.overview &&
-                              _selectedSection != AdminSection.tools) ...[
+                          if (_selectedSection == AdminSection.hazards) ...[
                             const SizedBox(height: 18),
                             TextField(
                               key: ValueKey(
@@ -1020,7 +894,7 @@ class _AdminNavigationState extends State<_AdminNavigation> {
       switch (section) {
         AdminSection.overview => Icons.grid_view_rounded,
         AdminSection.hazards => Icons.shield_outlined,
-        AdminSection.rewards => Icons.emoji_events_outlined,
+        AdminSection.users => Icons.people_outline_rounded,
         AdminSection.tools => Icons.tune_rounded,
       },
       size: 19,
@@ -1030,7 +904,7 @@ class _AdminNavigationState extends State<_AdminNavigation> {
       switch (section) {
         AdminSection.overview => 'Overview',
         AdminSection.hazards => 'Safety',
-        AdminSection.rewards => 'Rewards',
+        AdminSection.users => 'Users',
         AdminSection.tools => 'Tools',
       },
       maxLines: 1,
@@ -1099,21 +973,16 @@ class _AdminTileGrid extends StatelessWidget {
 /// Displays the admin notice.
 class _AdminNotice extends StatelessWidget {
   /// Creates admin notice.
-  const _AdminNotice({required this.message, this.isError = true});
+  const _AdminNotice({required this.message});
 
   final String message;
-  final bool isError;
 
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color:
-            (isError
-                    ? _AdminColors.redFor(context)
-                    : _AdminColors.secondaryTextFor(context))
-                .withValues(alpha: 0.1),
+        color: _AdminColors.redFor(context).withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -1121,9 +990,7 @@ class _AdminNotice extends StatelessWidget {
         child: Text(
           message,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: (isError
-                ? _AdminColors.redFor(context)
-                : _AdminColors.secondaryTextFor(context)),
+            color: _AdminColors.redFor(context),
             fontWeight: FontWeight.w700,
             letterSpacing: 0,
           ),
@@ -1494,19 +1361,7 @@ class _RuntimeDebugView extends StatelessWidget {
   }
 }
 
-/// Computes string from.
-String _stringFrom(Object? value) {
-  return value is String ? value : '';
-}
-
-/// Computes int from.
-int _intFrom(Object? value) {
-  return value is num && value.isFinite
-      ? value.toInt()
-      : int.tryParse('$value') ?? 0;
-}
-
-/// Represents admin colors.
+/// Shares the existing dashboard palette across admin sections.
 abstract final class _AdminColors {
   static const Color green = Color(0xFF3C8964);
   static const Color greenSoft = Color(0xFFEAF7EE);

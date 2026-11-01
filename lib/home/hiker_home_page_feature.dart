@@ -1,6 +1,7 @@
 import 'ModelView/upcoming_hike_start_resolver.dart';
 import '../achievements/Model/achievement_catalog.dart';
 import '../core/widgets/section_label.dart';
+import '../core/services/sos_button_notification_history.dart';
 import 'View/hike_safety_settings_page.dart';
 import 'Model/hike_safety_preferences.dart';
 import 'View/fall_sensitivity_setting.dart';
@@ -95,6 +96,8 @@ import 'Data/location_update_interval_controller.dart';
 import 'Data/active_hike_cloud_sync_coordinator.dart';
 import 'Data/active_hike_weather_controller.dart';
 import '../app/Data/local_session_database.dart';
+import '../feedback/feedback_repository.dart';
+import '../core/services/chat_mute_store.dart';
 import 'View/active_hike_weather_sheet.dart';
 import 'Data/active_hike_live_status_service.dart';
 import 'Data/planned_hike_state_service.dart';

@@ -79,6 +79,9 @@ class PairedSosButtonRegistry(context: Context) {
 
     fun hasActiveOwnerScope(): Boolean = activeOwnerScope() != null
 
+    /** Reject notification-history reads from a displaced app account. */
+    fun matchesActiveAccount(accountId: String?): Boolean = accountId != null && activeOwnerScope() == ownerScopeFor(accountId)
+
     fun activeOwnerScopeToken(): String? = activeOwnerScope()
 
     fun buttons(): List<Button> = readButtons()

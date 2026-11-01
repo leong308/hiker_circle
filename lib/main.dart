@@ -39,6 +39,7 @@ Future<void> hikerCircleFirebaseMessagingBackgroundHandler(
     message,
     source: 'fcm_background',
   );
+  await DeviceNotificationLogService.presentBackgroundChat(message);
 }
 
 /// Finish Firebase and settings initialization before building the first themed screen.

@@ -152,13 +152,6 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
   /// Delegates refresh readiness to the ViewModel.
   Future<void> _refreshReadiness() => _screenModel.commandRefreshReadiness();
 
-  /// Delegates restart monitor to the ViewModel.
-  Future<void> _restartMonitor() => _screenModel.commandRestartMonitor();
-
-  /// Delegates set lost warning to the ViewModel.
-  Future<void> _setLostWarning(bool enabled, {Duration? threshold}) =>
-      _screenModel.commandSetLostWarning(enabled, threshold: threshold);
-
   /// Delegates open pairing guide to the ViewModel.
   Future<void> _openPairingGuide() => _screenModel.commandOpenPairingGuide();
 
@@ -389,14 +382,8 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
             readiness: _readiness,
             loading: _readinessLoading,
             onRefresh: () => unawaited(_refreshReadiness()),
-            onRestartMonitor: () => unawaited(_restartMonitor()),
-            onOpenBluetooth: () => unawaited(_ble.openBluetoothSettings()),
             onOpenBatterySettings: () =>
                 unawaited(_ble.openBatteryOptimizationSettings()),
-            onLostWarningChanged: (enabled) =>
-                unawaited(_setLostWarning(enabled)),
-            onLostThresholdChanged: (threshold) =>
-                unawaited(_setLostWarning(true, threshold: threshold)),
           ),
           if (_message != null) ...[
             const SizedBox(height: 12),
@@ -476,91 +463,24 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
               ),
             )
           else
-            ..._paired.map(
-              (button) => Card(
-                elevation: 0,
-                margin: const EdgeInsets.only(bottom: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  side: BorderSide(color: scheme.outlineVariant),
-                ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 6,
-                  ),
-                  leading: CircleAvatar(
-                    backgroundColor: scheme.secondaryContainer,
-                    foregroundColor: scheme.onSecondaryContainer,
-                    child: const Icon(Icons.sos_rounded),
-                  ),
-                  title: Text(
-                    button.displayName,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  subtitle: Text(
-                    'ID ${button.deviceId}\n'
-                    'Last seen: ${button.lastSeenAt?.toLocal() ?? 'Not seen yet'}',
-                  ),
-                  isThreeLine: true,
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_testingButtonFor == button.deviceId)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
-                          child: SizedBox.square(
-                            dimension: 20,
-                            child: HikerCircleMinorLoadingIndicator(
-                              strokeWidth: 2,
-                            ),
-                          ),
-                        )
-                      else
-                        IconButton(
-                          icon: const Icon(Icons.play_circle_outline_rounded),
-                          tooltip: 'Test SOS button',
-                          onPressed:
-                              _pairingInProgress ||
-                                  _downloadingLogsFor != null ||
-                                  _testingButtonFor != null
-                              ? null
-                              : () => _testButtonConnection(button),
-                        ),
-                      if (_downloadingLogsFor == button.deviceId)
-                        const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: HikerCircleMinorLoadingIndicator(
-                            strokeWidth: 2,
-                          ),
-                        )
-                      else
-                        IconButton(
-                          icon: const Icon(Icons.history_rounded),
-                          tooltip: 'Download event log',
-                          onPressed:
-                              _pairingInProgress ||
-                                  _downloadingLogsFor != null ||
-                                  _testingButtonFor != null
-                              ? null
-                              : () => _downloadLogs(button),
-                        ),
-                      IconButton(
-                        icon: const Icon(Icons.link_off_rounded),
-                        tooltip: 'Unpair',
-                        onPressed:
-                            _pairingInProgress ||
-                                _downloadingLogsFor != null ||
-                                _testingButtonFor != null
-                            ? null
-                            : () => _unpair(button),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+            ..._paired.map((button) {
+              final busy =
+                  _pairingInProgress ||
+                  _downloadingLogsFor != null ||
+                  _testingButtonFor != null;
+              return PairedSosButtonCard(
+                key: ValueKey(button.deviceId),
+                button: button,
+                checkedAt: _readiness?.checkedAt ?? DateTime.now().toUtc(),
+                testing: _testingButtonFor == button.deviceId,
+                downloading: _downloadingLogsFor == button.deviceId,
+                onTest: busy
+                    ? null
+                    : () => unawaited(_testButtonConnection(button)),
+                onLogs: busy ? null : () => unawaited(_downloadLogs(button)),
+                onUnpair: busy ? null : () => unawaited(_unpair(button)),
+              );
+            }),
         ],
       ),
     );

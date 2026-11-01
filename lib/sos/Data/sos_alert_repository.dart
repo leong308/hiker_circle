@@ -391,15 +391,25 @@ class SosAlertRepository {
   Future<void> pushCloudCustomNote(
     AppSession session,
     SosAlertMode mode,
-    String note,
-  ) async {
-    await _userDocumentFor(session).set({
-      'sosWhatsappNotes': {mode.firestoreValue: note},
-      'sosWhatsappNotesUpdatedAt': FieldValue.serverTimestamp(),
-      'sosWhatsappNotesUpdatedAtLocal': DateTime.now()
-          .toUtc()
-          .toIso8601String(),
-    }, SetOptions(merge: true));
+    String note, {
+    int? operationSeq,
+  }) async {
+    final response = await FirebaseFunctions.instance
+        .httpsCallable(
+          'syncSafetyPreferences',
+          options: HttpsCallableOptions(timeout: _cloudWriteTimeout),
+        )
+        .call<Map<String, dynamic>>({
+          'expectedOwner': session.phoneNumber,
+          'field': 'sosWhatsappNotes.${mode.firestoreValue}',
+          'value': note,
+          'operationSeq': operationSeq,
+        })
+        .timeout(_cloudWriteTimeout);
+    if (response.data['confirmed'] != true ||
+        response.data['superseded'] == true) {
+      throw const SosAlertRepositoryException('The note was not acknowledged.');
+    }
   }
 
   /// Computes push custom note.
@@ -410,16 +420,22 @@ class SosAlertRepository {
   ) async {
     final revision = _noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0;
     final key = 'sos_whatsapp_note_${mode.firestoreValue}';
-    final pending = await _localDatabase.loadLocalPreference(
-      ownerPhoneNumber: session.phoneNumber,
-      key: key,
+    final snapshot = await _localDatabase.loadVersionedPreference(
+      session.phoneNumber,
+      key,
     );
+    final pending = snapshot.value;
     if (pending != note ||
         revision !=
             (_noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0)) {
       return;
     }
-    await pushCloudCustomNote(session, mode, note).timeout(_cloudWriteTimeout);
+    await pushCloudCustomNote(
+      session,
+      mode,
+      note,
+      operationSeq: snapshot.sequence,
+    ).timeout(_cloudWriteTimeout);
     await _readCache.invalidate(
       owner: session.phoneNumber,
       type: 'mobile_sos_preferences',
@@ -429,7 +445,12 @@ class SosAlertRepository {
       ownerPhoneNumber: session.phoneNumber,
       key: key,
     );
-    if (latest == note &&
+    if ((await _localDatabase.loadVersionedPreference(
+              session.phoneNumber,
+              key,
+            )).sequence ==
+            snapshot.sequence &&
+        latest == note &&
         revision ==
             (_noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0)) {
       await _localDatabase.markLocalPreferenceSynced(
@@ -466,11 +487,10 @@ class SosAlertRepository {
     final revisionKey = '${session.phoneNumber}:${mode.name}';
     final revision = (_noteRevisions[revisionKey] ?? 0) + 1;
     _noteRevisions[revisionKey] = revision;
-    await _localDatabase.saveLocalPreference(
-      ownerPhoneNumber: session.phoneNumber,
-      key: preferenceKey,
-      value: normalizedNote,
-      isDirty: true,
+    await _localDatabase.saveVersionedDirtyPreference(
+      session.phoneNumber,
+      preferenceKey,
+      normalizedNote,
     );
     if (_noteRevisions[revisionKey] == revision) {
       _customNoteChanges.add(

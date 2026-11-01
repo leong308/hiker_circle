@@ -408,6 +408,18 @@ import ActivityKit
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
+    if response.notification.request.identifier.hasPrefix("hiker_circle.sos_button.") {
+      DispatchQueue.main.async {
+        if self.hikerBleBridge?.acceptsPresenceNotification(response.notification.request.content.userInfo) == true,
+           let link = response.notification.request.content.userInfo["deepLink"] as? String {
+          self.hikerBleBridge?.presenceNotificationDelivered()
+          self.pendingDeepLink = link
+          self.deepLinkChannel?.invokeMethod("onDeepLink", arguments: link)
+        }
+        completionHandler()
+      }
+      return
+    }
     if response.notification.request.identifier.hasPrefix(HikeArrivalSafety.notificationPrefix),
        let link = response.notification.request.content.userInfo["deepLink"] as? String {
       pendingDeepLink = link
@@ -439,6 +451,14 @@ import ActivityKit
   /// Delivers the spoken local warning in the foreground as well as while the app is backgrounded.
   override func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
       withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    if notification.request.identifier.hasPrefix("hiker_circle.sos_button.") {
+      DispatchQueue.main.async {
+        guard self.hikerBleBridge?.acceptsPresenceNotification(notification.request.content.userInfo) == true else { completionHandler([]); return }
+        self.hikerBleBridge?.presenceNotificationDelivered()
+        completionHandler([.banner, .list, .sound])
+      }
+      return
+    }
     if notification.request.identifier.hasPrefix(HikeArrivalSafety.notificationPrefix) {
       arrivalSafetyChannel?.invokeMethod("onArrivalSafetyChanged", arguments: nil)
       completionHandler([.banner, .list, .sound])

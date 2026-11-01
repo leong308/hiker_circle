@@ -434,6 +434,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
   /// Loads cached community posts.
   Future<List<Map<String, dynamic>>> loadCachedCommunityPosts({
     String ownerPhoneNumber = '',
+    String? postId,
     String? authorId,
     String? afterPostId,
     int limit = 20,
@@ -441,10 +442,12 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     final db = await _openDatabase();
     final where = <String>[
       "p.visibility = 'public'",
+      if (postId != null) 'p.post_id = ?',
       if (authorId != null) 'p.author_id = ?',
     ];
     final args = <Object?>[
       ownerPhoneNumber.trim(),
+      if (postId != null) postId,
       if (authorId != null) authorId,
     ];
     if (afterPostId?.isNotEmpty == true) {

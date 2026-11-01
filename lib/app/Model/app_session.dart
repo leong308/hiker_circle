@@ -10,19 +10,22 @@ class AppSession {
     required this.signedInAt,
     DateTime? createdAt,
     this.appInstanceId = '',
-    this.isAdmin = false,
+    bool isAdmin = false,
+    this.isSuperAdmin = false,
     this.username = '',
     this.requiresOnboarding = false,
     this.isOnboardingProfileComplete = false,
     this.photoURL,
     this.photoBytes,
-  }) : createdAt = createdAt ?? signedInAt;
+  }) : createdAt = createdAt ?? signedInAt,
+       isAdmin = isAdmin || isSuperAdmin;
 
   final String phoneNumber;
   final DateTime signedInAt;
   final DateTime createdAt;
   final String appInstanceId;
   final bool isAdmin;
+  final bool isSuperAdmin;
   final String username;
   final bool requiresOnboarding;
   final bool isOnboardingProfileComplete;
@@ -36,6 +39,7 @@ class AppSession {
     DateTime? createdAt,
     String? appInstanceId,
     bool? isAdmin,
+    bool? isSuperAdmin,
     String? username,
     bool? requiresOnboarding,
     bool? isOnboardingProfileComplete,
@@ -48,6 +52,7 @@ class AppSession {
       createdAt: createdAt ?? this.createdAt,
       appInstanceId: appInstanceId ?? this.appInstanceId,
       isAdmin: isAdmin ?? this.isAdmin,
+      isSuperAdmin: isSuperAdmin ?? this.isSuperAdmin,
       username: username ?? this.username,
       requiresOnboarding: requiresOnboarding ?? this.requiresOnboarding,
       isOnboardingProfileComplete:

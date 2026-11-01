@@ -1,5 +1,8 @@
 // Records device-generated and push messages in account-scoped local history.
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'dart:convert';
+import 'chat_mute_store.dart';
 
 import '../../app/Data/local_session_database.dart';
 
@@ -47,6 +50,14 @@ abstract final class DeviceNotificationLogService {
       if (phoneNumber == null || phoneNumber.trim().isEmpty) {
         return;
       }
+      if (!opened &&
+          await ChatMuteStore.suppress(
+            message.data,
+            owner: phoneNumber,
+            database: database,
+          )) {
+        return;
+      }
       final data = <String, String>{
         for (final entry in message.data.entries)
           entry.key: entry.value?.toString() ?? '',
@@ -72,6 +83,42 @@ abstract final class DeviceNotificationLogService {
     } catch (_) {
       return;
     }
+  }
+
+  /// Data-only chat pushes are displayed locally after the device's mute filter runs.
+  static Future<void> presentBackgroundChat(RemoteMessage message) async {
+    if (message.data['type'] != 'group_chat_message' ||
+        await ChatMuteStore.suppress(message.data)) {
+      return;
+    }
+    final plugin = FlutterLocalNotificationsPlugin();
+    await plugin.initialize(
+      settings: const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        ),
+      ),
+    );
+    await plugin.show(
+      id:
+          (message.data['messageId'] ?? message.messageId ?? '').hashCode &
+          0x7fffffff,
+      title: message.data['title']?.toString() ?? 'New message',
+      body: message.data['body']?.toString() ?? '',
+      notificationDetails: const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'hiker_circle_chats',
+          'Chat messages',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+        iOS: DarwinNotificationDetails(presentAlert: true, presentSound: true),
+      ),
+      payload: jsonEncode(message.data),
+    );
   }
 
   /// Computes string from message data.

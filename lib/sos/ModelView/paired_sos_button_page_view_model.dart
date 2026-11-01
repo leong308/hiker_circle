@@ -29,6 +29,8 @@ class _PairedSosButtonPageStateViewModel extends ChangeNotifier {
   SosButtonReadiness? stateReadiness;
 
   bool stateReadinessLoading = false;
+  StreamSubscription<HikerBleEvent>? _presenceSubscription;
+  bool _refreshAgain = false;
 
   /// Computes initialize.
   Future<void> commandInitialize() async {
@@ -36,8 +38,17 @@ class _PairedSosButtonPageStateViewModel extends ChangeNotifier {
       await stateBle.setActiveSosAccount(readAccountId());
       if (!mounted) return;
       stateAccountReady = true;
+      _presenceSubscription ??= stateBle.events.listen((event) {
+        if (event is HikerBleStatusEvent &&
+            {
+              'paired_button_presence_changed',
+              'paired_button_notice',
+              'paired_button_paired',
+            }.contains(event.status)) {
+          unawaited(commandRefreshReadiness());
+        }
+      }, onError: (Object _) {});
       await commandLoadPaired();
-      await commandRefreshReadiness();
     } on HikerBleException catch (error) {
       if (!mounted) return;
       _publish(() => stateMessage = error.message);
@@ -59,9 +70,12 @@ class _PairedSosButtonPageStateViewModel extends ChangeNotifier {
       final paired = await stateBle.listPairedSosButtons();
       if (mounted) {
         _publish(() {
-          statePaired = paired;
+          if (stateReadiness == null || !stateReadiness!.supported) {
+            statePaired = paired;
+          }
           stateRegistryNeedsReset = false;
         });
+        await commandRefreshReadiness();
       }
     } on HikerBleException {
       if (mounted) _publish(() => stateRegistryNeedsReset = true);
@@ -71,39 +85,31 @@ class _PairedSosButtonPageStateViewModel extends ChangeNotifier {
 
   /// Refreshes readiness.
   Future<void> commandRefreshReadiness() async {
-    if (stateReadinessLoading) return;
+    if (stateReadinessLoading) {
+      _refreshAgain = true;
+      return;
+    }
     if (mounted) _publish(() => stateReadinessLoading = true);
     try {
       final readiness = await stateBle.getSosButtonReadiness();
-      if (mounted) _publish(() => stateReadiness = readiness);
+      if (mounted) {
+        _publish(() {
+          stateReadiness = readiness;
+          // Both sections must render the exact same native presence snapshot.
+          if (readiness.supported) statePaired = readiness.pairedButtons;
+        });
+      }
     } on HikerBleException catch (error) {
       if (mounted) _publish(() => stateMessage = error.message);
     } finally {
-      if (mounted) _publish(() => stateReadinessLoading = false);
+      if (mounted) {
+        _publish(() => stateReadinessLoading = false);
+        if (_refreshAgain) {
+          _refreshAgain = false;
+          unawaited(commandRefreshReadiness());
+        }
+      }
     }
-  }
-
-  /// Computes restart monitor.
-  Future<void> commandRestartMonitor() async {
-    await stateBle.restartSosButtonMonitor();
-    await Future<void>.delayed(const Duration(milliseconds: 600));
-    await commandRefreshReadiness();
-  }
-
-  /// Sets lost warning.
-  Future<void> commandSetLostWarning(
-    bool enabled, {
-    Duration? threshold,
-  }) async {
-    final current = stateReadiness;
-    await stateBle.setLostButtonWarning(
-      enabled: enabled,
-      threshold:
-          threshold ??
-          current?.lostButtonThreshold ??
-          const Duration(minutes: 15),
-    );
-    await commandRefreshReadiness();
   }
 
   /// Formats uptime.
@@ -128,6 +134,7 @@ class _PairedSosButtonPageStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_presenceSubscription?.cancel());
     super.dispose();
   }
 

@@ -42,12 +42,14 @@ service cloud.firestore {
     // a login-time claim so promotion and revocation apply to existing sessions.
     function administratorAccount(account) {
       return account.get('isAdmin', false) == true
+        || account.get('isSuperAdmin', false) == true
         || (account.get('role', '') is string
-          && account.get('role', '').lower() in ['admin', 'super_admin'])
+          && account.get('role', '').lower() in ['admin', 'super_admin', 'superadmin', 'super-admin'])
         // Rules cannot map list strings to lowercase. These exact variants
         // match the app's case-insensitive role policy without substring grants.
         || (account.get('roles', []) is list
           && account.get('roles', []).hasAny([
+            'super_admin', 'superadmin', 'super-admin', 'SUPER_ADMIN', 'SUPERADMIN', 'SuperAdmin',
             'admin', 'admiN', 'admIn', 'admIN', 'adMin', 'adMiN', 'adMIn', 'adMIN',
             'aDmin', 'aDmiN', 'aDmIn', 'aDmIN', 'aDMin', 'aDMiN', 'aDMIn', 'aDMIN',
             'Admin', 'AdmiN', 'AdmIn', 'AdmIN', 'AdMin', 'AdMiN', 'AdMIn', 'AdMIN',
@@ -371,7 +373,7 @@ service cloud.firestore {
 
     function accountFieldsOnly(data) {
       return data.keys().hasOnly([
-        'phoneNumber', 'createdAt', 'createdAtLocal', 'isAdmin', 'role', 'roles',
+        'phoneNumber', 'createdAt', 'createdAtLocal', 'isAdmin', 'isSuperAdmin', 'role', 'roles',
         'accountDisabled', 'status'
       ]);
     }
@@ -379,14 +381,15 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if signedIn() && (request.auth.uid == userId || admin());
       allow create: if accountFieldsOnly(request.resource.data) && (
-        admin() || (ownAccount(userId)
+        (admin() && !request.resource.data.keys().hasAny(['isAdmin', 'isSuperAdmin', 'role', 'roles'])) || (ownAccount(userId)
           && request.resource.data.phoneNumber == phoneNumber()
           && request.resource.data.keys().hasOnly([
             'phoneNumber', 'createdAt', 'createdAtLocal'
           ]))
       );
-      allow update: if admin() && accountFieldsOnly(request.resource.data);
-      allow delete: if admin();
+      allow update: if admin() && accountFieldsOnly(request.resource.data)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin', 'isSuperAdmin', 'role', 'roles']);
+      allow delete: if admin() && !administratorAccount(resource.data);
     }
 
     function profileFieldsOnly(data) {
@@ -402,7 +405,7 @@ service cloud.firestore {
         'boundAppInstanceId', 'boundAppInstanceUpdatedAt',
         'boundAppInstanceUpdatedAtLocal', 'previousBoundAppInstanceId',
         'deviceReboundAt', 'deviceReboundAtLocal', 'deviceRebindVerifiedBy',
-        'fcmTokenByAppId', 'lastFcmTokenUpdatedAt', 'lastFcmTokenUpdatedAtLocal',
+        'fcmTokenByAppId', 'fcmTokenByAppIdCapabilities', 'lastFcmTokenUpdatedAt', 'lastFcmTokenUpdatedAtLocal',
         'lastSignedInAt', 'lastSignedInAtLocal'
       ]) && (!data.keys().hasAny(['fcmTokenByAppId'])
         || data.fcmTokenByAppId is map);
@@ -421,7 +424,7 @@ service cloud.firestore {
     }
 
     function sosFieldsOnly(data) {
-      return data.keys().hasOnly([
+      return data.keys().hasOnly(['sosNoteOperations', 'sosContactsCloudOnly',
         'sos_contacts', 'sosContactsCount', 'sosContactsUpdatedAt',
         'sosContactsUpdatedAtLocal', 'sosWhatsappNotes',
         'sosWhatsappNotesUpdatedAt', 'sosWhatsappNotesUpdatedAtLocal',
@@ -451,8 +454,8 @@ service cloud.firestore {
         (moduleId == 'profile' && profileFieldsOnly(request.resource.data))
         || (moduleId == 'devices' && deviceFieldsOnly(request.resource.data)
           && (request.method == 'create'
-            ? request.resource.data.keys().hasOnly(['fcmTokenByAppId', 'lastFcmTokenUpdatedAt', 'lastFcmTokenUpdatedAtLocal'])
-            : request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmTokenByAppId', 'lastFcmTokenUpdatedAt', 'lastFcmTokenUpdatedAtLocal'])))
+            ? request.resource.data.keys().hasOnly(['fcmTokenByAppId', 'fcmTokenByAppIdCapabilities', 'lastFcmTokenUpdatedAt', 'lastFcmTokenUpdatedAtLocal'])
+            : request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmTokenByAppId', 'fcmTokenByAppIdCapabilities', 'lastFcmTokenUpdatedAt', 'lastFcmTokenUpdatedAtLocal'])))
         || (moduleId == 'preferences'
           && preferenceFieldsOnly(request.resource.data))
         || (moduleId == 'safety' && request.resource.data.keys().hasOnly([
@@ -465,10 +468,16 @@ service cloud.firestore {
             : !request.resource.data.diff(resource.data).affectedKeys().hasAny(['liveLocationStartedAt', 'liveLocationStartedAtLocal'])))
       );
       allow create: if ownAccount(userId) && moduleId == 'sos'
+        && !request.resource.data.keys().hasAny(['sosNoteOperations', 'sosContactsCloudOnly'])
         && sosFieldsOnly(request.resource.data)
         && validEmergencyContactsOnCreate(request.resource.data)
         && validSosWhatsappNotesOnCreate(request.resource.data);
       allow update: if ownAccount(userId) && moduleId == 'sos'
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sosNoteOperations', 'sosContactsCloudOnly'])
+        && (!resource.data.get('sosContactsCloudOnly', false)
+          || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sos_contacts', 'sosContactsCount']))
+        && (!resource.data.keys().hasAny(['sosNoteOperations'])
+          || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sosWhatsappNotes']))
         && sosFieldsOnly(request.resource.data)
         && validEmergencyContactsOnUpdate()
         && validSosWhatsappNotesOnUpdate();
@@ -965,6 +974,17 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
         && request.resource.data.status in ['New', 'In review', 'Resolved'];
       allow delete: if admin();
+    }
+
+    // Hash manifests contain private query identities and are served only by authorized callables.
+    match /userRoleHistory/{document} {
+      allow read, write: if false;
+    }
+    match /syncManifests/{document} {
+      allow read, write: if false;
+    }
+    match /syncManifestSources/{document} {
+      allow read, write: if false;
     }
 
     match /{document=**} {

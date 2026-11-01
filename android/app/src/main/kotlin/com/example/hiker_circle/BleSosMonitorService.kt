@@ -78,6 +78,7 @@ class BleSosMonitorService : Service() {
         private const val MAX_HELP_PACKET_AGE_MILLIS = 5 * 60 * 1000L
         private const val MAX_HELP_PACKET_FUTURE_SKEW_MILLIS = 2 * 60 * 1000L
         private const val MAX_CANDIDATE_PACKAGE_LOGS = 40
+        const val ACTION_BUTTON_PRESENCE = "com.leongziqi.hikercircle.BUTTON_PRESENCE"
         const val MONITOR_PREFS = "hiker_circle_ble_monitor"
         const val MONITOR_ENABLED = "enabled"
         const val MONITOR_HEARTBEAT_AT_MILLIS = "heartbeatAtMillis"
@@ -89,7 +90,7 @@ class BleSosMonitorService : Service() {
         const val LOST_BUTTON_WARNING_ENABLED = "lostButtonWarningEnabled"
         const val LOST_BUTTON_THRESHOLD_MILLIS = "lostButtonThresholdMillis"
         private const val HANDLED_EVENTS = "handledEvents"
-        private const val DEFAULT_LOST_BUTTON_THRESHOLD_MILLIS = 15 * 60 * 1000L
+        private const val DEFAULT_LOST_BUTTON_THRESHOLD_MILLIS = 60 * 60 * 1000L
         private const val PRESENCE_WRITE_INTERVAL_MILLIS = 30_000L
         private const val WATCHDOG_INTERVAL_MILLIS = 30_000L
         private const val PAIRED_TEST_DEVICE_ID = "pairedTestDeviceId"
@@ -515,6 +516,7 @@ class BleSosMonitorService : Service() {
             rememberHandledEvent(fingerprint)
             val accepted = runCatching {
                 pairedButtonRegistry.markSeen(packet.deviceId, packet.eventId, accepted = true)
+                recordAcceptedPresence(packet.deviceId, owner.lastSeenAtMillis, now)
             }.onFailure {
                 Log.e(TAG, "Unable to persist paired SOS test replay state", it)
             }.isSuccess
@@ -539,6 +541,7 @@ class BleSosMonitorService : Service() {
             rememberHandledEvent(fingerprint)
             runCatching {
                 pairedButtonRegistry.markSeen(packet.deviceId, packet.eventId, accepted = true)
+                recordAcceptedPresence(packet.deviceId, owner.lastSeenAtMillis, now)
             }
             Log.w(TAG, "Unexpected authenticated test packet ignored safely")
             return
@@ -553,6 +556,7 @@ class BleSosMonitorService : Service() {
             rememberHandledEvent(fingerprint)
             runCatching {
                 pairedButtonRegistry.markSeen(packet.deviceId, packet.eventId, accepted = true)
+                recordAcceptedPresence(packet.deviceId, owner.lastSeenAtMillis, now)
             }.onFailure {
                 // The durable event still survives. A duplicate after process
                 // death is safer than losing an emergency.
@@ -1137,14 +1141,29 @@ class BleSosMonitorService : Service() {
         val previous = lastPresenceWriteAtMillis[address] ?: 0L
         if (now - previous < PRESENCE_WRITE_INTERVAL_MILLIS) return
         lastPresenceWriteAtMillis[address] = now
-        runCatching { pairedButtonRegistry.markSeenByAddress(address) }
-            .onSuccess { deviceId ->
-                if (deviceId != null) {
-                    cancelLostButtonWarning(deviceId)
-                    Log.d(TAG, "Paired SOS button presence refreshed: $deviceId")
-                }
+        runCatching {
+            val previous = pairedButtonRegistry.buttons().firstOrNull { it.address.equals(address, ignoreCase = true) }
+            val deviceId = pairedButtonRegistry.markSeenByAddress(address)
+            if (deviceId != null) {
+                val updated = pairedButtonRegistry.buttons().firstOrNull { it.deviceIdHex == deviceId }
+                if (updated != null) SosButtonPresenceNotifications(this).seen(updated, previous?.lastSeenAtMillis, now)
+                broadcastPresenceChanged()
             }
-            .onFailure { Log.w(TAG, "Unable to persist paired button presence", it) }
+        }.onFailure { Log.w(TAG, "Unable to persist paired button presence", it) }
+    }
+
+    /** Presence is a separate protected action and can never enter the SOS-dispatch fallback. */
+    private fun broadcastPresenceChanged() {
+        sendBroadcast(Intent(ACTION_BUTTON_PRESENCE).setPackage(packageName), INTERNAL_BLE_SOS_PERMISSION)
+    }
+
+    private fun recordAcceptedPresence(deviceId: ByteArray, previous: Long?, now: Long) {
+        // Presence presentation must never turn a successfully persisted SOS press into a failure.
+        runCatching {
+            val updated = pairedButtonRegistry.find(deviceId) ?: return
+            SosButtonPresenceNotifications(this).seen(updated, previous, now, notify = false)
+            broadcastPresenceChanged()
+        }.onFailure { Log.w(TAG, "Unable to update non-critical button presence notices", it) }
     }
 
     private fun updateMonitorHealth(
@@ -1174,19 +1193,12 @@ class BleSosMonitorService : Service() {
 
     // checkLostButtons: Detect stale paired-button presence and update the disconnect warning.
     private fun checkLostButtons() {
-        val prefs = getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
-        if (!prefs.getBoolean(LOST_BUTTON_WARNING_ENABLED, true)) return
-        val threshold = prefs.getLong(
-            LOST_BUTTON_THRESHOLD_MILLIS,
-            DEFAULT_LOST_BUTTON_THRESHOLD_MILLIS,
-        ).coerceIn(5 * 60 * 1000L, 24 * 60 * 60 * 1000L)
         val now = System.currentTimeMillis()
         runCatching { pairedButtonRegistry.buttons() }.getOrDefault(emptyList()).forEach { button ->
-            val reference = button.lastSeenAtMillis ?: button.pairedAtMillis
-            if (now - reference >= threshold) {
-                postLostButtonWarning(button.deviceIdHex, button.displayName, threshold)
-            }
+            runCatching { SosButtonPresenceNotifications(this).check(button, now) }
+                .onFailure { Log.w(TAG, "Unable to update non-critical button absence notices", it) }
         }
+        broadcastPresenceChanged()
     }
 
     private fun postMonitorWarning(message: String) {
@@ -1219,48 +1231,6 @@ class BleSosMonitorService : Service() {
 
     private fun cancelMonitorWarning() {
         getSystemService(NotificationManager::class.java).cancel(MONITOR_WARNING_NOTIFICATION_ID)
-    }
-
-    private fun lostNotificationId(deviceId: String): Int =
-        LOST_BUTTON_NOTIFICATION_BASE_ID + (deviceId.hashCode().and(0x3ff))
-
-    private fun postLostButtonWarning(deviceId: String, displayName: String, threshold: Long) {
-        val prefs = getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
-        val key = "lostNotified:$deviceId"
-        if (prefs.getBoolean(key, false)) return
-        prefs.edit().putBoolean(key, true).apply()
-        val manager = getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(NotificationChannel(
-                LOST_BUTTON_CHANNEL_ID,
-                "SOS button lost warnings",
-                NotificationManager.IMPORTANCE_HIGH,
-            ))
-        }
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse("hikercircle://sos/device-settings?source=lost_button")
-            setPackage(packageName)
-        }
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-        val minutes = threshold / 60_000L
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, LOST_BUTTON_CHANNEL_ID)
-        } else Notification.Builder(this).setPriority(Notification.PRIORITY_HIGH)
-        manager.notify(lostNotificationId(deviceId), builder
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("$displayName has not been seen")
-            .setContentText("No BLE presence for $minutes minutes. Check its power and keep it nearby.")
-            .setContentIntent(PendingIntent.getActivity(this, lostNotificationId(deviceId), intent, flags))
-            .setAutoCancel(true)
-            .setCategory(Notification.CATEGORY_ERROR)
-            .build())
-    }
-
-    private fun cancelLostButtonWarning(deviceId: String) {
-        getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
-            .edit().remove("lostNotified:$deviceId").apply()
-        getSystemService(NotificationManager::class.java).cancel(lostNotificationId(deviceId))
     }
 
     private fun hexString(bytes: ByteArray?): String {

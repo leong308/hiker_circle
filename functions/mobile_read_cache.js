@@ -1,7 +1,8 @@
 // One authenticated batch validates explicitly supported mobile read resources.
 'use strict';
 
-const {canonical, contentHash, conditionalPayload} = require('./mobile_cache_helpers');
+const {canonical, contentHash} = require('./mobile_cache_helpers');
+const {validateCloudArguments, MAX_CATALOG_ROWS} = require('./cloud_read_resources');
 
 const OWNER_RESOURCE_TYPES = Object.freeze([
   'preferences', 'my_upcoming_hikes', 'social', 'chat_list',
@@ -51,6 +52,17 @@ function validateArguments(callable, args, ErrorType) {
   const base = {...args};
   for (const field of ['expectedOwner', 'knownContentHash', 'knownRevision', 'forcePayload']) delete base[field];
   switch (callable) {
+    case 'readCloudResource':
+      onlyKeys(base, ['resourceType', 'resourceArgs'], ErrorType);
+      return {resourceType: base.resourceType,
+        resourceArgs: validateCloudArguments(base.resourceType, base.resourceArgs ?? {}, ErrorType)};
+    case 'fetchWeatherForTrail':
+      onlyKeys(base, ['trailId', 'refreshIfOlderThanMinutes'], ErrorType);
+      validText(base.trailId, ID, ErrorType);
+      if (base.refreshIfOlderThanMinutes !== undefined && base.refreshIfOlderThanMinutes !== 15) {
+        invalid(ErrorType, 'Invalid forecast refresh interval.');
+      }
+      return base;
     case 'readMobileResource': {
       onlyKeys(base, ['resourceType', 'resourceArgs'], ErrorType);
       if (!OWNER_RESOURCE_TYPES.includes(base.resourceType)) invalid(ErrorType, 'Unsupported mobile resource.');
@@ -155,6 +167,14 @@ function projectOwnerResource(type, account = {}) {
 // Bounds expensive projections as well as request size. Units are a conservative
 // workload estimate, not a claim about the exact number of billable reads.
 function readWorkUnits(callable, args) {
+  if (callable === 'readCloudResource') {
+    if (args.resourceType === 'trail_catalog') return MAX_CATALOG_ROWS + 1;
+    if (args.resourceType === 'trail_hazards') return 2000;
+    if (args.resourceType === 'community_posts') return 3 * (args.resourceArgs.limit || 20);
+    if (args.resourceType === 'community_comments') return (args.resourceArgs.limit || 50) + 3;
+    if (args.resourceType === 'chat_messages') return 1002;
+    return 4;
+  }
   if (callable === 'loadMyHikeHistoryDetail') return 2500;
   if (callable === 'listMyHikeHistory') return 2 * (args.limit || 100) + 1;
   if (callable === 'listExpiredScheduledHikes') return 2000;
@@ -169,7 +189,7 @@ function readWorkUnits(callable, args) {
 
 function createMobileReadCacheService({handlers, readOwnerResource, authorize, HttpsError,
   maxResources = MAX_RESOURCES, maxResponseBytes = MAX_RESPONSE_BYTES,
-  maxReadWorkUnits = MAX_READ_WORK_UNITS, concurrency = 4}) {
+  maxReadWorkUnits = MAX_READ_WORK_UNITS, concurrency = 4, manifests}) {
   const resolve = async (request, callable, args) => {
     const clean = validateArguments(callable, args, HttpsError);
     const child = {...request, data: {...clean, expectedOwner: request.auth.uid, forcePayload: true}};
@@ -178,14 +198,22 @@ function createMobileReadCacheService({handlers, readOwnerResource, authorize, H
       : await handlers[callable](child);
     return payloadOnly(result);
   };
-  async function readResource(request) {
+  // Ordinary downloads share the stored-manifest path with the reconnect batch.
+  async function readProjection(request, callable) {
     authorize(request);
-    const args = validateArguments('readMobileResource', request.data || {}, HttpsError);
-    const payload = await resolve(request, 'readMobileResource', args);
-    return conditionalPayload(payload, request.data || {}, contentHash(payload));
+    const args = validateArguments(callable, request.data || {}, HttpsError);
+    const result = manifests
+      ? await manifests.read(request, callable, args, () => resolve(request, callable, args))
+      : await resolve(request, callable, args).then(payload => ({payload, hash: contentHash(payload)}));
+    if (request.data?.knownContentHash === result.hash) {
+      return {notModified: true, contentHash: result.hash, revisionHash: result.revisionHash || result.hash, payloadChecked: true};
+    }
+    return {...result.payload, contentHash: result.hash, revisionHash: result.revisionHash || result.hash, payloadChecked: true};
   }
+  async function readResource(request) { return readProjection(request, 'readMobileResource'); }
   async function reconcile(request) {
     authorize(request);
+    if (request.data?.manifestVersion != null && request.data.manifestVersion !== 1) invalid(HttpsError, 'Unsupported sync manifest version.');
     const rows = request.data?.resources;
     if (!Array.isArray(rows) || rows.length > maxResources) invalid(HttpsError, 'Too many mobile cache resources.');
     const seen = new Set();
@@ -211,6 +239,7 @@ function createMobileReadCacheService({handlers, readOwnerResource, authorize, H
     });
     const results = new Array(descriptors.length);
     const reads = new Map();
+    const manifestContext = manifests?.createRequestContext();
     let readWork = 0;
     let next = 0;
     let fatalError;
@@ -219,22 +248,27 @@ function createMobileReadCacheService({handlers, readOwnerResource, authorize, H
         const index = next++, row = descriptors[index];
         try {
           const identity = contentHash({callable: row.callable, arguments: row.arguments});
-          let read = reads.get(identity);
-          if (!read) {
+          const readPayload = () => {
+            if (reads.has(identity)) return reads.get(identity);
             const work = readWorkUnits(row.callable, row.arguments);
             if (readWork + work > maxReadWorkUnits) {
               throw new HttpsError('resource-exhausted', 'This refresh contains too many expensive resources.');
             }
             readWork += work;
-            read = resolve(request, row.callable, row.arguments);
+            const read = resolve(request, row.callable, row.arguments);
             reads.set(identity, read);
-          }
-          const payload = await read;
-          const hash = contentHash(payload);
+            return read;
+          };
+          const resolved = manifests
+            ? await manifests.read({...request, data: {knownContentHash: row.knownContentHash}},
+              row.callable, row.arguments, readPayload, manifestContext)
+            : await readPayload().then(payload => ({payload, hash: contentHash(payload)}));
+          const {payload, hash} = resolved;
+          const revisionHash = resolved.revisionHash || hash;
           results[index] = hash === row.knownContentHash
-            ? {key: row.key, status: 'unchanged', contentHash: hash, revisionHash: hash}
-            : {key: row.key, status: 'changed', contentHash: hash, revisionHash: hash,
-              payload: {...payload, contentHash: hash, revisionHash: hash, payloadChecked: true}};
+            ? {key: row.key, status: 'unchanged', contentHash: hash, revisionHash}
+            : {key: row.key, status: 'changed', contentHash: hash, revisionHash,
+              payload: {...payload, contentHash: hash, revisionHash, payloadChecked: true}};
         } catch (error) {
           if (AUTH_ERRORS.has(error?.code)) {
             fatalError = error;
@@ -252,7 +286,7 @@ function createMobileReadCacheService({handlers, readOwnerResource, authorize, H
     // Replacing one row then changes the serialized size by exactly this delta;
     // counting the payload alone would omit its JSON property and separators.
     const bounded = results.map(({payload, ...row}) => payload ? {...row, deferred: true} : row);
-    let bytes = Buffer.byteLength(JSON.stringify({resources: bounded}));
+    let bytes = Buffer.byteLength(JSON.stringify({manifestVersion: 1, resources: bounded}));
     if (bytes > maxResponseBytes) {
       throw new HttpsError('resource-exhausted', 'The mobile cache result envelope is too large.');
     }
@@ -265,9 +299,9 @@ function createMobileReadCacheService({handlers, readOwnerResource, authorize, H
         bytes += delta;
       }
     }
-    return {resources: bounded};
+    return {manifestVersion: 1, resources: bounded};
   }
-  return {readResource, reconcile};
+  return {readResource, readProjection, reconcile};
 }
 
 module.exports = {OWNER_RESOURCE_TYPES, MAX_RESOURCES, MAX_RESPONSE_BYTES, MAX_READ_WORK_UNITS,

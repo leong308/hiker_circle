@@ -4,7 +4,7 @@
 // One physical source for each concern. These helpers assemble selected modules
 // in memory for domain logic; they never read migrated fields from the parent.
 const ACCOUNT_FIELDS = Object.freeze([
-  'phoneNumber', 'createdAt', 'createdAtLocal', 'isAdmin', 'role', 'roles',
+  'phoneNumber', 'createdAt', 'createdAtLocal', 'isAdmin', 'isSuperAdmin', 'role', 'roles',
   'accountDisabled', 'status',
 ]);
 const MODULES = Object.freeze([

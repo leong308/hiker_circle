@@ -588,8 +588,6 @@ class _AchievementsPageStateViewModel extends ChangeNotifier {
   bool stateSavingAchievement = false;
   String? stateAchievementError;
   late Future<List<Map<String, dynamic>>> stateAchievementsFuture;
-  late final Future<void> Function() effectPresentOpenRewardModerationEffect1;
-  bool stateOpeningRewardModeration = false;
 
   /// Whether async results can still update this page.
   bool get mounted => !_disposed;
@@ -749,18 +747,6 @@ class _AchievementsPageStateViewModel extends ChangeNotifier {
       return false;
     } finally {
       if (mounted) _publish(() => stateSavingAchievement = false);
-    }
-  }
-
-  /// Retains the existing dashboard shortcut and reloads its changes on return.
-  Future<void> commandOpenRewardModeration() async {
-    if (!readSession().isAdmin || stateOpeningRewardModeration) return;
-    stateOpeningRewardModeration = true;
-    try {
-      await effectPresentOpenRewardModerationEffect1();
-      if (mounted) await commandRevalidateAchievementCache('');
-    } finally {
-      stateOpeningRewardModeration = false;
     }
   }
 

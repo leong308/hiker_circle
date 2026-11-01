@@ -44,7 +44,7 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
     cacheOnly: cacheOnly,
   );
 
-  /// Complete eligible local writes before validating all registered read caches.
+  /// Compare cloud snapshots first; release readers before replaying independent durable writes.
   Future<CacheReconciliationResult> reconcileCachedReadsAfter({
     required AppSession session,
     required Future<void> Function() synchronizePending,
@@ -55,7 +55,13 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
       result = await _conditionalCache.withRevalidationPaused(
         owner: session.phoneNumber,
         action: () async {
-          await synchronizePending();
+          try {
+            await _registerDownloadedCloudReads(session);
+          } on FirebaseFunctionsException catch (error) {
+            if (error.code == 'unauthenticated') rethrow;
+          } catch (_) {
+            // Cache registration must not prevent durable local uploads.
+          }
           return _conditionalCache.reconcileRegistered(
             owner: session.phoneNumber,
           );
@@ -65,12 +71,14 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
       // Live recovery can join an earlier read which was waiting for this hold.
       // Always release the hold first, including when hash validation failed.
       try {
+        await synchronizePending();
         await recoverLive?.call();
       } catch (_) {
         // Preserve the original synchronization failure for its caller.
       }
       Error.throwWithStackTrace(error, stack);
     }
+    await synchronizePending();
     await recoverLive?.call();
     return result;
   }

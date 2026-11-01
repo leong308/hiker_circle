@@ -162,6 +162,37 @@ class HikerBleService {
     }
   }
 
+  /// Reads durable native notices only for the currently active SOS account.
+  Future<List<Map<String, dynamic>>> readSosButtonNotices(String owner) async {
+    try {
+      final rows = await _methodChannel.invokeMethod<List<Object?>>(
+        'readSosButtonNotices',
+        {'accountId': owner},
+      );
+      return (rows ?? const [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+    } on MissingPluginException {
+      return const [];
+    }
+  }
+
+  /// Removes native records only after their local notification-history copy is saved.
+  Future<void> acknowledgeSosButtonNotices(
+    String owner,
+    List<String> ids,
+  ) async {
+    try {
+      await _methodChannel.invokeMethod<void>('acknowledgeSosButtonNotices', {
+        'accountId': owner,
+        'messageIds': ids,
+      });
+    } on MissingPluginException {
+      /* Older bridges have no durable notice queue. */
+    }
+  }
+
   /// Computes restart sos button monitor.
   Future<void> restartSosButtonMonitor() async {
     try {
@@ -751,7 +782,7 @@ class SosButtonReadiness {
     lastFailure: null,
     restartCount: 0,
     lostButtonWarningEnabled: false,
-    lostButtonThreshold: const Duration(minutes: 15),
+    lostButtonThreshold: const Duration(hours: 1),
     checkedAt: DateTime.now().toUtc(),
     pairedButtons: const [],
   );
@@ -784,7 +815,7 @@ class SosButtonReadiness {
       lostButtonThreshold: Duration(
         milliseconds:
             _intFrom(data['lostButtonThresholdMillis']) ??
-            const Duration(minutes: 15).inMilliseconds,
+            const Duration(hours: 1).inMilliseconds,
       ),
       checkedAt: _dateFromMillis(data['checkedAtMillis']),
       pairedButtons: rawButtons is List

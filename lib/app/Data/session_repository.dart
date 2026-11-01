@@ -9,6 +9,7 @@ import '../Model/app_session.dart';
 import '../../core/services/mobile_security_service.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
+import '../../core/models/account_role.dart';
 
 /// Represents session repository exception.
 class SessionRepositoryException implements Exception {
@@ -54,7 +55,70 @@ class SessionRepository {
   Future<void> _signOutFuture = Future<void>.value();
   StreamSubscription<Map<String, dynamic>>? _sessionStateSubscription;
   String? _watchedSession;
+  StreamSubscription<Map<String, dynamic>>? _accountSubscription;
+  String? _watchedAccount;
+  AccountRole? _confirmedRole;
   String? securityMessage;
+
+  /// Keeps slow startup/profile responses from restoring a superseded role.
+  AppSession _withConfirmedRole(AppSession session) =>
+      _watchedAccount == '${session.phoneNumber}:$_generation' &&
+          _confirmedRole != null
+      ? session.copyWith(
+          isAdmin: _confirmedRole != AccountRole.hiker,
+          isSuperAdmin: _confirmedRole == AccountRole.superadmin,
+        )
+      : session;
+
+  /// Refreshes the shell immediately on a confirmed account change, then persists it.
+  void _watchAccount(AppSession session) {
+    final generation = _generation;
+    final key = '${session.phoneNumber}:$generation';
+    if (_watchedAccount == key) return;
+    unawaited(_accountSubscription?.cancel());
+    _watchedAccount = key;
+    _confirmedRole = null;
+    try {
+      _accountSubscription = _firebaseUserRepository
+          .watchAccountState(session.phoneNumber)
+          .listen(
+            (data) {
+              if (generation != _generation ||
+                  _session?.phoneNumber != session.phoneNumber) {
+                return;
+              }
+              if (data.isEmpty ||
+                  data['accountDisabled'] == true ||
+                  data['status'] == 'disabled') {
+                unawaited(
+                  signOut(
+                    securityNotice:
+                        'Your account is unavailable. Sign in again to continue.',
+                  ),
+                );
+                return;
+              }
+              _confirmedRole = AccountRole.fromAccount(data);
+              final previous = _session!;
+              final updated = _withConfirmedRole(previous);
+              if (previous.isAdmin == updated.isAdmin &&
+                  previous.isSuperAdmin == updated.isSuperAdmin) {
+                return;
+              }
+              _publishSession(updated);
+              unawaited(
+                _persistRolesIfCurrent(generation).catchError((Object _) {}),
+              );
+            },
+            onError: (Object _) {
+              // Offline listeners reconnect; server authorization continues to enforce current roles.
+            },
+          );
+    } catch (_) {
+      _watchedAccount = null;
+      // Local startup remains usable when Firebase has not initialized yet.
+    }
+  }
 
   // _watchServerSession detects server revocation or replacement without treating transient read
   // failures as sign-out.
@@ -98,25 +162,45 @@ class SessionRepository {
 
   /// Computes publish session.
   void _publishSession(AppSession? session) {
-    _session = session;
-    _changes.add(session);
+    _session = session == null ? null : _withConfirmedRole(session);
+    _changes.add(_session);
     if (session != null) {
+      _watchAccount(session);
       unawaited(_watchServerSession(session));
     } else {
       _watchedSession = null;
       unawaited(_sessionStateSubscription?.cancel());
       _sessionStateSubscription = null;
+      _watchedAccount = null;
+      _confirmedRole = null;
+      unawaited(_accountSubscription?.cancel());
+      _accountSubscription = null;
     }
   }
 
-  /// Persists if current.
+  /// Queues only role columns so a newer profile response cannot be overwritten.
+  Future<void> _persistRolesIfCurrent(int generation) {
+    final operation = _localWrites.then((_) async {
+      final current = _session;
+      if (generation != _generation || current == null) return;
+      await _localSessionDatabase.updateSessionRoles(
+        ownerPhoneNumber: current.phoneNumber,
+        isAdmin: current.isAdmin,
+        isSuperAdmin: current.isSuperAdmin,
+      );
+    });
+    _localWrites = operation.catchError((_) {});
+    return operation;
+  }
+
+  /// Persists the profile while retaining the latest confirmed cloud-owned role.
   Future<void> _persistIfCurrent(int generation, AppSession? session) {
     final operation = _localWrites.then((_) async {
       if (generation != _generation) return;
       if (session == null) {
         await _localSessionDatabase.clearUserSessionOnly();
       } else {
-        await _localSessionDatabase.saveSession(session);
+        await _localSessionDatabase.saveSession(_withConfirmedRole(session));
       }
     });
     _localWrites = operation.catchError((_) {});

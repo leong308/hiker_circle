@@ -623,6 +623,24 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Applies cloud-owned roles without replacing a newer local profile snapshot.
+  Future<void> updateSessionRoles({
+    required String ownerPhoneNumber,
+    required bool isAdmin,
+    required bool isSuperAdmin,
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'users',
+      {
+        'is_admin': isAdmin || isSuperAdmin ? 1 : 0,
+        'is_super_admin': isSuperAdmin ? 1 : 0,
+      },
+      where: 'phone_number = ?',
+      whereArgs: [ownerPhoneNumber],
+    );
+  }
+
   // clearUserSessionOnly removes visible account state while preserving owner-scoped offline work.
   /// Clears user session only.
   Future<void> clearUserSessionOnly() async {
@@ -1202,6 +1220,21 @@ class LocalSessionDatabase {
         whereArgs: [owner, hikeId],
       );
     });
+  }
+
+  /// Restores visibility only when a cloud lifecycle decision rejects local cancellation.
+  Future<void> setPlannedHikeConsumed(
+    String owner,
+    String hikeId,
+    bool consumed,
+  ) async {
+    final db = await _openDatabase();
+    await db.update(
+      'planned_hike_state',
+      {'is_consumed': consumed ? 1 : 0},
+      where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+      whereArgs: [owner, hikeId],
+    );
   }
 
   /// Marks planned hike consumed.
@@ -1867,6 +1900,86 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Imports a default only when no device choice exists, including across background isolates.
+  Future<void> seedLocalPreference(
+    String owner,
+    String key,
+    Object? value,
+  ) async {
+    final db = await _openDatabase();
+    await db.insert('local_preferences', {
+      'owner_phone_number': owner,
+      'preference_key': key,
+      'value_json': jsonEncode(value),
+      'is_dirty': 0,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  /// Stores a dirty value and its durable logical sequence in the same transaction.
+  Future<void> saveVersionedDirtyPreference(
+    String owner,
+    String key,
+    Object? value,
+  ) async {
+    final db = await _openDatabase();
+    await db.transaction((tx) async {
+      final versionKey = 'sync_sequence:$key';
+      final rows = await tx.query(
+        'local_preferences',
+        where: 'owner_phone_number = ? AND preference_key = ?',
+        whereArgs: [owner, versionKey],
+      );
+      final sequence = rows.isEmpty
+          ? 0
+          : (jsonDecode(rows.single['value_json'] as String) as num).toInt();
+      for (final entry in {key: value, versionKey: sequence + 1}.entries) {
+        await tx.insert('local_preferences', {
+          'owner_phone_number': owner,
+          'preference_key': entry.key,
+          'value_json': jsonEncode(entry.value),
+          'is_dirty': entry.key == key ? 1 : 0,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  /// Reads a consistent value/version pair and migrates a legacy dirty note on first replay.
+  Future<({Object? value, int sequence})> loadVersionedPreference(
+    String owner,
+    String key,
+  ) async {
+    final db = await _openDatabase();
+    return db.transaction((tx) async {
+      final rows = await tx.query(
+        'local_preferences',
+        where: 'owner_phone_number = ? AND preference_key IN (?, ?)',
+        whereArgs: [owner, key, 'sync_sequence:$key'],
+      );
+      final values = {for (final row in rows) row['preference_key']: row};
+      final value = values[key] == null
+          ? null
+          : jsonDecode(values[key]!['value_json'] as String);
+      var sequence = values['sync_sequence:$key'] == null
+          ? 0
+          : (jsonDecode(values['sync_sequence:$key']!['value_json'] as String)
+                    as num)
+                .toInt();
+      if (sequence == 0 && values[key]?['is_dirty'] == 1) {
+        sequence = 1;
+        await tx.insert('local_preferences', {
+          'owner_phone_number': owner,
+          'preference_key': 'sync_sequence:$key',
+          'value_json': '1',
+          'is_dirty': 0,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      return (value: value, sequence: sequence);
+    });
+  }
+
   /// Loads local preference.
   Future<Object?> loadLocalPreference({
     required String ownerPhoneNumber,
@@ -2144,8 +2257,12 @@ class LocalSessionDatabase {
         if ((referenceCount ?? 0) != 0) continue;
         await transaction.delete(
           'hazard_feature_rtree',
-          where: 'local_id = ?',
-          whereArgs: [row['local_id']],
+          where: 'owner_phone_number = ? AND chat_id = ? AND local_id = ?',
+          whereArgs: [
+            row['owner_phone_number'],
+            row['chat_id'],
+            row['local_id'],
+          ],
         );
         await transaction.delete(
           'hazard_features',
@@ -2782,7 +2899,7 @@ class LocalSessionDatabase {
 
     final opening = SecureLocalDatabase.open(
       databasePath,
-      version: 36,
+      version: 38,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2791,6 +2908,7 @@ class LocalSessionDatabase {
             signed_in_at TEXT NOT NULL,
             app_instance_id TEXT NOT NULL DEFAULT '',
             is_admin INTEGER NOT NULL DEFAULT 0,
+            is_super_admin INTEGER NOT NULL DEFAULT 0,
             username TEXT NOT NULL DEFAULT '',
             requires_onboarding INTEGER NOT NULL DEFAULT 0,
             onboarding_profile_complete INTEGER NOT NULL DEFAULT 0,
@@ -3184,6 +3302,24 @@ class LocalSessionDatabase {
               'assistant_conversation_cleared_v1',
             ],
           );
+        }
+        if (oldVersion < 38) {
+          await database.execute(
+            'ALTER TABLE users ADD COLUMN is_super_admin INTEGER NOT NULL DEFAULT 0',
+          );
+        }
+        if (oldVersion < 37) {
+          await database.execute(
+            'ALTER TABLE pending_messages RENAME TO pending_messages_v36',
+          );
+          await _createPendingMessagesTable(database);
+          final columns = (await database.rawQuery(
+            'PRAGMA table_info(pending_messages_v36)',
+          )).map((row) => row['name'] as String).join(', ');
+          await database.execute(
+            'INSERT INTO pending_messages ($columns) SELECT $columns FROM pending_messages_v36',
+          );
+          await database.execute('DROP TABLE pending_messages_v36');
         }
       },
     );
@@ -3653,7 +3789,7 @@ class LocalSessionDatabase {
   Future<void> _createPendingMessagesTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS pending_messages (
-        local_id TEXT PRIMARY KEY,
+        local_id TEXT NOT NULL,
         chat_id TEXT NOT NULL,
         sender_phone TEXT NOT NULL,
         sender_name TEXT NOT NULL DEFAULT '',
@@ -3666,7 +3802,12 @@ class LocalSessionDatabase {
         shared_post_json TEXT NOT NULL DEFAULT '',
         owner_phone_number TEXT NOT NULL DEFAULT '',
         updated_at TEXT,
-        last_error TEXT NOT NULL DEFAULT ''
+        last_error TEXT NOT NULL DEFAULT '',
+        attachment_bytes BLOB,
+        attachment_upload_json TEXT NOT NULL DEFAULT '',
+        message_json TEXT NOT NULL DEFAULT '',
+        awaiting_cloud_snapshot INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (owner_phone_number, chat_id, local_id)
       )
     ''');
   }
@@ -3951,12 +4092,23 @@ class LocalSessionDatabase {
     bool synced = false,
   }) async {
     final database = await _openDatabase();
-    await database.insert('chat_read_receipts', {
-      'chat_id': chatId,
-      'owner_phone_number': ownerPhoneNumber.trim(),
-      'last_read_at': lastReadAt.toUtc().toIso8601String(),
-      'is_synced': synced ? 1 : 0,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await database.transaction((tx) async {
+      final rows = await tx.query(
+        'chat_read_receipts',
+        where: 'owner_phone_number = ? AND chat_id = ?',
+        whereArgs: [ownerPhoneNumber.trim(), chatId],
+      );
+      if (rows.isNotEmpty) {
+        final old = DateTime.tryParse(rows.single['last_read_at'] as String);
+        if (old != null && old.isAfter(lastReadAt)) return;
+      }
+      await tx.insert('chat_read_receipts', {
+        'chat_id': chatId,
+        'owner_phone_number': ownerPhoneNumber.trim(),
+        'last_read_at': lastReadAt.toUtc().toIso8601String(),
+        'is_synced': synced ? 1 : 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   /// Loads chat read receipt.
@@ -4013,13 +4165,18 @@ class LocalSessionDatabase {
   Future<void> markChatReadReceiptSynced(
     String chatId, {
     String ownerPhoneNumber = '',
+    required DateTime expectedLastReadAt,
   }) async {
     final database = await _openDatabase();
     await database.update(
       'chat_read_receipts',
       {'is_synced': 1},
-      where: 'owner_phone_number = ? AND chat_id = ?',
-      whereArgs: [ownerPhoneNumber.trim(), chatId],
+      where: 'owner_phone_number = ? AND chat_id = ? AND last_read_at = ?',
+      whereArgs: [
+        ownerPhoneNumber.trim(),
+        chatId,
+        expectedLastReadAt.toUtc().toIso8601String(),
+      ],
     );
   }
 
@@ -4036,6 +4193,10 @@ class LocalSessionDatabase {
     String sendStatus = 'pending',
     String? ownerPhoneNumber,
     Map<String, dynamic>? sharedPost,
+    DateTime? sentAt,
+    Map<String, dynamic>? attachment,
+    Uint8List? attachmentBytes,
+    Map<String, dynamic>? attachmentUpload,
   }) async {
     final database = await _openDatabase();
     await database.insert('pending_messages', {
@@ -4045,7 +4206,12 @@ class LocalSessionDatabase {
       'sender_name': senderName,
       'text': text,
       'shared_post_json': sharedPost == null ? '' : jsonEncode(sharedPost),
-      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'created_at': (sentAt ?? DateTime.now()).toUtc().toIso8601String(),
+      'attachment_json': attachment == null ? '' : jsonEncode(attachment),
+      'attachment_bytes': attachmentBytes,
+      'attachment_upload_json': attachmentUpload == null
+          ? ''
+          : jsonEncode(attachmentUpload),
       'send_status': sendStatus,
       'retry_count': 0,
       'firestore_doc_id': firestoreDocId,
@@ -4055,18 +4221,65 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// Computes upsert chat messages.
+  /// Caches cloud messages without acknowledging or replacing the local outbox.
   Future<void> upsertChatMessages(List<Map<String, dynamic>> rows) async {
     final database = await _openDatabase();
-    final batch = database.batch();
-    for (final row in rows) {
-      batch.insert(
-        'pending_messages',
-        row,
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-    }
-    await batch.commit(noResult: true);
+    await database.transaction((tx) async {
+      for (final row in rows) {
+        final existing = await tx.query(
+          'pending_messages',
+          columns: ['send_status', 'awaiting_cloud_snapshot'],
+          where: 'local_id = ?',
+          whereArgs: [row['local_id']],
+          limit: 1,
+        );
+        if (existing.isNotEmpty && existing.single['send_status'] != 'sent') {
+          continue;
+        }
+        await tx.insert('pending_messages', {
+          ...row,
+          if (existing.isNotEmpty)
+            'awaiting_cloud_snapshot':
+                existing.single['awaiting_cloud_snapshot'],
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  /// Clears the local acknowledgement overlay only after the cloud lists that message.
+  Future<void> confirmDownloadedChatMessages(
+    String owner,
+    String chatId,
+    Iterable<String> ids,
+  ) async {
+    final db = await _openDatabase();
+    await db.transaction((tx) async {
+      for (final id in ids) {
+        await tx.update(
+          'pending_messages',
+          {'awaiting_cloud_snapshot': 0},
+          where:
+              'owner_phone_number = ? AND chat_id = ? AND local_id = ? AND send_status = ?',
+          whereArgs: [owner, chatId, id, 'sent'],
+        );
+      }
+    });
+  }
+
+  /// Saves an uploaded file reference while retaining its bytes until message acknowledgement.
+  Future<void> saveUploadedChatAttachment(
+    String owner,
+    String chatId,
+    String id,
+    Map<String, dynamic> attachment,
+  ) async {
+    final db = await _openDatabase();
+    await db.update(
+      'pending_messages',
+      {'attachment_json': jsonEncode(attachment)},
+      where: 'owner_phone_number = ? AND chat_id = ? AND local_id = ?',
+      whereArgs: [owner, chatId, id],
+    );
   }
 
   /// Loads pending messages.
@@ -4110,10 +4323,19 @@ class LocalSessionDatabase {
     String status, {
     String? firestoreDocId,
     String lastError = '',
+    required String ownerPhoneNumber,
+    String? chatId,
+    Map<String, dynamic>? attachment,
+    DateTime? sentAt,
   }) async {
     final database = await _openDatabase();
     final values = <String, dynamic>{
       'send_status': status,
+      if (sentAt != null) 'created_at': sentAt.toUtc().toIso8601String(),
+      if (status == 'sent') 'awaiting_cloud_snapshot': 1,
+      if (status == 'sent') 'attachment_bytes': null,
+      if (status == 'sent') 'attachment_upload_json': '',
+      if (attachment != null) 'attachment_json': jsonEncode(attachment),
       'last_error': lastError,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
@@ -4123,8 +4345,9 @@ class LocalSessionDatabase {
     await database.update(
       'pending_messages',
       values,
-      where: 'local_id = ?',
-      whereArgs: [localId],
+      where:
+          'owner_phone_number = ? AND local_id = ?${chatId == null ? '' : ' AND chat_id = ?'}',
+      whereArgs: [ownerPhoneNumber, localId, if (chatId != null) chatId],
     );
   }
 
@@ -4138,8 +4361,8 @@ class LocalSessionDatabase {
     return database.query(
       'pending_messages',
       where: owner == null || owner.isEmpty
-          ? 'chat_id = ? AND send_status IN (?, ?, ?)'
-          : 'owner_phone_number = ? AND chat_id = ? AND send_status IN (?, ?, ?)',
+          ? 'chat_id = ? AND (send_status IN (?, ?, ?) OR awaiting_cloud_snapshot = 1)'
+          : 'owner_phone_number = ? AND chat_id = ? AND (send_status IN (?, ?, ?) OR awaiting_cloud_snapshot = 1)',
       whereArgs: owner == null || owner.isEmpty
           ? [chatId, 'pending', 'unsent', 'failed']
           : [owner, chatId, 'pending', 'unsent', 'failed'],
@@ -4148,14 +4371,23 @@ class LocalSessionDatabase {
   }
 
   /// Computes increment pending message retry.
-  Future<void> incrementPendingMessageRetry(String localId) async {
+  Future<void> incrementPendingMessageRetry(
+    String localId, {
+    required String ownerPhoneNumber,
+    String? chatId,
+  }) async {
     final database = await _openDatabase();
     await database.rawUpdate(
       '''UPDATE pending_messages
          SET retry_count = retry_count + 1, send_status = 'failed',
              updated_at = ?
-         WHERE local_id = ?''',
-      [DateTime.now().toUtc().toIso8601String(), localId],
+         WHERE owner_phone_number = ? AND local_id = ?${chatId == null ? '' : ' AND chat_id = ?'}''',
+      [
+        DateTime.now().toUtc().toIso8601String(),
+        ownerPhoneNumber,
+        localId,
+        if (chatId != null) chatId,
+      ],
     );
   }
 
@@ -4298,6 +4530,7 @@ class LocalSessionDatabase {
       'signed_in_at': session.signedInAt.toUtc().toIso8601String(),
       'app_instance_id': session.appInstanceId,
       'is_admin': session.isAdmin ? 1 : 0,
+      'is_super_admin': session.isSuperAdmin ? 1 : 0,
       'username': session.username,
       'requires_onboarding': session.requiresOnboarding ? 1 : 0,
       'onboarding_profile_complete': session.isOnboardingProfileComplete
@@ -4322,6 +4555,7 @@ class LocalSessionDatabase {
       createdAt: createdAt,
       appInstanceId: row['app_instance_id'] as String? ?? '',
       isAdmin: row['is_admin'] == 1,
+      isSuperAdmin: row['is_super_admin'] == 1,
       username: row['username'] as String? ?? '',
       requiresOnboarding: row['requires_onboarding'] == 1,
       isOnboardingProfileComplete: row['onboarding_profile_complete'] == 1,

@@ -1349,8 +1349,6 @@ class _AchievementsPageState extends State<AchievementsPage> {
       readRepository: () => widget.repository,
       readSession: () => widget.session,
     )..addListener(_renderScreenModel);
-    _screenModel.effectPresentOpenRewardModerationEffect1 =
-        _presentOpenRewardModerationEffect1;
 
     _achievementTab = widget.session.isAdmin
         ? _AchievementStatusTab.all
@@ -1459,9 +1457,6 @@ class _AchievementsPageState extends State<AchievementsPage> {
                             _AchievementPageHeader(
                               onBack: () => Navigator.of(context).pop(),
                               onLeaderboard: _openLeaderboard,
-                              onModeration: widget.session.isAdmin
-                                  ? () => unawaited(_openRewardModeration())
-                                  : null,
                             ),
                             const SizedBox(height: 16),
                             if (!widget
@@ -1588,12 +1583,7 @@ class _AchievementsPageState extends State<AchievementsPage> {
     _managementDialogOpen = true;
     Map<String, dynamic>? values;
     try {
-      values = await showModalBottomSheet<Map<String, dynamic>>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => AchievementEditorSheet(initial: item?.source),
-      );
+      values = await showAchievementEditorSheet(context, initial: item?.source);
     } finally {
       _managementDialogOpen = false;
     }
@@ -1677,10 +1667,6 @@ class _AchievementsPageState extends State<AchievementsPage> {
     );
   }
 
-  /// Delegates open reward moderation to the ViewModel.
-  Future<void> _openRewardModeration() =>
-      _screenModel.commandOpenRewardModeration();
-
   /// Shows achievement detail.
   void _showAchievementDetail(_AchievementProfileItem item) {
     showModalBottomSheet<void>(
@@ -1690,23 +1676,6 @@ class _AchievementsPageState extends State<AchievementsPage> {
       builder: (context) => _AchievementDetailSheet(item: item),
     );
   }
-
-  /// Presents the open reward moderation effect1 UI.
-  Future<void> _presentOpenRewardModerationEffect1() =>
-      Navigator.of(context).push<void>(
-        CupertinoPageRoute(
-          builder: (routeContext) => Scaffold(
-            body: AdminPage(
-              session: widget.session,
-              hikerCircleRepository: widget.repository,
-              firebaseBootstrapResult: widget.firebaseBootstrapResult,
-              initialSection: AdminSection.rewards,
-              onExit: () => Navigator.of(routeContext).pop(),
-              exitTooltip: 'Back to achievements',
-            ),
-          ),
-        ),
-      );
 }
 
 /// Displays the achievement page header.
@@ -1715,12 +1684,10 @@ class _AchievementPageHeader extends StatelessWidget {
   const _AchievementPageHeader({
     required this.onBack,
     required this.onLeaderboard,
-    this.onModeration,
   });
 
   final VoidCallback onBack;
   final VoidCallback onLeaderboard;
-  final VoidCallback? onModeration;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -1753,20 +1720,10 @@ class _AchievementPageHeader extends StatelessWidget {
             icon: CupertinoIcons.chart_bar_alt_fill,
             onPressed: onLeaderboard,
           ),
-          if (onModeration != null) ...[
-            const SizedBox(width: 6),
-            _AchievementHeaderButton(
-              key: const Key('achievement-moderation-button'),
-              tooltip: 'Manage achievement rewards',
-              icon: Icons.admin_panel_settings_outlined,
-              onPressed: onModeration!,
-            ),
-          ],
         ],
       );
-      if (onModeration != null &&
-          (constraints.maxWidth < 330 ||
-              MediaQuery.textScalerOf(context).scale(26) > 32)) {
+      if (constraints.maxWidth < 330 ||
+          MediaQuery.textScalerOf(context).scale(26) > 32) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

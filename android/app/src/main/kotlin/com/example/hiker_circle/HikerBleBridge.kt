@@ -152,6 +152,10 @@ class HikerBleBridge(
     )
     private val sosButtonReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == BleSosMonitorService.ACTION_BUTTON_PRESENCE) {
+                emitStatus("paired_button_presence_changed")
+                return
+            }
             if (intent?.action != BleSosMonitorService.ACTION_SOS_BUTTON_DETECTED) {
                 return
             }
@@ -317,6 +321,7 @@ class HikerBleBridge(
 
     fun onActivityResumed() {
         isActivityResumed = true
+        emitStatus("paired_button_notice")
         drainPendingEvents()
     }
 
@@ -656,7 +661,7 @@ class HikerBleBridge(
     }
 
     private fun registerSosButtonReceiver() {
-        val filter = IntentFilter(BleSosMonitorService.ACTION_SOS_BUTTON_DETECTED)
+        val filter = IntentFilter(BleSosMonitorService.ACTION_SOS_BUTTON_DETECTED).apply { addAction(BleSosMonitorService.ACTION_BUTTON_PRESENCE) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             activity.registerReceiver(
                 sosButtonReceiver,
@@ -722,23 +727,19 @@ class HikerBleBridge(
                     null,
                 )
             }
-            "setLostButtonWarning" -> {
-                val enabled = call.argument<Boolean>("enabled") ?: true
-                val thresholdMillis = call.argument<Number>("thresholdMillis")
-                    ?.toLong()
-                    ?.coerceIn(5 * 60 * 1000L, 24 * 60 * 60 * 1000L)
-                    ?: 15 * 60 * 1000L
-                activity.getSharedPreferences(
-                    BleSosMonitorService.MONITOR_PREFS,
-                    Context.MODE_PRIVATE,
-                ).edit()
-                    .putBoolean(BleSosMonitorService.LOST_BUTTON_WARNING_ENABLED, enabled)
-                    .putLong(BleSosMonitorService.LOST_BUTTON_THRESHOLD_MILLIS, thresholdMillis)
-                    .apply()
-                withBlePermissions(result, includeAdvertisePermission = false) {
-                    startSosButtonMonitor()
-                    result.success(null)
+            "setLostButtonWarning" -> result.success(null) // Fixed policy; legacy UI settings no longer change it.
+            "readSosButtonNotices" -> {
+                val account = call.argument<String>("accountId")
+                val owner = pairedButtonRegistry.activeOwnerScopeToken()
+                result.success(if (owner != null && pairedButtonRegistry.matchesActiveAccount(account)) SosButtonPresenceNotifications(activity).notices(owner) else emptyList<Map<String, Any>>())
+            }
+            "acknowledgeSosButtonNotices" -> {
+                val account = call.argument<String>("accountId")
+                val owner = pairedButtonRegistry.activeOwnerScopeToken()
+                if (owner != null && pairedButtonRegistry.matchesActiveAccount(account)) {
+                    SosButtonPresenceNotifications(activity).acknowledge(owner, call.argument<List<String>>("messageIds")?.toSet() ?: emptySet())
                 }
+                result.success(null)
             }
             "restartSosButtonMonitor" -> {
                 withBlePermissions(result, includeAdvertisePermission = false) {
@@ -761,9 +762,11 @@ class HikerBleBridge(
             }
             "setActiveSosAccount" -> {
                 runCatching {
-                    pairedButtonRegistry.setActiveOwnerScope(
-                        call.argument<String>("accountId"),
-                    )
+                    val account = call.argument<String>("accountId")
+                    val changed = !pairedButtonRegistry.matchesActiveAccount(account)
+                    val previous = if (changed) runCatching { pairedButtonRegistry.buttons() }.getOrDefault(emptyList()) else emptyList()
+                    pairedButtonRegistry.setActiveOwnerScope(account)
+                    if (changed) SosButtonPresenceNotifications(activity).cancel(previous)
                 }.onSuccess {
                     if (isActivityResumed) drainPendingEvents()
                     result.success(null)
@@ -876,7 +879,9 @@ class HikerBleBridge(
                 } else {
                     runCatching {
                         stopPairedButtonSetupScan()
+                        val previousButtons = runCatching { pairedButtonRegistry.buttons() }.getOrDefault(emptyList())
                         pairedButtonRegistry.resetRegistry()
+                        SosButtonPresenceNotifications(activity).cancel(previousButtons)
                         check(
                             activity.getSharedPreferences(
                                 BleSosMonitorService.PENDING_EVENT_PREFS,
@@ -902,8 +907,12 @@ class HikerBleBridge(
                 if (deviceId.isNullOrEmpty()) {
                     result.error("paired_button_invalid_id", "A button device ID is required.", null)
                 } else {
-                    runCatching { pairedButtonRegistry.remove(deviceId) }
-                        .onSuccess(result::success)
+                    runCatching {
+                        val previous = pairedButtonRegistry.buttons().filter { it.deviceIdHex == deviceId }
+                        val removed = pairedButtonRegistry.remove(deviceId)
+                        if (removed) SosButtonPresenceNotifications(activity).cancel(previous)
+                        removed
+                    }.onSuccess(result::success)
                         .onFailure { error ->
                             result.error(
                                 "paired_button_registry_write_failed",
@@ -1131,14 +1140,8 @@ class HikerBleBridge(
                 BleSosMonitorService.MONITOR_RESTART_COUNT,
                 0,
             ),
-            "lostButtonWarningEnabled" to preferences.getBoolean(
-                BleSosMonitorService.LOST_BUTTON_WARNING_ENABLED,
-                true,
-            ),
-            "lostButtonThresholdMillis" to preferences.getLong(
-                BleSosMonitorService.LOST_BUTTON_THRESHOLD_MILLIS,
-                15 * 60 * 1000L,
-            ),
+            "lostButtonWarningEnabled" to true,
+            "lostButtonThresholdMillis" to SosButtonPresencePolicy.ABSENCE_MILLIS,
             "checkedAtMillis" to now,
             "pairedButtons" to pairedButtons,
         )

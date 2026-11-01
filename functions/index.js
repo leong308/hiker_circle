@@ -27,8 +27,7 @@ const { getAuth } = require('firebase-admin/auth');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
 const {contentHash, conditionalPayload, reminderCooldown} = require('./mobile_cache_helpers');
-const {createMobileReadCacheService, projectOwnerResource, MAX_ACHIEVEMENT_ROWS, completeAchievementPayload,
-  payloadOnly: mobileReadPayload} = require('./mobile_read_cache');
+const {createMobileReadCacheService, projectOwnerResource, MAX_ACHIEVEMENT_ROWS, completeAchievementPayload} = require('./mobile_read_cache');
 const crypto = require('crypto');
 const teamPolicy = require('./team_hike_policy');
 const teamHistory = require('./team_hike_history');
@@ -160,6 +159,12 @@ exports.activateMobileSession = onAuthenticationCall(
     return result;
   });
 exports.endMobileSession = onAuthenticationCall({}, request => mobileSessionSecurity.end(request));
+
+const adminUsers = require('./admin_users').createAdminUsers({database: getFirestore,
+  authorization: adminAuthorization, HttpsError, username: canonicalUsername, timestamp: () => FieldValue.serverTimestamp()});
+exports.listAdminUsers = onCall({}, adminUsers.listUsers);
+exports.changeHikerRole = onCall({}, adminUsers.changeRole);
+exports.listUserRoleHistory = onCall({}, adminUsers.history);
 
 // deliverSessionSecurityNotice: Claim a session-change notice before FCM/WhatsApp sends; uncertain provider acceptance is not retried blindly.
 async function deliverSessionSecurityNotice(reference) {
@@ -2622,7 +2627,7 @@ async function readLoadPublicHikerProfile(request) {
   }
   return publicHikerDetails(admin.firestore(), resolvedUserId);
 }
-exports.loadPublicHikerProfile = onCall({}, serveHashedMobileRead(readLoadPublicHikerProfile));
+exports.loadPublicHikerProfile = onCall({}, serveHashedMobileRead('loadPublicHikerProfile'));
 
 // resolveUpcomingHikeJoinRequest: Only the current host can resolve a pending request and update related team/chat membership.
 exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
@@ -3317,7 +3322,7 @@ async function readLoadAchievementLeaderboard(request) {
     }),
   };
 }
-exports.loadAchievementLeaderboard = onCall({}, serveHashedMobileRead(readLoadAchievementLeaderboard));
+exports.loadAchievementLeaderboard = onCall({}, serveHashedMobileRead('loadAchievementLeaderboard'));
 
 // nameFormedHikeGroupChat: Keep a host-approved group name aligned with the formed hike chat.
 exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
@@ -3506,7 +3511,7 @@ async function readGetPublicProfiles(request) {
     .filter((profile) => profile !== null);
   return { profiles };
 }
-exports.getPublicProfiles = onCall({}, serveHashedMobileRead(readGetPublicProfiles));
+exports.getPublicProfiles = onCall({}, serveHashedMobileRead('getPublicProfiles'));
 
 const teamHikeActionLimits = Object.freeze({
   create: [5, 60 * 60 * 1000],
@@ -3541,14 +3546,8 @@ function authenticatedPhoneFor(request, message) {
 }
 
 // Ordinary reads and the reconnect batch use the same freshly authorised builders.
-function serveHashedMobileRead(handler) {
-  return async request => {
-    const data = {...request.data, forcePayload: true};
-    delete data.knownContentHash;
-    delete data.knownRevision;
-    const payload = mobileReadPayload(await handler({...request, data}));
-    return conditionalPayload(payload, request.data || {}, contentHash(payload));
-  };
+function serveHashedMobileRead(callable) {
+  return request => mobileReadCache.readProjection(request, callable);
 }
 
 function validFirestoreDocumentId(value) {
@@ -3670,7 +3669,7 @@ function sanitizedTeamDraft(rawDraft, trailData, buddies, options = {}) {
   const pastDepartureToleranceMillis = boundedNumber(
     options.pastDepartureToleranceMillis,
     0,
-    30 * 24 * 60 * 60 * 1000,
+    365 * 24 * 60 * 60 * 1000,
     12 * 60 * 60 * 1000
   );
   const maximumHikeDurationMillis = boundedNumber(
@@ -4225,6 +4224,7 @@ exports.cancelUpcomingHike = onCall({}, async (request) => {
     admin.firestore(), {
       hikeId, uid, phoneNumber,
       withdrawSelf: request.data?.withdrawSelf === true,
+      creationKey: String(request.data?.creationKey || ''),
       hazardId: String(request.data?.hazardId || '').trim(),
     }, HttpsError,
     () => admin.firestore.FieldValue.serverTimestamp()
@@ -4249,7 +4249,8 @@ exports.scheduleUpcomingHike = onCall(
     ) {
       throw new HttpsError('invalid-argument', 'The hike schedule is invalid.');
     }
-    const requestedPhones = Array.isArray(rawDraft?.teamBuddies)
+    const {offlineRecovery, expiredRecovery} = require('./offline_plan_policy').offlinePlanRecovery(request.data?.offlineRecovery, rawDraft);
+    const requestedPhones = !expiredRecovery && Array.isArray(rawDraft?.teamBuddies)
       ? rawDraft.teamBuddies
           .map((buddy) => String(buddy?.phoneNumber || '').trim())
           .filter((phone) => phone !== ownerPhone)
@@ -4286,6 +4287,7 @@ exports.scheduleUpcomingHike = onCall(
         transaction.get(rateReference),
         transaction.get(hikeReference),
         transaction.get(chatReference),
+        transaction.get(db.collection('upcomingHikeIntents').doc(hash)),
         ...inviteeReferences.map((reference) => readUser(reference, ["preferences","profile","social"], transaction)),
       ]);
       const ownerSnapshot = snapshots[0];
@@ -4293,7 +4295,8 @@ exports.scheduleUpcomingHike = onCall(
       const rateSnapshot = snapshots[2];
       const existingHikeSnapshot = snapshots[3];
       const existingChatSnapshot = snapshots[4];
-      const inviteeSnapshots = snapshots.slice(5);
+      const cancellation = snapshots[5];
+      const inviteeSnapshots = snapshots.slice(6);
       if (!ownerSnapshot.exists) {
         throw new HttpsError('unauthenticated', 'Your account is unavailable.');
       }
@@ -4314,6 +4317,7 @@ exports.scheduleUpcomingHike = onCall(
         }
         return { hikeId: hikeReference.id, created: false };
       }
+      if (cancellation.data()?.cancelled === true) return {hikeId: hikeReference.id, created: false, cancelled: true};
       const buddyPhones = new Set(
         (Array.isArray(owner.buddyPhoneNumbers) ? owner.buddyPhoneNumbers : [])
           .map((phone) => String(phone || '').trim())
@@ -4340,14 +4344,14 @@ exports.scheduleUpcomingHike = onCall(
         String(rawDraft?.hikeType || '') === 'team' || invitedPhones.length > 0;
       validateSoloHikeDistance(Number(trail.distanceKm), isGroupHike, rawDraft?.soloDistanceAcknowledgedKm, HttpsError);
       const draft = {
-        ...sharedHikePlan(rawDraft, trail, buddies),
+        ...sharedHikePlan(rawDraft, trail, buddies, offlineRecovery ? {pastDepartureToleranceMillis: 365 * 24 * 60 * 60000} : {}),
         hikeType: isGroupHike ? 'team' : 'solo',
         ...(isGroupHike ? {} : { soloDistanceAcknowledgedKm: rawDraft?.soloDistanceAcknowledgedKm ?? null }),
       };
       const departureMillis = dateMillis(draft.departureTime);
       if (
         !Number.isFinite(departureMillis)
-        || departureMillis < Date.now() - 2 * 60 * 1000
+        || (!offlineRecovery && departureMillis < Date.now() - 2 * 60 * 1000)
       ) {
         throw new HttpsError('invalid-argument', 'Choose a future departure time.');
       }
@@ -4399,7 +4403,8 @@ exports.scheduleUpcomingHike = onCall(
         creatorName: ownerProfile.name,
         creationKeyHash: hash,
         notificationRadiusKm: 20,
-        isDeleted: false,
+        isDeleted: expiredRecovery,
+        ...(expiredRecovery ? {expired: true, status: 'expired', deletedReason: 'departure_time_expired'} : {}),
         sharedHikePlanPrivacyVersion: SHARED_HIKE_PLAN_PRIVACY_VERSION,
         draft,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -5991,7 +5996,7 @@ async function readListExpiredScheduledHikes(request) {
   return loadExpiredScheduledHikePage({query, ownerPhoneNumber: phoneNumber,
     now, limit, sanitize: sanitizedPlainValue});
 }
-exports.listExpiredScheduledHikes = onCall({}, serveHashedMobileRead(readListExpiredScheduledHikes));
+exports.listExpiredScheduledHikes = onCall({}, serveHashedMobileRead('listExpiredScheduledHikes'));
 
 // listMyHikeHistory: Authorize and project current records before content-hash validation.
 async function readListMyHikeHistory(request) {
@@ -6023,7 +6028,7 @@ async function readListMyHikeHistory(request) {
     .sort((a,b) => String(b.endedAtLocal || '').localeCompare(String(a.endedAtLocal || ''))).slice(0,limit);
   return {hikes};
 }
-exports.listMyHikeHistory = onCall({}, serveHashedMobileRead(readListMyHikeHistory));
+exports.listMyHikeHistory = onCall({}, serveHashedMobileRead('listMyHikeHistory'));
 
 // loadMyHikeHistoryDetail: Authorize the completed session before assembling private captures, footprints, check-ins, and team routes.
 async function readLoadMyHikeHistoryDetail(request) {
@@ -6139,7 +6144,7 @@ async function readLoadMyHikeHistoryDetail(request) {
     }),
   };
 }
-exports.loadMyHikeHistoryDetail = onCall({}, serveHashedMobileRead(readLoadMyHikeHistoryDetail));
+exports.loadMyHikeHistoryDetail = onCall({}, serveHashedMobileRead('loadMyHikeHistoryDetail'));
 
 // readOwnerMobileResource exposes fixed owner projections, never arbitrary module paths.
 async function readOwnerMobileResource(request, type, args) {
@@ -6196,11 +6201,49 @@ async function readOwnerMobileResource(request, type, args) {
   throw new HttpsError('invalid-argument', 'Unsupported mobile resource.');
 }
 
+const readCloudMobileResource = require('./cloud_read_resources').createCloudResourceReader({
+  database: getFirestore,
+  authorize: request => authenticatedPhoneFor(request, 'Sign in to refresh downloaded cloud data.'),
+  HttpsError,
+});
+
+const mobileWrites = require('./mobile_write_sync').createMobileWriteSync({
+  database: getFirestore, authorize: request => authenticatedPhoneFor(request, 'Sign in to synchronize your saved changes.'),
+  HttpsError, timestamp: () => admin.firestore.FieldValue.serverTimestamp(), preview: groupChatMessagePreview,
+});
+exports.appendChatMessage = onCall({timeoutSeconds: 30}, mobileWrites.appendChatMessage);
+exports.acknowledgeChatRead = onCall({timeoutSeconds: 30}, mobileWrites.acknowledgeChatRead);
+exports.syncSafetyPreferences = onCall({timeoutSeconds: 30}, mobileWrites.syncSafetyPreferences);
+
+// Projection code changes invalidate older stored hashes without a manual version bump.
+const manifestProjectionVersion = contentHash(require('node:fs').readdirSync(__dirname)
+  .filter(name => name.endsWith('.js') && !name.endsWith('.test.js')).sort()
+  .map(name => [name, require('node:fs').readFileSync(require('node:path').join(__dirname, name), 'utf8')]));
+const syncManifests = require('./sync_manifests').createSyncManifests({
+  database: getFirestore, projectionVersion: manifestProjectionVersion,
+  onCacheError: error => logger.warn('Sync manifest cache unavailable; using the source projection.', {code: String(error.code || 'unavailable')}),
+  timestamp: () => FieldValue.serverTimestamp(), expiresAt: millis => Timestamp.fromMillis(millis),
+  guard: require('./sync_manifest_access').createManifestGuard({database: getFirestore, HttpsError,
+    authorize: request => authenticatedPhoneFor(request, 'Sign in to refresh your saved data.')}),
+});
+// Ignore internal/security writes; source revisions are monotonic under repeated or reordered events.
+exports.updateSyncManifestRoot = onDocumentWritten({document: '{collection}/{documentId}',
+  region: 'asia-southeast1', retry: true}, syncManifests.observeWrite);
+exports.updateSyncManifestChild = onDocumentWritten({document: '{collection}/{documentId}/{subcollection}/{childId}',
+  region: 'asia-southeast1', retry: true}, syncManifests.observeWrite);
+
 const mobileReadCache = createMobileReadCacheService({
   HttpsError,
+  manifests: syncManifests,
   authorize: request => authenticatedPhoneFor(request, 'Sign in to refresh your saved data.'),
   readOwnerResource: readOwnerMobileResource,
   handlers: {
+    readCloudResource: readCloudMobileResource,
+    // Batch comparison reads the saved forecast; only the explicit weather
+    // callable may refresh its provider after the existing TTL checks.
+    fetchWeatherForTrail: request => readCloudMobileResource({...request, data: {
+      resourceType: 'trail_weather', resourceArgs: {trailId: request.data.trailId},
+    }}),
     listMyHikeHistory: readListMyHikeHistory,
     loadMyHikeHistoryDetail: readLoadMyHikeHistoryDetail,
     listExpiredScheduledHikes: readListExpiredScheduledHikes,
@@ -6211,6 +6254,7 @@ const mobileReadCache = createMobileReadCacheService({
 });
 
 exports.readMobileResource = onCall({timeoutSeconds: 60}, mobileReadCache.readResource);
+exports.readCloudResource = onCall({timeoutSeconds: 120, memory: '512MiB'}, serveHashedMobileRead('readCloudResource'));
 exports.reconcileMobileReadCache = onCall({timeoutSeconds: 120, memory: '512MiB'}, mobileReadCache.reconcile);
 
 // appendHikeFootprints: Delegate chunk identity, ownership, and durable sample acknowledgements to the footprint transaction.
@@ -10462,6 +10506,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
     );
     const userSnapshots = await readUsers(db, [...userReferences], ["devices","preferences"]);
     const tokens = new Set();
+    const tokenOwners = new Map();
     let eligibleUsers = 0;
     const now = Date.now();
 
@@ -10473,23 +10518,15 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
       if (user.groupChatNotificationsEnabled === false) {
         continue;
       }
-      const mutedChats =
-        user.groupChatMutedUntil &&
-        typeof user.groupChatMutedUntil === 'object'
-          ? user.groupChatMutedUntil
-          : {};
-      const mutedUntil = dateMillis(mutedChats[event.params.chatId]);
-      if (Number.isFinite(mutedUntil) && mutedUntil > now) {
-        continue;
-      }
-
+      const localFilter = user.fcmTokenByAppIdCapabilities?.[user.boundAppInstanceId]?.localChatNotifications === 1;
+      if (!localFilter && dateMillis(user.groupChatMutedUntil?.[event.params.chatId]) > now) continue;
       const validTokens = latestFcmTokensForUser(user);
       if (validTokens.length === 0) {
         continue;
       }
       eligibleUsers++;
       for (const token of validTokens) {
-        tokens.add(token);
+        tokens.add(token); tokenOwners.set(token, {recipientPhone: userSnapshot.id, localFilter});
       }
     }
 
@@ -10506,40 +10543,11 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
     if (shouldAttemptNotification) {
       try {
         for (let index = 0; index < tokenList.length; index += 500) {
-          const response = await admin.messaging().sendEachForMulticast({
-            tokens: tokenList.slice(index, index + 500),
-            notification: {
-              title:
-                chat.chatType === 'direct'
-                  ? String(message.senderName || 'New private message')
-                  : `${message.senderName || 'A hiker'} - ${
-                      chat.trailName || 'Group chat'
-                    }`,
-              body: groupChatMessagePreview(message),
-            },
-            data: {
-              type: 'group_chat_message',
-              chatId: event.params.chatId,
-              messageId: event.params.messageId,
-              deepLink,
-            },
-            android: {
-              priority: 'high',
-              notification: {
-                priority: 'high',
-              },
-            },
-            apns: {
-              headers: {
-                'apns-priority': '10',
-              },
-              payload: {
-                aps: {
-                  sound: 'default',
-                },
-              },
-            },
-          });
+          const title = chat.chatType === 'direct' ? String(message.senderName || 'New private message')
+            : `${message.senderName || 'A hiker'} - ${chat.trailName || 'Group chat'}`;
+          const response = await admin.messaging().sendEach(tokenList.slice(index, index + 500).map(token =>
+            require('./chat_push_delivery').chatPush({token, ...tokenOwners.get(token), chatId: event.params.chatId,
+              messageId: event.params.messageId, deepLink, title, body: groupChatMessagePreview(message)})));
           successCount += response.successCount;
           failureCount += response.failureCount;
         }
@@ -10566,9 +10574,10 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
       message.sentAtLocal || message.createdAt || new Date().toISOString()
     ).getTime();
     await db.runTransaction(async (transaction) => {
-      const [freshChatSnapshot, freshMessageSnapshot] = await Promise.all([
+      const [freshChatSnapshot, freshMessageSnapshot, latestMessages] = await Promise.all([
         transaction.get(chatReference),
         transaction.get(event.data.ref),
+        transaction.get(chatReference.collection('messages').orderBy('sentAtLocal', 'desc').limit(1)),
       ]);
       if (!freshMessageSnapshot.exists || !freshChatSnapshot.exists
           || freshChatSnapshot.data()?.isDeleted === true
@@ -10576,13 +10585,15 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
         return;
       }
       const freshChat = freshChatSnapshot.data() || {};
+      const latestMessage = latestMessages.docs[0]?.data() || message;
+      const latestTime = dateMillis(latestMessage.sentAtLocal);
       const currentPreviewTime = dateMillis(freshChat.lastMessageAtLocal);
-      if (Number.isFinite(messageTimeMs)
-          && (!Number.isFinite(currentPreviewTime) || messageTimeMs >= currentPreviewTime)) {
+      if (Number.isFinite(latestTime)
+          && (latestTime !== currentPreviewTime || freshChat.lastMessage !== groupChatMessagePreview(latestMessage))) {
         transaction.update(chatReference, {
-          lastMessage: groupChatMessagePreview(message),
-          lastMessageAtLocal: new Date(messageTimeMs).toISOString(),
-          lastMessageSenderPhone: senderPhone,
+          lastMessage: groupChatMessagePreview(latestMessage),
+          lastMessageAtLocal: latestMessage.sentAtLocal,
+          lastMessageSenderPhone: latestMessage.senderPhone,
         });
       }
       const unreadUpdates = {};
@@ -10596,7 +10607,10 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
         const lastReadAtMs = lastReadAt
           ? new Date(lastReadAt).getTime()
           : 0;
-        if (messageTimeMs > lastReadAtMs) {
+        const covered = require('./mobile_write_sync').atOrBefore(event.data.createTime, freshChat.unreadReconciledThrough?.[phoneKey])
+          && (Number.isFinite(message.cloudCreatedAtMillis) || messageTimeMs > lastReadAtMs);
+        const receivedTime = event.data.createTime?.toMillis() || messageTimeMs;
+        if (receivedTime > lastReadAtMs && !covered) {
           unreadUpdates[`unreadCount.${phoneKey}`] =
             admin.firestore.FieldValue.increment(1);
         }
@@ -10605,6 +10619,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
         transaction.update(chatReference, unreadUpdates);
       }
       transaction.update(event.data.ref, {
+        cloudCreatedAtMillis: event.data.createTime?.toMillis() || messageTimeMs,
         unreadProcessedAt: admin.firestore.FieldValue.serverTimestamp(),
         unreadProcessedAtLocal: new Date().toISOString(),
       });

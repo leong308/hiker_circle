@@ -83,6 +83,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private var pendingRssi: [UUID: Int] = [:]
   private var pendingReadTimeouts: [UUID: Timer] = [:]
   private var pairedButtons: [PairedButtonRecord] = []
+  private let presenceNotices = SosButtonNoticeStore()
   private var pairedButtonsLoadFailure: String?
   private var registryErrorNotified = false
   private var activeOwnerScope: String?
@@ -149,6 +150,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     if isSosMonitorRequested {
       _ = centralManager
       requestSosNotificationAuthorization()
+      buttonsForActiveOwner.forEach(scheduleLostButtonWarning)
     }
     NotificationCenter.default.addObserver(
       self,
@@ -198,19 +200,18 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     case "getSosButtonReadiness":
       buildSosButtonReadiness(result: result)
     case "setLostButtonWarning":
-      let arguments = call.arguments as? [String: Any]
-      let enabled = arguments?["enabled"] as? Bool ?? true
-      let threshold = min(
-        max((arguments?["thresholdMillis"] as? NSNumber)?.int64Value ?? 900_000, 300_000),
-        86_400_000
-      )
-      UserDefaults.standard.set(enabled, forKey: Self.lostButtonWarningEnabledKey)
-      UserDefaults.standard.set(threshold, forKey: Self.lostButtonWarningThresholdKey)
-      if enabled {
-        buttonsForActiveOwner.forEach(scheduleLostButtonWarning)
-      } else {
-        let identifiers = buttonsForActiveOwner.map { lostButtonNotificationId($0.deviceIdHex) }
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: identifiers)
+      // Compatibility only: warnings now always use the fixed one-hour policy.
+      buttonsForActiveOwner.forEach(scheduleLostButtonWarning)
+      result(nil)
+    case "readSosButtonNotices":
+      let account = (call.arguments as? [String: Any])?["accountId"] as? String
+      guard presenceAccountMatches(account), let scope = activeOwnerScope else { result([]); return }
+      recordDuePresenceNotices()
+      result(presenceNotices.notices(owner: scope))
+    case "acknowledgeSosButtonNotices":
+      let args = call.arguments as? [String: Any]
+      if presenceAccountMatches(args?["accountId"] as? String), let scope = activeOwnerScope {
+        presenceNotices.acknowledge(owner: scope, ids: Set(args?["messageIds"] as? [String] ?? []))
       }
       result(nil)
     case "restartSosButtonMonitor":
@@ -325,7 +326,9 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
           details: nil
         ))
       } else {
+        cancelPresenceNotifications(buttonsForActiveOwner.filter { $0.deviceIdHex == normalizedId })
         pairedButtons = updated
+        emitStatus("paired_button_presence_changed")
         result(true)
       }
     case "resetPairedSosButtonRegistry":
@@ -401,6 +404,8 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       }
     }
     drainPendingEvents()
+    recordDuePresenceNotices()
+    emitStatus("paired_button_notice")
     startScanIfReady()
   }
 
@@ -502,6 +507,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
             "lastAcceptedEventId": button.lastAcceptedEventId.map { Int($0) } ?? -1,
           ]
         }
+        self.recordDuePresenceNotices()
         let readiness: [String: Any] = [
           "supported": true,
           "bluetoothEnabled": bluetoothEnabled,
@@ -528,54 +534,106 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     }
   }
 
-  private var isLostButtonWarningEnabled: Bool {
-    let defaults = UserDefaults.standard
-    if defaults.object(forKey: Self.lostButtonWarningEnabledKey) == nil { return true }
-    return defaults.bool(forKey: Self.lostButtonWarningEnabledKey)
+  private var isLostButtonWarningEnabled: Bool { true }
+  private var lostButtonWarningThresholdMillis: Int64 { SosButtonPresencePolicy.absenceMillis }
+
+  /// Match the caller against the active native account before returning local history.
+  private func presenceAccountMatches(_ account: String?) -> Bool {
+    guard let value = account?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !value.isEmpty else { return false }
+    return SHA256.hash(data: Data(value.utf8)).map { String(format: "%02X", $0) }.joined() == activeOwnerScope
   }
 
-  private var lostButtonWarningThresholdMillis: Int64 {
-    let stored = UserDefaults.standard.object(
-      forKey: Self.lostButtonWarningThresholdKey
-    ) as? NSNumber
-    return min(max(stored?.int64Value ?? 900_000, 300_000), 86_400_000)
+  /// Only the owning account may open or present a button presence notice.
+  func acceptsPresenceNotification(_ info: [AnyHashable: Any]) -> Bool {
+    guard let owner = info["ownerScope"] as? String else { return false }
+    return owner == activeOwnerScope
   }
 
-  private func lostButtonNotificationId(_ deviceId: String) -> String {
-    "hiker_circle.lost_sos_button.\(deviceId)"
+  private func presenceKey(_ button: PairedButtonRecord) -> String {
+    presenceNotices.key(owner: button.ownerScope ?? "", device: button.deviceIdHex, pairedAt: button.pairedAtMillis)
   }
 
+  private func lostButtonNotificationId(_ button: PairedButtonRecord) -> String {
+    "hiker_circle.sos_button.lost.\(presenceKey(button))"
+  }
+
+  /// Remove only this account's button notices, preserving every other safety notification.
+  private func cancelPresenceNotifications(_ buttons: [PairedButtonRecord]) {
+    let ids = buttons.flatMap { [lostButtonNotificationId($0), "hiker_circle.sos_button.seen.\(presenceKey($0))", "hiker_circle.lost_sos_button.\($0.deviceIdHex)"] }
+    UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
+  }
+
+  /// Restore the remaining time from last detection; opening a page cannot restart the hour.
   private func scheduleLostButtonWarning(_ button: PairedButtonRecord) {
-    guard isLostButtonWarningEnabled else { return }
+    guard belongsToActiveOwner(button) else { return }
+    let center = UNUserNotificationCenter.current()
+    center.removePendingNotificationRequests(withIdentifiers: ["hiker_circle.lost_sos_button.\(button.deviceIdHex)"])
+    let now = Self.currentTimeMillis()
+    let reference = SosButtonPresencePolicy.reference(lastSeen: button.lastSeenAtMillis, pairedAt: button.pairedAtMillis, now: now)
+    let key = presenceKey(button)
+    let remaining = SosButtonPresencePolicy.remaining(lastSeen: button.lastSeenAtMillis, pairedAt: button.pairedAtMillis, now: now)
+    if remaining == 0, presenceNotices.scheduledReference(key) == reference { return }
+    let title = "SOS button not seen"
+    let body = "HikerCircle has not detected \(button.displayName) for 1 hour. Check its power and keep it nearby."
     let content = UNMutableNotificationContent()
-    content.title = "SOS button not seen"
-    content.body = "HikerCircle has not detected \(button.displayName) recently. Check its power and keep it nearby."
-    content.sound = .default
-    let trigger = UNTimeIntervalNotificationTrigger(
-      timeInterval: TimeInterval(lostButtonWarningThresholdMillis) / 1000.0,
-      repeats: false
-    )
-    let request = UNNotificationRequest(
-      identifier: lostButtonNotificationId(button.deviceIdHex),
-      content: content,
-      trigger: trigger
-    )
-    UNUserNotificationCenter.current().add(request)
+    content.title = title; content.body = body; content.sound = .default
+    content.userInfo = ["ownerScope": button.ownerScope ?? "", "deepLink": "hikercircle://sos/device-settings?source=button_presence"]
+    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(0.1, Double(remaining) / 1000.0), repeats: false)
+    center.add(UNNotificationRequest(identifier: lostButtonNotificationId(button), content: content, trigger: trigger)) { [weak self] error in
+      if error == nil { DispatchQueue.main.async {
+        guard let self, let latest = self.buttonsForActiveOwner.first(where: { self.presenceKey($0) == key }),
+              (latest.lastSeenAtMillis ?? latest.pairedAtMillis) == reference else { return }
+        self.presenceNotices.markScheduled(key, reference: reference)
+      } }
+    }
+    recordDuePresenceNotices()
   }
 
+  /// Import warnings that became due while Flutter was suspended, once per absence.
+  private func recordDuePresenceNotices() {
+    let now = Self.currentTimeMillis()
+    for button in buttonsForActiveOwner {
+      let reference = SosButtonPresencePolicy.reference(lastSeen: button.lastSeenAtMillis, pairedAt: button.pairedAtMillis, now: now)
+      if presenceNotices.recordLost(owner: button.ownerScope ?? "", key: presenceKey(button), name: button.displayName, reference: reference, now: now) != nil {
+        emitStatus("paired_button_notice")
+      }
+    }
+  }
+
+  /// Record actual delivery and wake the local notification-history importer.
+  func presenceNotificationDelivered() {
+    recordDuePresenceNotices()
+    emitStatus("paired_button_notice")
+  }
+
+  /// Announce first detection or recovery after an hour, rather than every BLE packet.
+  private func recordPresence(_ button: PairedButtonRecord, previous: Int64?, now: Int64, notify: Bool = true) {
+    let key = presenceKey(button), owner = button.ownerScope ?? ""
+    _ = presenceNotices.recordLost(owner: owner, key: key, name: button.displayName, reference: previous ?? button.pairedAtMillis, now: now)
+    if SosButtonPresencePolicy.announceSeen(previous: previous, announced: presenceNotices.hasAnnounced(key), now: now) {
+      let body = "Your phone detected \(button.displayName) nearby."
+      let note = presenceNotices.append(owner: owner, id: "button_seen:\(key):\(now)", title: "SOS button is seen", body: body, type: "sos_button_seen", at: now)
+      presenceNotices.markAnnounced(key)
+      if let note {
+        let content = UNMutableNotificationContent(); content.title = "SOS button is seen"; content.body = body; content.sound = .default; content.userInfo = note
+        if notify { UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "hiker_circle.sos_button.seen.\(key)", content: content, trigger: nil)) }
+        emitStatus("paired_button_notice")
+      }
+    }
+    scheduleLostButtonWarning(button)
+    emitStatus("paired_button_presence_changed")
+  }
+
+  /// Persist passive presence and publish the same snapshot to both Flutter sections.
   private func updatePairedButtonPresence(_ peripheral: CBPeripheral) {
     let now = Self.currentTimeMillis()
-    if let previous = lastPresenceWriteAt[peripheral.identifier], now - previous < 30_000 {
-      return
-    }
-    guard let index = pairedButtons.firstIndex(where: {
-      $0.peripheralIdentifier == peripheral.identifier && belongsToActiveOwner($0)
-    }) else { return }
+    if let previous = lastPresenceWriteAt[peripheral.identifier], now - previous < 30_000 { return }
+    guard let index = pairedButtons.firstIndex(where: { $0.peripheralIdentifier == peripheral.identifier && belongsToActiveOwner($0) }) else { return }
+    let previous = pairedButtons[index].lastSeenAtMillis
     lastPresenceWriteAt[peripheral.identifier] = now
     pairedButtons[index].lastSeenAtMillis = now
-    if savePairedButtons(pairedButtons) == nil {
-      scheduleLostButtonWarning(pairedButtons[index])
-    }
+    if savePairedButtons(pairedButtons) == nil { recordPresence(pairedButtons[index], previous: previous, now: now) }
   }
 
   private func advertiseSosHelp(durationMillis: Int64) {
@@ -1011,10 +1069,14 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     }) else {
       return
     }
-    pairedButtons[index].lastSeenAtMillis = Self.currentTimeMillis()
+    let previous = pairedButtons[index].lastSeenAtMillis
+    let now = Self.currentTimeMillis()
+    pairedButtons[index].lastSeenAtMillis = now
     pairedButtons[index].lastAcceptedEventId = eventId
     if let status = savePairedButtons(pairedButtons) {
       NSLog("HikerCircle could not persist paired SOS replay state: %d", status)
+    } else {
+      recordPresence(pairedButtons[index], previous: previous, now: now, notify: false)
     }
   }
 
@@ -1326,19 +1388,20 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
 
   private func setActiveOwnerAccount(_ accountId: String?) {
     clearPairedButtonTest()
-    let normalized = accountId?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased()
-    guard let normalized, !normalized.isEmpty else {
-      activeOwnerScope = nil
-      UserDefaults.standard.removeObject(forKey: Self.activeOwnerScopeKey)
-      return
+    let normalized = accountId?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    let scope: String? = normalized.isEmpty ? nil : SHA256.hash(data: Data(normalized.utf8)).map { String(format: "%02X", $0) }.joined()
+    if scope != activeOwnerScope {
+      cancelPresenceNotifications(buttonsForActiveOwner)
+      lastPresenceWriteAt.removeAll()
     }
-    let digest = SHA256.hash(data: Data(normalized.utf8))
-    let scope = digest.map { String(format: "%02X", $0) }.joined()
     activeOwnerScope = scope
-    UserDefaults.standard.set(scope, forKey: Self.activeOwnerScopeKey)
-    drainPendingEvents()
+    if let scope {
+      UserDefaults.standard.set(scope, forKey: Self.activeOwnerScopeKey)
+      if isSosMonitorRequested { buttonsForActiveOwner.forEach(scheduleLostButtonWarning) }
+      drainPendingEvents()
+    } else {
+      UserDefaults.standard.removeObject(forKey: Self.activeOwnerScopeKey)
+    }
   }
 
   private func loadPairedButtons() -> [PairedButtonRecord]? {
@@ -1423,6 +1486,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       return
     }
 
+    cancelPresenceNotifications(buttonsForActiveOwner)
     pairedButtons.removeAll()
     pairedButtonsLoadFailure = nil
     registryErrorNotified = false
@@ -1748,7 +1812,11 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
         )
         return
       }
+      cancelPresenceNotifications(pairedButtons.filter {
+        $0.deviceIdHex == deviceIdHex || $0.peripheralIdentifier == peripheral.identifier
+      })
       pairedButtons = updated
+      if let button = updated.last { scheduleLostButtonWarning(button) }
       emitStatus("paired_button_paired")
       finishPairing(success: true)
     case 0x04:

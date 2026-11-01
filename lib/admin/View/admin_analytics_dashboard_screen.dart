@@ -10,7 +10,6 @@ class AdminAnalyticsDashboard extends StatefulWidget {
     this.error,
     required this.onRetry,
     required this.onSafety,
-    required this.onRewards,
     required this.onTools,
     this.onTrailRequests,
     this.onFeedback,
@@ -18,7 +17,7 @@ class AdminAnalyticsDashboard extends StatefulWidget {
   final Map<String, dynamic>? data;
   final bool loading;
   final String? error;
-  final VoidCallback onRetry, onSafety, onRewards, onTools;
+  final VoidCallback onRetry, onSafety, onTools;
   final VoidCallback? onTrailRequests, onFeedback;
 
   /// Binds the dashboard's presentation lifecycle to its ViewModel.
@@ -282,7 +281,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
           ),
           icon: Icons.emoji_events_outlined,
           tint: _orange,
-          onTap: widget.onRewards,
         ),
       ],
     ),
@@ -899,7 +897,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
           ),
           icon: Icons.rule_outlined,
           tint: _green,
-          onTap: widget.onRewards,
         ),
         _MetricCard(
           metric: _model.metric(
@@ -910,7 +907,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
           ),
           icon: Icons.archive_outlined,
           tint: _blue,
-          onTap: widget.onRewards,
         ),
       ],
     ),
