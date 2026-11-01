@@ -455,7 +455,14 @@ class _PostEditorState extends State<_PostEditor> {
 
   /// Saves.
   Future<void> _save() async {
-    if (_saving || _caption.text.length > 5000) return;
+    if (_saving) return;
+    if (_caption.text.length > communityPostCaptionLimit) {
+      setState(
+        () => _error =
+            'Keep the caption within $communityPostCaptionLimitLabel characters.',
+      );
+      return;
+    }
     setState(() {
       _saving = true;
       _error = null;
@@ -500,7 +507,7 @@ class _PostEditorState extends State<_PostEditor> {
                 enabled: !_saving,
                 minLines: 3,
                 maxLines: 8,
-                maxLength: 5000,
+                maxLength: communityPostCaptionLimit,
                 decoration: const InputDecoration(labelText: 'Caption'),
               ),
               for (final url in List.of(_images))

@@ -2,6 +2,7 @@
 'use strict';
 
 const { getDownloadURL } = require('firebase-admin/storage');
+const {MAX_POST_CAPTION_LENGTH} = require('./community_content_limits');
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_PREVIEW_POINTS = 80;
@@ -16,7 +17,7 @@ function requireId(value, label, ErrorType) {
   return value;
 }
 function captionValue(value, ErrorType) {
-  if (typeof value !== 'string' || value.length > 5000) fail(ErrorType, 'invalid-argument', 'Captions can contain up to 5,000 characters.');
+  if (typeof value !== 'string' || value.length > MAX_POST_CAPTION_LENGTH) fail(ErrorType, 'invalid-argument', 'Captions can contain up to 2,000 characters.');
   return value.trim();
 }
 function milliseconds(value) {

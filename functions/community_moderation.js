@@ -1,6 +1,7 @@
 // Community text integrity scans and human moderation preserve source fingerprints and audit decisions.
 'use strict';
 const {createHash, randomUUID} = require('node:crypto');
+const {MAX_POST_CAPTION_LENGTH} = require('./community_content_limits');
 const VERSION = 2;
 const CATEGORIES = ['spam_scam', 'harassment', 'hate', 'sexual', 'violence', 'privacy', 'unsafe_advice'];
 const LABELS = {spam_scam: 'Possible spam or scam', harassment: 'Possible harassment', hate: 'Possible hate speech',
@@ -52,7 +53,7 @@ function prepareContent(path, data) {
   if (typeof text !== 'string') integrityEvidence.push('record:invalid_text');
   else {
     if (info.type === 'comment' && !text.trim()) integrityEvidence.push('record:empty_comment');
-    if (text.length > (info.type === 'post' ? 5000 : 2000)) integrityEvidence.push('record:text_too_long');
+    if (text.length > (info.type === 'post' ? MAX_POST_CAPTION_LENGTH : 2000)) integrityEvidence.push('record:text_too_long');
   }
   if (typeof data?.authorId !== 'string' || !data.authorId || data.authorId.length > 200) {
     integrityEvidence.push('record:invalid_author');

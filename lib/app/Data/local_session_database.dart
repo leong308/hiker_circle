@@ -1,6 +1,7 @@
 // LocalSessionDatabase owns encrypted mobile SQLite, incremental schema upgrades and operational
 // offline hike, SOS, chat and cache records.
 import '../../core/services/content_hash.dart';
+import '../../circle/Model/community_post_limits.dart';
 import '../../achievements/Model/achievement_progress.dart';
 import '../../achievements/Model/achievement_catalog.dart';
 import '../../achievements/Model/achievement_notification.dart';

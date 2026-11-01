@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../Model/community_post_limits.dart';
 
 /// Keeps an author's edits local until the server confirms the content revision.
 class CommunityPostEditorViewModel extends ChangeNotifier {
@@ -35,10 +36,10 @@ class CommunityPostEditorViewModel extends ChangeNotifier {
   Future<Map<String, dynamic>?> save() async {
     if (saving || _disposed) return null;
     final text = caption.trim();
-    if (text.length > 5000 ||
+    if (text.length > communityPostCaptionLimit ||
         (text.isEmpty && imageUrls.isEmpty && original['kind'] != 'hike')) {
-      error = text.length > 5000
-          ? 'Keep your story within 5,000 characters.'
+      error = text.length > communityPostCaptionLimit
+          ? 'Keep your story within $communityPostCaptionLimitLabel characters.'
           : 'Keep a message, a photo, or a hike in your story.';
       notifyListeners();
       return null;

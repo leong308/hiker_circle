@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/section_label.dart';
+import '../Model/community_post_limits.dart';
 import '../ModelView/community_post_editor_view_model.dart';
 
 /// Edits an existing story without changing its hike or recorded route.
@@ -100,7 +101,7 @@ class _CommunityPostEditorSheetState extends State<CommunityPostEditorSheet> {
                   enabled: !_model.saving,
                   minLines: 4,
                   maxLines: 10,
-                  maxLength: 5000,
+                  maxLength: communityPostCaptionLimit,
                   decoration: const InputDecoration(
                     hintText: 'Share your experience',
                     border: OutlineInputBorder(
