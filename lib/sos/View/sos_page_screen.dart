@@ -2414,7 +2414,7 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
         duration: _bleSosTestDuration,
       );
       _showTestResult(
-        'BLE SOS test broadcast for 5 seconds. Nearby HikerCircle phones should show a help popup.',
+        'BLE test broadcast for 5 seconds. Nearby HikerCircle phones can show a test preview.',
       );
       await Future<void>.delayed(_bleSosTestDuration);
     } on HikerBleException catch (error) {

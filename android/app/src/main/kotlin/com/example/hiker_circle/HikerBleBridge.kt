@@ -242,7 +242,20 @@ class HikerBleBridge(
                     return
                 }
                 BleSosMonitorService.EVENT_SOS_HELP -> {
-                    if (isActivityResumed) drainPendingHelpEvents()
+                    if (isActivityResumed && intent.hasExtra(BleSosMonitorService.EXTRA_LATITUDE)) {
+                        eventSink?.success(mapOf(
+                            "type" to "sosHelp",
+                            "source" to "ble_sos_test",
+                            "isTest" to true,
+                            "phoneNumberHash" to intent.getLongExtra(BleSosMonitorService.EXTRA_PHONE_NUMBER_HASH, 0L),
+                            "latitude" to intent.getDoubleExtra(BleSosMonitorService.EXTRA_LATITUDE, Double.NaN),
+                            "longitude" to intent.getDoubleExtra(BleSosMonitorService.EXTRA_LONGITUDE, Double.NaN),
+                            "accuracyMeters" to intent.getDoubleExtra(BleSosMonitorService.EXTRA_ACCURACY_METERS, 0.0),
+                            "capturedAtMillis" to intent.getLongExtra(BleSosMonitorService.EXTRA_CAPTURED_AT_MILLIS, 0L),
+                            "receivedAtMillis" to intent.getLongExtra(BleSosMonitorService.EXTRA_RECEIVED_AT_MILLIS, 0L),
+                            "rssi" to intent.getIntExtra(BleSosMonitorService.EXTRA_RSSI, 0),
+                        ))
+                    }
                     return
                 }
             }
@@ -449,9 +462,9 @@ class HikerBleBridge(
                     capturedAtMillis <= 0L ||
                     receivedAtMillis <= 0L ||
                     capturedAtMillis > now + MAX_PENDING_SOS_FUTURE_SKEW_MILLIS ||
-                    now - capturedAtMillis > MAX_PENDING_SOS_AGE_MILLIS ||
+                    now - capturedAtMillis > 30_000L ||
                     receivedAtMillis > now + MAX_PENDING_SOS_FUTURE_SKEW_MILLIS ||
-                    now - receivedAtMillis > MAX_PENDING_SOS_AGE_MILLIS
+                    now - receivedAtMillis > 30_000L
                 ) {
                     continue
                 }
@@ -459,6 +472,7 @@ class HikerBleBridge(
                     buildMap<String, Any> {
                         put("type", "sosHelp")
                         put("source", "ble_sos_test")
+                        put("isTest", true)
                         put("phoneNumberHash", item.optLong("phoneNumberHash"))
                         put("latitude", latitude)
                         put("longitude", longitude)

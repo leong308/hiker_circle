@@ -76,9 +76,28 @@ class HikerBleService {
       .where((event) => event is Map && event['type'] == 'buttonDebug')
       .map((event) => Map<Object?, Object?>.from(event as Map));
 
-  /// Sets button debug capture.
-  Future<void> setButtonDebugCapture(bool enabled) => _methodChannel
-      .invokeMethod<void>('setButtonDebugCapture', {'enabled': enabled});
+  static bool _buttonDebugCaptureEnabled = false;
+  static int _buttonDebugCaptureRevision = 0;
+
+  /// Suppresses diagnostic previews during capture without suppressing real SOS events.
+  static bool get isButtonDebugCaptureEnabled => _buttonDebugCaptureEnabled;
+
+  /// Opens the diagnostic gate before native acknowledgement and restores it if the request fails.
+  Future<void> setButtonDebugCapture(bool enabled) async {
+    final previous = _buttonDebugCaptureEnabled;
+    final revision = ++_buttonDebugCaptureRevision;
+    _buttonDebugCaptureEnabled = enabled;
+    try {
+      await _methodChannel.invokeMethod<void>('setButtonDebugCapture', {
+        'enabled': enabled,
+      });
+    } catch (_) {
+      if (revision == _buttonDebugCaptureRevision) {
+        _buttonDebugCaptureEnabled = previous;
+      }
+      rethrow;
+    }
+  }
 
   /// Returns events.
   Stream<HikerBleEvent> get events => _events;
@@ -627,6 +646,24 @@ sealed class HikerBleEvent {
     }
     final data = Map<Object?, Object?>.from(raw);
     final type = _stringFrom(data['type']);
+    final mode =
+        _intFrom(data['mode']) ?? int.tryParse('${data['mode']}'.trim());
+    final source = _stringFrom(data['source'])?.toLowerCase();
+    if (const {
+          'sosButton',
+          'pairedSosButton',
+          'nearbySosButton',
+          'nearbySosLocation',
+        }.contains(type) &&
+        (data['isTest'] == true ||
+            mode == 2 ||
+            const {
+              'paired_ble_button_test',
+              'ble_sos_test',
+              'button_debug',
+            }.contains(source))) {
+      return HikerBlePairedSosButtonTestEvent.fromPlatform(data);
+    }
     return switch (type) {
       'pairedButtonSetupDevice' => HikerBlePairedButtonSetupEvent.fromPlatform(
         data,
@@ -1126,6 +1163,13 @@ class HikerBleSosHelpEvent extends HikerBleEvent {
   final DateTime receivedAt;
   final int? rssi;
   final String source;
+
+  /// Type-three beacons are short-lived diagnostics, not an emergency observation.
+  bool canPresentTestPreview(DateTime now, {bool debugCaptureEnabled = false}) {
+    if (debugCaptureEnabled) return false;
+    final age = now.toUtc().difference(receivedAt.toUtc());
+    return !age.isNegative && age <= const Duration(seconds: 30);
+  }
 }
 
 /// Represents hiker ble team location event.

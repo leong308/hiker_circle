@@ -31,6 +31,10 @@ class NearbySosEvent {
   final SosTriggerLocation? location;
   final SosTriggerLocation? detectorLocation;
 
+  /// Recognizes the reserved identifier used by older BLE test-beacon records.
+  bool get isDiagnosticTest =>
+      deviceId.trim().toLowerCase().startsWith('help_');
+
   /// Returns has reported location.
   bool get hasReportedLocation => _isValidLocation(location);
 
@@ -64,6 +68,7 @@ class NearbySosEvent {
 
   /// Checks whether active at.
   bool isActiveAt({required DateTime now, SosTriggerLocation? phoneLocation}) {
+    if (isDiagnosticTest) return false;
     if (ageAt(now) > activeDuration) return false;
     final distance = distanceMetersFrom(phoneLocation);
     return distance == null || distance <= activeRadiusMeters;

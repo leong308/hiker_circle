@@ -10,8 +10,10 @@ class RecordedTrailRequestPage extends StatefulWidget {
     required this.hike,
     required this.report,
     this.recordedMapOverride,
+    this.locationResolver,
   });
   final Widget? recordedMapOverride;
+  final TrailStartLocationResolver? locationResolver;
   final AppSession session;
   final HikerCircleFirebaseRepository repository;
   final ActiveHikeSession hike;
@@ -27,10 +29,8 @@ class RecordedTrailRequestPage extends StatefulWidget {
 class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
   late final points = HikeSummaryReport.recordedRoutePointsFor(widget.hike);
   late final mapPoints = recordedHikeMapPoints(widget.hike);
-  final name = TextEditingController(),
-      area = TextEditingController(),
-      state = TextEditingController(),
-      country = TextEditingController(text: 'Malaysia');
+  final name = TextEditingController();
+  RecordedTrailRequestLocationViewModel? _locationModel;
   final form = GlobalKey<FormState>();
   late final selections = <int, String>{
     0: 'Starting point',
@@ -41,12 +41,31 @@ class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
   double progress = 0;
   String? error;
 
+  /// Starts the shared lookup using the same first point submitted with the recording.
+  @override
+  void initState() {
+    super.initState();
+    if (points.length >= 3) {
+      _locationModel = RecordedTrailRequestLocationViewModel(
+        latitude: points.first.latitude,
+        longitude: points.first.longitude,
+        resolver: widget.locationResolver,
+      )..addListener(_renderLocation);
+      unawaited(_locationModel!.resolve());
+    }
+  }
+
+  /// Rebuilds the location row and submit availability after a lookup changes.
+  void _renderLocation() {
+    if (mounted) setState(() {});
+  }
+
   /// Releases resources owned by this instance.
   @override
   void dispose() {
-    for (final c in [name, area, state, country]) {
-      c.dispose();
-    }
+    _locationModel?.removeListener(_renderLocation);
+    _locationModel?.dispose();
+    name.dispose();
     super.dispose();
   }
 
@@ -63,7 +82,9 @@ class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
 
   /// Validate the recorded trail proposal before saving the request for administrator review.
   Future<void> submit() async {
-    if (saving || form.currentState?.validate() != true) {
+    if (saving ||
+        _locationModel?.canSubmit != true ||
+        form.currentState?.validate() != true) {
       return;
     }
     if (points.length < 3 || selections.length < 3) {
@@ -80,6 +101,7 @@ class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
     });
     try {
       final keys = selections.keys.toList()..sort();
+      final location = _locationModel!.location!;
       await _RecordedTrailRequestPageDataActions.submitRecordedTrailRequest(
         widget.repository,
       )(
@@ -88,9 +110,9 @@ class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
         report: widget.report,
         proposed: {
           'name': name.text.trim(),
-          'area': area.text.trim(),
-          'state': state.text.trim(),
-          'country': country.text.trim(),
+          'area': location.area.trim(),
+          'state': location.state.trim(),
+          'country': location.country.trim(),
         },
         checkpointSelections: [
           for (final i in keys) {'index': i, 'name': selections[i]},
@@ -136,6 +158,7 @@ class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
     }
     final chosen = points[selected];
     final keys = selections.keys.toList()..sort();
+    final location = _locationModel!;
     return PopScope(
       canPop: !saving,
       child: Scaffold(
@@ -250,26 +273,43 @@ class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
                             ),
                     ),
                   const SizedBox(height: 16),
-                  for (final pair in [
-                    ('Trail name', name),
-                    ('Area / locality', area),
-                    ('State / region', state),
-                    ('Country', country),
-                  ])
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: TextFormField(
-                        controller: pair.$2,
-                        enabled: !saving,
-                        maxLength: 160,
-                        decoration: InputDecoration(
-                          labelText: pair.$1,
-                          counterText: '',
-                        ),
-                        validator: (v) =>
-                            v?.trim().isNotEmpty == true ? null : 'Required',
+                  SettingsCard(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextFormField(
+                            controller: name,
+                            enabled: !saving,
+                            maxLength: 160,
+                            decoration: const InputDecoration(
+                              labelText: 'Trail name',
+                              prefixIcon: Icon(Icons.terrain_rounded),
+                              counterText: '',
+                            ),
+                            validator: (v) => v?.trim().isNotEmpty == true
+                                ? null
+                                : 'Required',
+                          ),
+                          const SizedBox(height: 16),
+                          const Divider(height: 1),
+                          const SizedBox(height: 16),
+                          TrailLocationSummary(
+                            area: location.location?.area ?? '',
+                            state: location.location?.state ?? '',
+                            country: location.location?.country ?? '',
+                            isLoading: location.isLoading,
+                            hasError: location.hasError,
+                            failureHint:
+                                'Retry to find the recorded starting point’s location.',
+                            onRetry: () => unawaited(location.resolve()),
+                          ),
+                        ],
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 12),
                   if (error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -293,7 +333,7 @@ class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
                   ],
                   const SizedBox(height: 12),
                   FilledButton.icon(
-                    onPressed: saving ? null : submit,
+                    onPressed: saving || !location.canSubmit ? null : submit,
                     icon: const Icon(Icons.send_rounded),
                     label: const Text('Send for admin review'),
                   ),

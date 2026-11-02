@@ -4,6 +4,11 @@ const crypto = require('crypto');
 // normalizeNearbySosReport: Validate the BLE incident window and derive a privacy-preserving deduplication identity.
 function normalizeNearbySosReport(data, nowMillis = Date.now()) {
   const deviceId = String(data?.deviceId || '').trim().toLowerCase();
+  const source = String(data?.source || '').trim().toLowerCase();
+  if (deviceId.startsWith('help_') || data?.isTest === true || Number(data?.mode) === 2
+      || ['ble_sos_test', 'paired_ble_button_test', 'button_debug'].includes(source)) {
+    throw new Error('diagnostic-test-not-incident');
+  }
   if (!/^[a-z0-9_:-]{3,64}$/.test(deviceId)) {
     throw new Error('invalid-device-id');
   }

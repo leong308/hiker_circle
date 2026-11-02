@@ -51,120 +51,6 @@ String _label(Object? value) {
   return '${raw[0].toUpperCase()}${raw.substring(1).replaceAll('_', ' ')}';
 }
 
-/// A compact snapshot banner distinguishes data freshness from system availability.
-class _DashboardSnapshotHeader extends StatelessWidget {
-  /// Displays source coverage alongside the reporting timestamp.
-  const _DashboardSnapshotHeader({
-    required this.snapshot,
-    required this.loading,
-  });
-  final AdminAnalyticsSnapshot snapshot;
-  final bool loading;
-
-  /// Uses restrained green surfaces and typography shared with the rest of HikerCircle.
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      color: AdminUi.green(context).withValues(alpha: .07),
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: AdminUi.green(context).withValues(alpha: .14)),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              Icons.analytics_outlined,
-              color: AdminUi.green(context),
-              size: 24,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'System performance',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -.4,
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    'Hiker activity, trail quality, safety and delivery operations.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.5,
-                      color: AdminUi.muted(context),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 15),
-        Wrap(
-          spacing: 14,
-          runSpacing: 7,
-          children: [
-            _InlineStatus(
-              icon: loading ? Icons.sync_rounded : Icons.schedule_rounded,
-              label: loading ? 'Refreshing snapshot…' : snapshot.updatedLabel,
-            ),
-            _InlineStatus(
-              icon: snapshot.incompleteCount == 0
-                  ? Icons.fact_check_outlined
-                  : Icons.info_outline_rounded,
-              label:
-                  '${snapshot.completeSourceCount} of ${snapshot.coverage.length} sources complete',
-              warning: snapshot.incompleteCount > 0,
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-/// Keeps snapshot metadata readable as the width and font size change.
-class _InlineStatus extends StatelessWidget {
-  /// Combines a small status symbol with a text description.
-  const _InlineStatus({
-    required this.icon,
-    required this.label,
-    this.warning = false,
-  });
-  final IconData icon;
-  final String label;
-  final bool warning;
-
-  /// Wraps long labels without forcing a full-width status pill.
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, size: 14, color: warning ? _orange : AdminUi.green(context)),
-      const SizedBox(width: 5),
-      Flexible(
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: AdminUi.muted(context),
-          ),
-        ),
-      ),
-    ],
-  );
-}
-
 /// Provides real dashboard areas without hiding analytics inside a disclosure drawer.
 class _DashboardAreaTabs extends StatelessWidget {
   /// Reads selection from the ViewModel.
@@ -270,15 +156,6 @@ class _DashboardPeriodSelector extends StatelessWidget {
             ),
         ],
       ),
-      const SizedBox(height: 6),
-      Text(
-        'Period comparisons use Malaysia calendar days. Today is partial. Panels labelled current or all time keep their stated scope.',
-        style: TextStyle(
-          fontSize: 11,
-          height: 1.5,
-          color: AdminUi.muted(context),
-        ),
-      ),
     ],
   );
 }
@@ -355,17 +232,6 @@ class _MetricCard extends StatelessWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
-          if (metric.detail.isNotEmpty) ...[
-            const SizedBox(height: 5),
-            Text(
-              metric.detail,
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.45,
-                color: AdminUi.muted(context),
-              ),
-            ),
-          ],
           if (comparison != null) ...[
             const SizedBox(height: 10),
             Text(
@@ -534,13 +400,10 @@ class _DashboardUnavailable extends StatelessWidget {
           loading ? 'Analysing system activity' : 'Analysis unavailable',
           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
         ),
-        const SizedBox(height: 8),
-        Text(
-          loading
-              ? 'Preparing account, hiking, trail, safety and delivery metrics…'
-              : error ?? 'Refresh to retrieve a system snapshot.',
-          style: TextStyle(height: 1.5, color: AdminUi.muted(context)),
-        ),
+        if (!loading && error != null) ...[
+          const SizedBox(height: 8),
+          Text(error!, style: TextStyle(color: AdminUi.muted(context))),
+        ],
         if (loading) ...[
           const SizedBox(height: 18),
           const LinearProgressIndicator(minHeight: 3),
@@ -595,26 +458,12 @@ class _AttentionRow extends StatelessWidget {
             ),
             const SizedBox(width: 11),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${issue['title']}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${issue['detail']}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      height: 1.5,
-                      color: AdminUi.muted(context),
-                    ),
-                  ),
-                ],
+              child: Text(
+                '${issue['title']}',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -634,37 +483,6 @@ class _AttentionRow extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Keeps short methodology explanations readable beside the relevant metrics.
-class _DefinitionLine extends StatelessWidget {
-  /// Separates a term from its plain-language definition.
-  const _DefinitionLine({required this.title, required this.body});
-  final String title, body;
-
-  /// Adds generous line height while avoiding large empty gaps.
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 14),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          body,
-          style: TextStyle(
-            fontSize: 12,
-            height: 1.5,
-            color: AdminUi.muted(context),
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 /// Reuses a concise count row for completeness and quality checks.
@@ -701,13 +519,12 @@ class _ActionPanel extends StatelessWidget {
   /// Keeps the action label explicit about what will open.
   const _ActionPanel({
     required this.title,
-    required this.detail,
     required this.metric,
     required this.icon,
     required this.onTap,
     required this.action,
   });
-  final String title, detail, action;
+  final String title, action;
   final AdminDashboardMetric metric;
   final IconData icon;
   final VoidCallback onTap;
@@ -733,15 +550,6 @@ class _ActionPanel extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        Text(
-          detail,
-          style: TextStyle(
-            fontSize: 12,
-            height: 1.5,
-            color: AdminUi.muted(context),
-          ),
-        ),
         const SizedBox(height: 8),
         _ValueLine(metric: metric),
         const SizedBox(height: 8),
@@ -750,27 +558,6 @@ class _ActionPanel extends StatelessWidget {
           child: Text(action, textAlign: TextAlign.center),
         ),
       ],
-    ),
-  );
-}
-
-/// Gives methodology notes a quiet, consistent place below the data.
-class _DashboardNote extends StatelessWidget {
-  /// Requires a short explanation relevant to the current dashboard area.
-  const _DashboardNote({required this.text});
-  final String text;
-
-  /// Avoids making explanatory text compete with headline metrics.
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
-    child: Text(
-      text,
-      style: TextStyle(
-        color: AdminUi.muted(context),
-        fontSize: 11,
-        height: 1.6,
-      ),
     ),
   );
 }
@@ -791,15 +578,6 @@ class _CoveragePanel extends StatelessWidget {
         Text(
           '${snapshot.completeSourceCount} of ${snapshot.coverage.length} sources complete',
           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Complete means every available page was analysed. Exact collection counts can remain available when a detailed read is incomplete.',
-          style: TextStyle(
-            fontSize: 12,
-            height: 1.5,
-            color: AdminUi.muted(context),
-          ),
         ),
         const SizedBox(height: 12),
         for (final row in snapshot.coverage)
@@ -1070,12 +848,10 @@ class _Bars extends StatelessWidget {
     required this.title,
     required this.rows,
     required this.suffix,
-    this.subtitle,
     this.emptyLabel = 'No records in this scope.',
     this.partial = false,
   });
   final String title, suffix;
-  final String? subtitle;
   final String emptyLabel;
   final bool partial;
   final List<Map<String, dynamic>> rows;
@@ -1088,7 +864,12 @@ class _Bars extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AdminSectionHeading(title: title, subtitle: subtitle),
+          AdminSectionHeading(
+            title: title,
+            trailing: partial
+                ? AdminTag(label: 'Partial data', color: _orange)
+                : null,
+          ),
           const SizedBox(height: 16),
           if (rows.isEmpty)
             Text(emptyLabel, style: TextStyle(color: AdminUi.muted(context))),
@@ -1111,6 +892,8 @@ class _Bars extends StatelessWidget {
                       const SizedBox(width: 8),
                       Text(
                         '${partial ? '≥ ' : ''}${_fmt(row['value'])}',
+                        semanticsLabel:
+                            '${partial ? 'At least ' : ''}${_fmt(row['value'])} $suffix',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ],
@@ -1130,10 +913,6 @@ class _Bars extends StatelessWidget {
                 ],
               ),
             ),
-          Text(
-            '${partial ? 'Partial counts' : 'Counts'} in $suffix',
-            style: TextStyle(fontSize: 10, color: AdminUi.muted(context)),
-          ),
         ],
       ),
     );

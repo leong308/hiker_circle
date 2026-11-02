@@ -10,6 +10,8 @@ class CommunityIntegrityPanel extends StatefulWidget {
     this.health,
     this.loadReviews,
     this.openReview,
+    this.runChecks,
+    this.clock,
   });
   final VoidCallback? onReviewed;
   final Stream<QuerySnapshot<Map<String, dynamic>>>? reviews;
@@ -17,6 +19,8 @@ class CommunityIntegrityPanel extends StatefulWidget {
   final Stream<QuerySnapshot<Map<String, dynamic>>> Function(int limit)?
   loadReviews;
   final Future<bool?> Function(CommunityFlag flag)? openReview;
+  final Future<Map<String, dynamic>> Function()? runChecks;
+  final DateTime Function()? clock;
 
   /// Binds the queue's presentation lifecycle.
   @override
@@ -37,6 +41,8 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
       readHealth: () => widget.health,
       readLoadReviews: () => widget.loadReviews,
       readReviews: () => widget.reviews,
+      readRunChecks: () => widget.runChecks,
+      clock: widget.clock,
     )..addListener(_render);
     _screenModel.readOpenReview = () => widget.openReview;
     _screenModel.readOnReviewed = () => widget.onReviewed;
@@ -107,11 +113,18 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
                 ),
                 const CommunityModerationRulesButton(compact: true),
                 IconButton(
-                  tooltip: 'Refresh flagged content',
-                  onPressed: _screenModel.commandHasReviews
-                      ? _screenModel.commandRefresh
+                  tooltip: 'Refresh rule-based checks',
+                  onPressed: _screenModel.commandCanRunChecks
+                      ? () => unawaited(_screenModel.commandRunChecks())
                       : null,
-                  icon: const Icon(Icons.refresh_rounded),
+                  icon: _screenModel.stateRefreshing
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: HikerCircleMinorLoadingIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.refresh_rounded),
                 ),
               ],
             ),
@@ -130,12 +143,16 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
                 builder: _health,
               )
             else
+              _checkStatus(_screenModel.stateManualHealth),
+            if (_screenModel.stateRefreshError != null) ...[
+              const SizedBox(height: 8),
               Text(
-                'Scan status unavailable while offline.',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context)),
+                _screenModel.stateRefreshError!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
               ),
+            ],
           ],
         ),
       ),
@@ -166,24 +183,68 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
     final text = Theme.of(
       context,
     ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context), height: 1.4);
+    if (_screenModel.stateRefreshing) return _checkStatus(null);
     if (snapshot.hasError) {
+      if (_screenModel.stateManualHealth != null) {
+        return _checkStatus(_screenModel.stateManualHealth);
+      }
       return Text(
         'Scan status could not load. Existing flags can still be reviewed.',
         style: text,
       );
     }
-    if (!snapshot.hasData) return const LinearProgressIndicator(minHeight: 2);
-    final data = snapshot.data?.data();
-    final date = parseCommunityFlagTimestamp(data?['lastRunAtMillis']);
-    if (date == null) {
-      return Text('Waiting for the first scheduled check.', style: text);
+    if (!snapshot.hasData && _screenModel.stateManualHealth == null) {
+      return const LinearProgressIndicator(minHeight: 2);
     }
-    final failed = const {'failed', 'deferred'}.contains(data?['status']);
-    return Text(
-      failed
-          ? 'The last scan was incomplete. Saved flags remain available.'
-          : 'Last checked ${_date(date)}',
-      style: text,
+    final data = snapshot.data?.data();
+    return _checkStatus(
+      CommunityIntegrityStatus.latest(
+        data == null
+            ? (snapshot.hasData
+                  ? const CommunityIntegrityStatus(status: '')
+                  : null)
+            : CommunityIntegrityStatus.fromMap(data),
+        _screenModel.stateManualHealth,
+      ),
+    );
+  }
+
+  /// Shows the shared server deadline without rebuilding the queue on every timer tick.
+  Widget _checkStatus(CommunityIntegrityStatus? status) {
+    final style = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context), height: 1.4);
+    if (_screenModel.stateRefreshing) {
+      return Text(
+        'Refreshing checks…',
+        key: const ValueKey('community-next-check'),
+        style: style,
+      );
+    }
+    if (status == null) {
+      return Text('Scan status unavailable while offline.', style: style);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!status.isRunning && status.lastRunAt != null) ...[
+          Text(
+            status.isFailed
+                ? 'The last scan was incomplete.'
+                : 'Last checked ${_date(status.lastRunAt)}',
+            style: style,
+          ),
+          const SizedBox(height: 4),
+        ],
+        ValueListenableBuilder<DateTime>(
+          valueListenable: _screenModel.stateClock,
+          builder: (context, now, _) => Text(
+            status.nextCheckLabel(now),
+            key: const ValueKey('community-next-check'),
+            style: style,
+          ),
+        ),
+      ],
     );
   }
 

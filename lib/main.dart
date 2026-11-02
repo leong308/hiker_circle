@@ -9,6 +9,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 import 'app/Data/app_settings_controller.dart';
 import 'achievements/Model/achievement_catalog.dart';
+import 'admin/Model/community_moderation_policy.dart';
 import 'app/Data/firebase_bootstrap.dart';
 import 'app/View/hiker_circle_app.dart';
 import 'core/config/google_api_config.dart';
@@ -52,6 +53,7 @@ Future<void> main() async {
     );
   });
   await AchievementCatalog.load();
+  await CommunityModerationPolicy.load();
   final settings = AppSettingsController.instance;
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   // Only the public Mapbox token is packaged; provider secrets stay in Firebase.

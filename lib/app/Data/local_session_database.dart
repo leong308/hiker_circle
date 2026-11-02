@@ -2707,6 +2707,7 @@ class LocalSessionDatabase {
 
   /// Saves nearby sos event.
   Future<void> saveNearbySosEvent(NearbySosEvent event) async {
+    if (event.isDiagnosticTest) return;
     final owner = event.ownerPhoneNumber.trim();
     final eventKey = event.eventKey.trim();
     if (owner.isEmpty || eventKey.isEmpty) return;
@@ -2793,7 +2794,8 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final rows = await database.query(
       'nearby_sos_events',
-      where: 'owner_phone_number = ?',
+      where:
+          "owner_phone_number = ? AND substr(lower(trim(device_id)), 1, 5) <> 'help_'",
       whereArgs: [owner],
       orderBy: 'received_at DESC',
       limit: limit,

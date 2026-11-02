@@ -13,6 +13,8 @@ class TrailLocationSummary extends StatelessWidget {
     required this.isLoading,
     required this.hasError,
     required this.onRetry,
+    this.failureHint =
+        'Retry or choose another starting point to find the location.',
   });
 
   final String area;
@@ -21,6 +23,7 @@ class TrailLocationSummary extends StatelessWidget {
   final bool isLoading;
   final bool hasError;
   final VoidCallback onRetry;
+  final String failureHint;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -86,7 +89,7 @@ class TrailLocationSummary extends StatelessWidget {
           if (hasError && !isLoading) ...[
             const SizedBox(height: 8),
             Text(
-              'Retry or choose another starting point to find the location.',
+              failureHint,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: colors.onSurfaceVariant,
                 height: 1.4,

@@ -42,18 +42,7 @@ class _AdminPageState extends State<AdminPage> {
   set _adminDataRevision(int value) =>
       _screenModel.stateAdminDataRevision = value;
 
-  /// Returns loading sections.
-  Set<AdminSection> get _loadingSections => _screenModel.stateLoadingSections;
-
-  /// Returns section loaded at.
-  Map<AdminSection, DateTime> get _sectionLoadedAt =>
-      _screenModel.stateSectionLoadedAt;
-
   late final _AdminPageStateViewModel _screenModel;
-
-  /// Returns section errors.
-  Map<AdminSection, String> get _sectionErrors =>
-      _screenModel.stateSectionErrors;
 
   /// Returns is saving.
   bool get _isSaving => _screenModel.stateIsSaving;
@@ -138,6 +127,10 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   bool _debugMode = false;
+  // Retains diagnostics for explicitly enabled builds while hiding its card by default.
+  static const _showDataDiagnosticsCard = bool.fromEnvironment(
+    'HC_SHOW_DATA_DIAGNOSTICS',
+  );
   _DebugSection? _selectedDebugSection;
   Map<String, List<Map<String, dynamic>>> _localDbData = const {};
   List<_FirestoreCollection> _firestoreData = const [];
@@ -195,44 +188,6 @@ class _AdminPageState extends State<AdminPage> {
     if (mounted && revision == _adminDataRevision) {
       setState(() => _isLoading = false);
     }
-  }
-
-  /// Returns section load summary.
-  String get _sectionLoadSummary {
-    if (_selectedSection == AdminSection.users) return '';
-    if (_selectedSection == AdminSection.overview) {
-      return _analyticsLoading
-          ? 'Refreshing statistics…'
-          : _analyticsError != null
-          ? 'Statistics need attention; management sections remain available.'
-          : _analytics == null
-          ? 'Statistics have not loaded yet.'
-          : 'Statistics loaded from the server.';
-    }
-    if (_selectedSection == AdminSection.hazards) {
-      return _safetyModel.loading
-          ? 'Connecting to safety reports…'
-          : _safetyModel.error != null
-          ? 'Live updates unavailable · retry below'
-          : _safetyModel.hasData
-          ? 'Community reports · expiry updates automatically'
-          : 'Safety reports have not loaded yet';
-    }
-    if (_selectedSection == AdminSection.tools) {
-      return 'Administrator workspace';
-    }
-    if (_loadingSections.contains(_selectedSection)) {
-      return 'Refreshing this section…';
-    }
-    if (_sectionErrors.containsKey(_selectedSection)) {
-      return _sectionLoadedAt.containsKey(_selectedSection)
-          ? 'Refresh failed · showing previously loaded records'
-          : 'Records have not loaded · retry below';
-    }
-    final loaded = _sectionLoadedAt[_selectedSection];
-    return loaded == null
-        ? 'Records have not loaded yet'
-        : 'Updated at ${loaded.hour.toString().padLeft(2, '0')}:${loaded.minute.toString().padLeft(2, '0')}';
   }
 
   /// Shows snack.
@@ -493,13 +448,6 @@ class _AdminPageState extends State<AdminPage> {
       return const _AdminLockedState();
     }
 
-    final subtitle = switch (_selectedSection) {
-      AdminSection.overview => 'System analysis and operations',
-      AdminSection.hazards =>
-        'Follow trail cautions from report to resolution.',
-      AdminSection.users => 'Hiker usernames, phone numbers and roles.',
-      AdminSection.tools => 'Support hikers and inspect app activity.',
-    };
     final content = switch (_selectedSection) {
       AdminSection.overview => AdminAnalyticsDashboard(
         data: _analytics,
@@ -521,9 +469,6 @@ class _AdminPageState extends State<AdminPage> {
         children: [
           _AdminDashboardCard(
             title: 'Hiker feedback',
-            subtitle: 'Read feedback and follow up on reported issues.',
-            metric: 'Support',
-            detail: 'Feedback inbox',
             icon: Icons.feedback_outlined,
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -533,9 +478,6 @@ class _AdminPageState extends State<AdminPage> {
           ),
           _AdminDashboardCard(
             title: 'Button Debugging',
-            subtitle: 'Capture button activity and inspect decoded HEX logs.',
-            metric: 'Device tools',
-            detail: 'Live capture & saved sessions',
             icon: Icons.bluetooth_searching_rounded,
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -543,14 +485,12 @@ class _AdminPageState extends State<AdminPage> {
               ),
             ),
           ),
-          _AdminDashboardCard(
-            title: 'Data diagnostics',
-            subtitle: 'Inspect cloud records, local storage and runtime state.',
-            metric: 'Diagnostics',
-            detail: 'Read-only inspection',
-            icon: Icons.storage_outlined,
-            onTap: _openDiagnostics,
-          ),
+          if (_showDataDiagnosticsCard)
+            _AdminDashboardCard(
+              title: 'Data diagnostics',
+              icon: Icons.storage_outlined,
+              onTap: _openDiagnostics,
+            ),
         ],
       ),
     };
@@ -623,7 +563,6 @@ class _AdminPageState extends State<AdminPage> {
                         else
                           _AdminHeader(
                             title: 'Dashboard',
-                            subtitle: subtitle,
                             isLoading: _isLoading,
                             onRefresh: () => unawaited(_loadAdminData()),
                             onBack:
@@ -643,19 +582,6 @@ class _AdminPageState extends State<AdminPage> {
                             selected: _selectedSection,
                             onSelect: _selectSection,
                           ),
-                          if (_selectedSection != AdminSection.overview &&
-                              _selectedSection != AdminSection.users) ...[
-                            const SizedBox(height: 12),
-                            Text(
-                              _sectionLoadSummary,
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    color: _AdminColors.secondaryTextFor(
-                                      context,
-                                    ),
-                                  ),
-                            ),
-                          ],
                           if (_selectedSection == AdminSection.hazards) ...[
                             const SizedBox(height: 18),
                             TextField(
@@ -1127,30 +1053,18 @@ class _DebugSectionPicker extends StatelessWidget {
         const SizedBox(height: 12),
         _AdminDashboardCard(
           title: 'Cloud Firestore',
-          subtitle:
-              'Persistent shared cloud documents, including known nested subcollections.',
-          metric: 'Persistent cloud',
-          detail: 'Survives sign-out, app restarts, and device changes',
           icon: Icons.cloud_rounded,
           onTap: onSelectFirestore,
         ),
         const SizedBox(height: 12),
         _AdminDashboardCard(
           title: 'Local SQLite Database',
-          subtitle:
-              'Every application table discovered from the device database schema.',
-          metric: 'Persistent device',
-          detail: 'Survives app restarts on this device',
           icon: Icons.storage_rounded,
           onTap: onSelectLocal,
         ),
         const SizedBox(height: 12),
         _AdminDashboardCard(
           title: 'Runtime & Temporary State',
-          subtitle:
-              'Current session, active hike, timers, loaded lists, settings, service snapshots, and memory caches.',
-          metric: 'Temporary memory',
-          detail: 'Usually cleared when widgets close or the app process exits',
           icon: Icons.memory_rounded,
           onTap: onSelectRuntime,
         ),

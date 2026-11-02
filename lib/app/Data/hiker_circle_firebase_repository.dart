@@ -6096,6 +6096,11 @@ class HikerCircleFirebaseRepository {
   Future<NearbySosForwardResult> forwardNearbySosIncident({
     required NearbySosEvent event,
   }) async {
+    if (event.isDiagnosticTest) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Diagnostic tests cannot be forwarded as SOS incidents.',
+      );
+    }
     if (!_firebaseBootstrapResult.isAvailable) {
       throw const HikerCircleFirebaseRepositoryException(
         'Nearby SOS forwarding is waiting for an internet connection.',
@@ -6116,6 +6121,8 @@ class HikerCircleFirebaseRepository {
           .httpsCallable('forwardNearbySosIncident')
           .call<Map<String, dynamic>>({
             'deviceId': event.deviceId,
+            'source': 'paired_ble_button',
+            'mode': 1,
             if (event.counter != null) 'counter': event.counter,
             'receivedAtMillis': event.receivedAt.toUtc().millisecondsSinceEpoch,
             if (event.rssi != null) 'rssi': event.rssi,

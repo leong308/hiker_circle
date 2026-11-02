@@ -7,7 +7,15 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
     required this.readHealth,
     required this.readLoadReviews,
     required this.readReviews,
-  }) {
+    required this.readRunChecks,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now {
+    stateClock = ValueNotifier(_clock().toUtc());
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_disposed && stateClock.hasListeners) {
+        stateClock.value = _clock().toUtc().add(_serverOffset);
+      }
+    });
     _replaceStreams();
   }
 
@@ -16,6 +24,14 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
   Function()
   readLoadReviews;
   final Stream<QuerySnapshot<Map<String, dynamic>>>? Function() readReviews;
+  final Future<Map<String, dynamic>> Function()? Function() readRunChecks;
+  final DateTime Function() _clock;
+  late final ValueNotifier<DateTime> stateClock;
+  late final Timer _clockTimer;
+  Duration _serverOffset = Duration.zero;
+  CommunityIntegrityStatus? stateManualHealth;
+  bool stateRefreshing = false;
+  String? stateRefreshError;
   static const pageSize = 50;
   int stateLimit = pageSize;
   String stateQuery = '';
@@ -35,6 +51,45 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
 
   /// Whether a Firebase app or an injected source can supply pending flags.
   bool get commandHasReviews => stateReviews != null;
+
+  /// Enables explicit server checks when Firebase or an injected scan action is available.
+  bool get commandCanRunChecks =>
+      !stateRefreshing && (Firebase.apps.isNotEmpty || readRunChecks() != null);
+
+  /// Runs immediately, coalesces repeated taps and applies only a server-confirmed deadline.
+  Future<void> commandRunChecks() async {
+    if (!commandCanRunChecks) return;
+    _publish(() {
+      stateRefreshing = true;
+      stateRefreshError = null;
+    });
+    try {
+      final result =
+          await (readRunChecks() ??
+              const CommunityIntegrityRepository().runChecks)();
+      if (_disposed) return;
+      final serverNow = parseCommunityFlagTimestamp(result['serverNowMillis']);
+      if (serverNow != null) {
+        _serverOffset = serverNow.difference(_clock().toUtc());
+      }
+      stateClock.value = _clock().toUtc().add(_serverOffset);
+      _publish(() {
+        stateManualHealth = CommunityIntegrityStatus.fromMap(result);
+        stateError = null;
+        _replaceStreams();
+      });
+    } catch (error) {
+      if (!_disposed) {
+        _publish(
+          () => stateRefreshError = error is FirebaseFunctionsException
+              ? error.message ?? 'Checks could not finish. Please try again.'
+              : 'Checks could not finish. Please try again.',
+        );
+      }
+    } finally {
+      if (!_disposed) _publish(() => stateRefreshing = false);
+    }
+  }
 
   /// Creates stable streams so rebuilds do not restart database listeners.
   void _replaceStreams() {
@@ -135,6 +190,8 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _clockTimer.cancel();
+    stateClock.dispose();
     super.dispose();
   }
 }

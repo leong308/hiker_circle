@@ -53,6 +53,7 @@ class BleSosMonitorService : Service() {
         const val EXTRA_LONGITUDE = "longitude"
         const val EXTRA_ACCURACY_METERS = "accuracyMeters"
         const val EXTRA_CAPTURED_AT_MILLIS = "capturedAtMillis"
+        const val EXTRA_PHONE_NUMBER_HASH = "phoneNumberHash"
         const val EXTRA_PENDING_OWNER_EVENT_STORED = "pendingOwnerEventStored"
         const val EXTRA_PENDING_NEARBY_EVENT_STORED = "pendingNearbyEventStored"
         const val EXTRA_TEST_DURATION_MILLIS = "testDurationMillis"
@@ -999,67 +1000,22 @@ class BleSosMonitorService : Service() {
             return
         }
         rememberHandledEvent(fingerprint)
-        persistPendingHelpEvent(packet, now, fingerprint)
+        // A test beacon is delivered only to a foreground listener, without an emergency inbox or wake-up.
         sendBroadcast(
             Intent(ACTION_SOS_BUTTON_DETECTED).apply {
                 setPackage(packageName)
                 putExtra(EXTRA_EVENT_TYPE, EVENT_SOS_HELP)
                 putExtra(EXTRA_SOURCE, "ble_sos_test")
+                putExtra(EXTRA_PHONE_NUMBER_HASH, packet.phoneNumberHash)
+                putExtra(EXTRA_LATITUDE, packet.latitude)
+                putExtra(EXTRA_LONGITUDE, packet.longitude)
+                putExtra(EXTRA_ACCURACY_METERS, packet.accuracyMeters)
+                putExtra(EXTRA_CAPTURED_AT_MILLIS, packet.capturedAtMillis)
+                putExtra(EXTRA_RECEIVED_AT_MILLIS, now)
+                putExtra(EXTRA_RSSI, packet.rssi)
             },
             INTERNAL_BLE_SOS_PERMISSION,
         )
-        val deepLink = Uri.Builder()
-            .scheme("hikercircle")
-            .authority("sos")
-            .path("help")
-            .appendQueryParameter("source", "trusted_ble_event_pending")
-            .build()
-        val launchIntent = Intent(Intent.ACTION_VIEW).apply {
-            data = deepLink
-            setPackage(packageName)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        Log.d(TAG, "Launching BLE SOS help workflow: $deepLink")
-        runCatching { startActivity(launchIntent) }
-            .onFailure { Log.w(TAG, "Unable to foreground nearby SOS help", it) }
-        postSosDetectedNotification(deepLink)
-    }
-
-    private fun persistPendingHelpEvent(
-        packet: HikerBleProtocol.SosHelpBeaconPacket,
-        receivedAtMillis: Long,
-        fingerprint: String,
-    ) {
-        val preferences = getSharedPreferences(PENDING_EVENT_PREFS, MODE_PRIVATE)
-        runCatching {
-            val pending = preferences.getString(PENDING_HELP_EVENTS, null)
-                ?.let(::JSONArray)
-                ?: JSONArray()
-            for (index in pending.length() - 1 downTo 0) {
-                if (pending.optJSONObject(index)?.optString("fingerprint") == fingerprint) {
-                    pending.remove(index)
-                }
-            }
-            pending.put(
-                JSONObject()
-                    .put("fingerprint", fingerprint)
-                    .put("phoneNumberHash", packet.phoneNumberHash)
-                    .put("latitude", packet.latitude)
-                    .put("longitude", packet.longitude)
-                    .put("accuracyMeters", packet.accuracyMeters)
-                    .put("capturedAtMillis", packet.capturedAtMillis)
-                    .put("receivedAtMillis", receivedAtMillis)
-                    .put("rssi", packet.rssi),
-            )
-            while (pending.length() > 16) pending.remove(0)
-            check(
-                preferences.edit()
-                    .putString(PENDING_HELP_EVENTS, pending.toString())
-                    .commit(),
-            ) { "Unable to save nearby SOS help event." }
-        }.onFailure {
-            Log.e(TAG, "Unable to persist nearby SOS help event", it)
-        }
     }
 
     private fun sosButtonFingerprint(result: ScanResult, eventId: Long?): String {

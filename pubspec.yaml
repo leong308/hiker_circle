@@ -106,6 +106,7 @@ flutter:
   assets:
     - .env.public
     - functions/achievement_rules.json
+    - functions/community_moderation_policy.json
     - assets/audios/sos_alarm.mp3
     - assets/audios/med_alarm.mp3
     - assets/guides/first_aid_guide.json

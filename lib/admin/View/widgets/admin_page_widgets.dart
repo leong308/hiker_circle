@@ -5,13 +5,14 @@ class _AdminHeader extends StatelessWidget {
   /// Creates admin header.
   const _AdminHeader({
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     required this.isLoading,
     required this.onRefresh,
     this.onBack,
     this.backTooltip = 'Back to admin dashboard',
   });
-  final String title, subtitle;
+  final String title;
+  final String? subtitle;
   final bool isLoading;
   final VoidCallback onRefresh;
   final VoidCallback? onBack;
@@ -44,14 +45,16 @@ class _AdminHeader extends StatelessWidget {
                   _AdminColors.textFor(context),
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: PageHeaderStyle.subtitle(
-                  context,
-                  _AdminColors.secondaryTextFor(context),
+              if (subtitle != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  subtitle!,
+                  style: PageHeaderStyle.subtitle(
+                    context,
+                    _AdminColors.secondaryTextFor(context),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -73,13 +76,10 @@ class _AdminDashboardCard extends StatelessWidget {
   /// Creates admin dashboard card.
   const _AdminDashboardCard({
     required this.title,
-    required this.subtitle,
-    required this.metric,
-    required this.detail,
     required this.icon,
     required this.onTap,
   });
-  final String title, subtitle, metric, detail;
+  final String title;
   final IconData icon;
   final VoidCallback onTap;
 
@@ -115,28 +115,6 @@ class _AdminDashboardCard extends StatelessWidget {
               Icons.chevron_right_rounded,
               size: 20,
               color: AdminUi.muted(context),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Text(
-          subtitle,
-          style: TextStyle(
-            fontSize: 13,
-            height: 1.5,
-            color: AdminUi.muted(context),
-          ),
-        ),
-        const SizedBox(height: 14),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            AdminTag(label: metric, color: AdminUi.blue(context)),
-            Text(
-              detail,
-              style: TextStyle(color: AdminUi.muted(context), fontSize: 11),
             ),
           ],
         ),

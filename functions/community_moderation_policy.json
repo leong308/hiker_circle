@@ -1,0 +1,406 @@
+{
+  "version": 3,
+  "description": "Public community text is flagged for human review, never automatically removed. English, Malay and common Chinese phrases are covered; these finite rules do not understand every language or context.",
+  "negationPattern": "(?:\\b(?:do\\s+not|don't|never|avoid|jangan|usah|dilarang)|不要|禁止)\\s*(?:[\\p{L}]+\\s+){0,2}$",
+  "categories": {
+    "spam_scam": {
+      "label": "Spam & scams",
+      "reason": "Possible spam or scam",
+      "severity": "medium",
+      "description": "Suspicious promotions, guaranteed returns, advance-payment claims and credential phishing.",
+      "keywords": [
+        "guaranteed profit",
+        "guaranteed returns",
+        "risk free investment",
+        "double your money",
+        "get rich quick",
+        "send me your otp",
+        "send your password",
+        "claim your prize",
+        "advance fee",
+        "pelaburan dijamin",
+        "untung dijamin",
+        "cepat kaya",
+        "hantar otp",
+        "中奖领奖",
+        "稳赚不赔"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:advance_payment_scam",
+          "label": "Advance-payment promotion",
+          "expression": "\\b(?:pay|send|transfer)\\s+(?:a\\s+)?(?:deposit|fee|money)\\b[^.!?]{0,60}\\b(?:claim|unlock|receive)\\s+(?:your\\s+)?(?:prize|winnings|reward)\\b"
+        },
+        {
+          "id": "pattern:guaranteed_investment",
+          "label": "Guaranteed investment return",
+          "expression": "\\b(?:guaranteed|dijamin)\\b[^.!?]{0,35}\\b(?:profit|return|returns|keuntungan|pulangan)\\b"
+        }
+      ]
+    },
+    "gambling": {
+      "label": "Gambling",
+      "reason": "Possible gambling content",
+      "severity": "medium",
+      "description": "Gambling references and betting or casino promotions, including common word forms.",
+      "keywords": [
+        "gamble",
+        "gambles",
+        "gambled",
+        "gambling",
+        "gambler",
+        "gamblers",
+        "betting",
+        "bookie",
+        "bookmaker",
+        "casino",
+        "casinos",
+        "sportsbook",
+        "online slots",
+        "slot machine",
+        "judi",
+        "berjudi",
+        "perjudian",
+        "kasino",
+        "pertaruhan",
+        "赌博",
+        "赌场",
+        "博彩",
+        "下注"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:betting_promotion",
+          "label": "Betting promotion",
+          "expression": "\\b(?:place|make|win|pasang)\\s+(?:your\\s+|a\\s+)?(?:bets?|taruhan)\\b"
+        },
+        {
+          "id": "pattern:obfuscated_gambling",
+          "label": "Obfuscated gambling wording",
+          "expression": "\\b(?:g[a4]mbl[1i]ng|c[a4]s[1i]n[o0]|j[u0]d[1i])\\b"
+        }
+      ]
+    },
+    "illegal_activity": {
+      "label": "Illegal activity",
+      "reason": "Possible promotion of illegal activity",
+      "severity": "high",
+      "respectNegation": true,
+      "description": "Illicit drug or weapon sales, document fraud, poaching and encouragement to enter restricted areas.",
+      "keywords": [
+        "drug trafficking",
+        "sell cocaine",
+        "selling cocaine",
+        "buy cocaine",
+        "sell heroin",
+        "buy heroin",
+        "sell meth",
+        "selling meth",
+        "buy meth",
+        "sell ecstasy",
+        "buy ecstasy",
+        "unlicensed gun for sale",
+        "stolen goods for sale",
+        "fake passport for sale",
+        "fake ic for sale",
+        "poach wildlife",
+        "jual dadah",
+        "beli dadah",
+        "pengedaran dadah",
+        "jual senjata haram",
+        "jual ic palsu",
+        "memburu secara haram",
+        "ignore no entry signs",
+        "sneak into restricted areas",
+        "贩毒",
+        "出售毒品",
+        "买毒品",
+        "出售枪支",
+        "偷猎",
+        "出售假护照"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:illicit_sales",
+          "label": "Illicit substance or weapon sale",
+          "expression": "\\b(?:sell(?:ing)?|buy(?:ing)?|order|jual|beli)\\s+(?:cheap\\s+|murah\\s+)?(?:cocaine|heroin|methamphetamine|ecstasy|illegal\\s+(?:drugs?|guns?|weapons?)|dadah)\\b"
+        },
+        {
+          "id": "pattern:restricted_entry",
+          "label": "Encouragement to bypass restricted entry",
+          "expression": "\\b(?:ignore|bypass|abaikan)\\s+(?:the\\s+)?(?:no[ -]entry|restricted[ -]area|keep[ -]out|dilarang\\s+masuk)\\s+(?:signs?|notices?|warnings?|sahaja)\\b"
+        }
+      ]
+    },
+    "harassment": {
+      "label": "Harassment & abusive wording",
+      "reason": "Possible harassment or abusive wording",
+      "severity": "medium",
+      "description": "Insults, abusive profanity, targeted humiliation and bullying. Context is reviewed by an administrator.",
+      "keywords": [
+        "fuck",
+        "fucking",
+        "fucker",
+        "motherfucker",
+        "asshole",
+        "bastard",
+        "bitch",
+        "cunt",
+        "dickhead",
+        "idiot",
+        "moron",
+        "stupid",
+        "shut up loser",
+        "you are worthless",
+        "nobody wants you",
+        "bodoh",
+        "bangang",
+        "sial",
+        "celaka",
+        "pukimak",
+        "kimak",
+        "lancau",
+        "傻逼",
+        "白痴",
+        "笨蛋",
+        "废物",
+        "fucked",
+        "fuckers",
+        "assholes",
+        "bitches",
+        "bastards",
+        "idiots",
+        "morons"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:obfuscated_abuse",
+          "label": "Obfuscated abusive wording",
+          "expression": "\\b(?:f[.*_ -]*[u*@][.*_ -]*c[.*_ -]*k(?:ing|er)?|b[1i!][.*_ -]*t[.*_ -]*c[.*_ -]*h|a[5s]{2}h[o0]le)\\b"
+        },
+        {
+          "id": "pattern:targeted_humiliation",
+          "label": "Targeted humiliation",
+          "expression": "\\b(?:you|you're|you\\s+are|kau|awak|anda)\\s+(?:are\\s+|memang\\s+|a\\s+)?(?:useless|worthless|disgusting|pathetic|tak\\s+guna|tidak\\s+berguna)\\b"
+        },
+        {
+          "id": "pattern:targeted_malay_insult",
+          "label": "Targeted Malay insult",
+          "expression": "\\b(?:kau|awak|anda|dia)\\s+(?:memang\\s+)?(?:babi|anjing)\\b"
+        }
+      ]
+    },
+    "hate": {
+      "label": "Hate speech",
+      "reason": "Possible hate speech",
+      "severity": "high",
+      "description": "Identity-based slurs, dehumanization and calls to expel or harm protected groups. Group names alone do not match.",
+      "keywords": [
+        "nigger",
+        "nigga",
+        "kike",
+        "chink",
+        "racial cleansing",
+        "ethnic cleansing",
+        "hapuskan kaum",
+        "pembersihan etnik",
+        "种族清洗",
+        "种族灭绝"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:group_hate",
+          "label": "Attack on a protected group",
+          "expression": "\\b(?:all\\s+)?(?:muslims?|christians?|hindus?|buddhists?|jews?|malays?|chinese|indians?|blacks?|whites?|gay\\s+people|disabled\\s+people)\\s+(?:are|should\\s+be)\\s+(?:vermin|subhuman|inferior|exterminated|deported|killed)\\b"
+        },
+        {
+          "id": "pattern:group_harm",
+          "label": "Call to harm a protected group",
+          "expression": "\\b(?:kill|exterminate|wipe\\s+out|hapuskan|bunuh)\\s+(?:all\\s+|semua\\s+)?(?:muslims?|christians?|hindus?|buddhists?|jews?|malays?|chinese|indians?|blacks?|whites?|gay\\s+people|orang\\s+(?:melayu|cina|india))\\b"
+        },
+        {
+          "id": "pattern:group_hate_malay",
+          "label": "Identity-based attack in Malay",
+          "expression": "\\b(?:semua\\s+)?(?:orang\\s+(?:melayu|cina|india)|umat\\s+(?:islam|kristian|hindu|buddha))\\s+(?:adalah\\s+|memang\\s+)?(?:sampah|hina|patut\\s+dibunuh|perlu\\s+dihapuskan)\\b"
+        }
+      ]
+    },
+    "sexual": {
+      "label": "Explicit sexual content",
+      "reason": "Possible explicit sexual content",
+      "severity": "high",
+      "description": "Pornography, explicit sexual services and requests or offers for nude images.",
+      "keywords": [
+        "porn",
+        "porno",
+        "pornography",
+        "pornographic",
+        "nudes",
+        "send nudes",
+        "nude photos",
+        "blowjob",
+        "handjob",
+        "sexual services",
+        "sex for money",
+        "selling sex",
+        "pornografi",
+        "lucah",
+        "gambar bogel",
+        "seks berbayar",
+        "色情",
+        "裸照",
+        "援交",
+        "性交易"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:explicit_solicitation",
+          "label": "Explicit sexual solicitation",
+          "expression": "\\b(?:send|sell|selling|buy|jual|hantar)\\s+(?:me\\s+|your\\s+)?(?:nude\\s+(?:photos?|pics?|pictures?)|nudes|gambar\\s+bogel|video\\s+lucah)\\b"
+        }
+      ]
+    },
+    "violence": {
+      "label": "Threats & graphic violence",
+      "reason": "Possible threat or graphic violence",
+      "severity": "high",
+      "description": "Threats to harm people, encouragement of self-harm and graphic violence. Ordinary hiking or photography terms do not match on their own.",
+      "keywords": [
+        "kill you",
+        "kill yourself",
+        "go die",
+        "death threat",
+        "bomb threat",
+        "behead",
+        "beheading",
+        "gore video",
+        "rape you",
+        "bunuh kau",
+        "bunuh awak",
+        "bunuh diri",
+        "pergi mampus",
+        "ancaman bunuh",
+        "pancung kepala",
+        "去死",
+        "杀了你",
+        "杀死你",
+        "砍死你",
+        "自杀吧"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:direct_threat",
+          "label": "Direct threat of harm",
+          "expression": "\\b(?:i(?:'ll|\\s+will|\\s+am\\s+going\\s+to)|we(?:'ll|\\s+will)|aku\\s+(?:akan|nak)|saya\\s+akan)\\s+(?:kill|stab|shoot|hurt|attack|rape|bunuh|tikam|tembak)\\s+(?:you|him|her|them|kau|awak|dia|mereka)\\b"
+        }
+      ]
+    },
+    "privacy": {
+      "label": "Personal information exposure",
+      "reason": "Possible exposure of personal or sensitive information",
+      "severity": "medium",
+      "description": "The existing sensitive-information phrases and email, phone and coordinate patterns. Evidence stores the rule name rather than the private value.",
+      "keywords": [
+        "my name is",
+        "nama saya",
+        "password",
+        "kata laluan",
+        "otp",
+        "verification code",
+        "authenticator",
+        "diagnosed",
+        "diagnosis",
+        "medical record",
+        "my injury",
+        "my illness",
+        "alamat rumah",
+        "home address",
+        "ic number",
+        "passport",
+        "nombor ic",
+        "nombor pasport",
+        "身份证号码",
+        "家庭住址",
+        "验证码",
+        "密码"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:email_address",
+          "label": "Email address pattern",
+          "expression": "[\\w.+-]+@[\\w.-]+\\.[a-z]{2,}"
+        },
+        {
+          "id": "pattern:phone_number",
+          "label": "Phone number pattern",
+          "expression": "(?:\\+?\\d[\\d ().-]{6,}\\d)"
+        },
+        {
+          "id": "pattern:coordinates",
+          "label": "Coordinate pattern",
+          "expression": "-?\\d{1,3}\\.\\d{3,}\\s*[,/]\\s*-?\\d{1,3}\\.\\d{3,}"
+        }
+      ]
+    },
+    "unsafe_advice": {
+      "label": "Dangerous hiking advice",
+      "reason": "Potentially dangerous advice",
+      "severity": "high",
+      "respectNegation": true,
+      "description": "Encouragement to ignore critical warnings, consume unsafe water, leave emergency equipment behind or cross dangerous water.",
+      "keywords": [
+        "ignore weather warnings",
+        "ignore lightning warnings",
+        "ignore flood warnings",
+        "turn off all safety alerts",
+        "disable all safety alerts",
+        "drink untreated river water",
+        "hike without water",
+        "leave your emergency gear behind",
+        "cross the flooded river",
+        "abaikan amaran cuaca",
+        "abaikan amaran banjir",
+        "minum air sungai tanpa rawatan",
+        "meredah sungai banjir",
+        "忽略天气警报",
+        "忽略洪水警报",
+        "直接喝河水"
+      ],
+      "patterns": [
+        {
+          "id": "pattern:dangerous_instruction",
+          "label": "Instruction to ignore a safety warning",
+          "expression": "\\b(?:ignore|disable|abaikan|matikan)\\s+(?:all\\s+|the\\s+|semua\\s+)?(?:lightning|flood|landslide|cuaca|banjir|tanah\\s+runtuh)\\s+(?:warnings?|alerts?|alarms?|amaran)\\b"
+        }
+      ]
+    }
+  },
+  "legacyLabels": {
+    "sensitive_content": "Sensitive information",
+    "integrity": "Content record needs review",
+    "provider_safety": "Earlier safety review",
+    "check_unavailable": "Check unavailable"
+  },
+  "recordRules": [
+    {
+      "id": "record:invalid_path",
+      "label": "Invalid content reference"
+    },
+    {
+      "id": "record:invalid_text",
+      "label": "Invalid text format"
+    },
+    {
+      "id": "record:empty_comment",
+      "label": "Empty comment"
+    },
+    {
+      "id": "record:text_too_long",
+      "label": "Text exceeds the length limit"
+    },
+    {
+      "id": "record:invalid_author",
+      "label": "Missing or invalid author"
+    }
+  ]
+}

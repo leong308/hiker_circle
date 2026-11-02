@@ -63,10 +63,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _DashboardSnapshotHeader(
-              snapshot: snapshot,
-              loading: widget.loading,
-            ),
             if (widget.loading)
               const Padding(
                 padding: EdgeInsets.only(top: 10),
@@ -74,21 +70,20 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
               ),
             if (widget.error != null)
               _SnapshotNotice(
-                message:
-                    'Refresh could not finish. The previous snapshot remains visible.',
+                message: 'Refresh failed. Showing saved data.',
                 onRetry: widget.loading ? null : widget.onRetry,
               ),
             if (snapshot.incompleteCount > 0)
               _SnapshotNotice(
-                message:
-                    '${snapshot.incompleteCount} data sources are incomplete. Counts marked ≥ are partial; rates need complete data. See Operations for coverage.',
+                message: 'Incomplete sources: ${snapshot.incompleteCount}',
               ),
             if (!snapshot.hasExpandedAnalysis)
-              const _SnapshotNotice(
-                message:
-                    'Some detailed analysis is unavailable in this snapshot. Refresh to check for an updated analysis.',
-              ),
-            const SizedBox(height: 20),
+              const _SnapshotNotice(message: 'Detailed analysis unavailable'),
+            if (widget.loading ||
+                widget.error != null ||
+                snapshot.incompleteCount > 0 ||
+                !snapshot.hasExpandedAnalysis)
+              const SizedBox(height: 16),
             _DashboardAreaTabs(model: _model),
             const SizedBox(height: 18),
             if (_model.supportsPeriod) ...[
@@ -103,15 +98,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
               AdminDashboardArea.people => _people(snapshot),
               AdminDashboardArea.operations => _operations(snapshot),
             },
-            const SizedBox(height: 20),
-            Text(
-              'Snapshot analysis · Malaysia time. Team members count as separate hiker sessions. Current-state panels and lifetime totals are labelled separately from the selected period.',
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.5,
-                color: AdminUi.muted(context),
-              ),
-            ),
           ],
         ),
       );
@@ -120,10 +106,7 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
 
   /// Gives the administrator a concise operating picture before detailed charts.
   List<Widget> _overview(AdminAnalyticsSnapshot snapshot) => [
-    const AdminSectionHeading(
-      title: 'Current activity',
-      subtitle: 'Latest recorded state at the snapshot time',
-    ),
+    const AdminSectionHeading(title: 'Current activity'),
     const SizedBox(height: 10),
     _CurrentActivityPanel(
       children: [
@@ -163,10 +146,7 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 24),
-    const AdminSectionHeading(
-      title: 'Period performance',
-      subtitle: 'Compared with the preceding calendar period',
-    ),
+    const AdminSectionHeading(title: 'Period performance'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -224,21 +204,13 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
           emptyLabel: _model.emptyLabel(['hikeSessions']),
           partial: _model.partial(['hikeSessions']),
         ),
-        _bars(
-          'Current hazard lifecycle',
-          'safety.byHazardLifecycle',
-          ['hazardReports'],
-          'reports',
-          subtitle:
-              'Includes expiry; expiry does not confirm that a trail is safe.',
-        ),
+        _bars('Current hazard lifecycle', 'safety.byHazardLifecycle', [
+          'hazardReports',
+        ], 'reports'),
       ],
     ),
     const SizedBox(height: 24),
-    const AdminSectionHeading(
-      title: 'System footprint',
-      subtitle: 'All current records · lifetime totals',
-    ),
+    const AdminSectionHeading(title: 'System footprint'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -288,10 +260,7 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
 
   /// Separates hiker activity, shared team sessions and scheduled plan outcomes.
   List<Widget> _hiking(AdminAnalyticsSnapshot snapshot) => [
-    const AdminSectionHeading(
-      title: 'Hiking performance',
-      subtitle: 'Selected reporting period',
-    ),
+    const AdminSectionHeading(title: 'Hiking performance'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -344,7 +313,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
           'windows.${_model.period.days}.current.hikeTypes',
           ['hikeSessions'],
           'hiker sessions',
-          subtitle: 'Selected period · completed sessions',
         ),
       ],
     ),
@@ -386,60 +354,32 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 24),
-    _DashboardNote(text: _model.measurementCoverageLabel),
-    const SizedBox(height: 12),
-    const AdminSectionHeading(
-      title: 'Plans & team participation',
-      subtitle: 'Current recorded state · all plans and team records',
-    ),
+    const AdminSectionHeading(title: 'Plans & team participation'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       children: [
-        _bars(
-          'Scheduled plan outcomes',
-          'plans.byStatus',
-          ['upcomingHikes', 'teamHikeSessions'],
-          'plans',
-          subtitle:
-              'Expired after the 15-minute start window; started team plans are excluded.',
-        ),
-        _bars(
-          'Team hike phases',
-          'teams.byPhase',
-          ['teamHikeSessions'],
-          'teams',
-          subtitle: 'One team session, regardless of participant count.',
-        ),
-        _bars(
-          'Hike join requests',
-          'joining.byStatus',
-          ['upcomingHikeJoinRequests'],
-          'requests',
-          subtitle: 'Latest decision for each recorded request.',
-        ),
-        _bars(
-          'Most hiked trails',
-          'hikes.popularTrails',
-          ['hikeSessions', 'trails'],
-          'completed hiker sessions',
-          subtitle:
-              'All time · top eight · unlisted locations remain anonymous.',
-        ),
+        _bars('Scheduled plan outcomes', 'plans.byStatus', [
+          'upcomingHikes',
+          'teamHikeSessions',
+        ], 'plans'),
+        _bars('Team hike phases', 'teams.byPhase', [
+          'teamHikeSessions',
+        ], 'teams'),
+        _bars('Hike join requests', 'joining.byStatus', [
+          'upcomingHikeJoinRequests',
+        ], 'requests'),
+        _bars('Most hiked trails', 'hikes.popularTrails', [
+          'hikeSessions',
+          'trails',
+        ], 'completed hiker sessions'),
       ],
     ),
     const SizedBox(height: 12),
-    _DashboardNote(
-      text:
-          'Distinct hikers started at least one session in the selected period. Repeat hikers started at least two. Completion rate uses completed and abandoned sessions with recorded end dates; active sessions are excluded.',
-    ),
   ];
 
   /// Distinguishes hazard resolution, SOS events and provider acknowledgement.
   List<Widget> _safety(AdminAnalyticsSnapshot snapshot) => [
-    const AdminSectionHeading(
-      title: 'Current trail safety',
-      subtitle: 'Reported and resolving cautions at snapshot time',
-    ),
+    const AdminSectionHeading(title: 'Current trail safety'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -494,21 +434,13 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
         _bars('Open caution types', 'safety.byOpenHazardType', [
           'hazardReports',
         ], 'current reports'),
-        _bars(
-          'Hazard lifecycle',
-          'safety.byHazardLifecycle',
-          ['hazardReports'],
-          'reports',
-          subtitle:
-              'All retained reports · expired reports are included under Resolved.',
-        ),
+        _bars('Hazard lifecycle', 'safety.byHazardLifecycle', [
+          'hazardReports',
+        ], 'reports'),
       ],
     ),
     const SizedBox(height: 24),
-    const AdminSectionHeading(
-      title: 'SOS & contact confirmations',
-      subtitle: 'Selected period · test dispatches excluded',
-    ),
+    const AdminSectionHeading(title: 'SOS & contact confirmations'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -550,50 +482,23 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 18),
-    _ResponsiveGrid(
-      children: [
-        _Bars(
-          title: 'SOS contact outcomes',
-          rows: snapshot.hasSources(['sosWhatsAppDispatches'])
-              ? _model.periodContacts
-              : const [],
-          suffix: 'contacts',
-          subtitle:
-              'Latest known outcome for contacts dispatched in this period.',
-          emptyLabel: _model.emptyLabel(['sosWhatsAppDispatches']),
-          partial: _model.partial(['sosWhatsAppDispatches']),
-        ),
-        AdminPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const AdminSectionHeading(title: 'How to read these results'),
-              const SizedBox(height: 14),
-              const _DefinitionLine(
-                title: 'Confirmed',
-                body:
-                    'The provider acknowledged the dispatch. This does not confirm delivery to the contact, a reply or a rescue response.',
-              ),
-              const _DefinitionLine(
-                title: 'Unconfirmed',
-                body:
-                    'No acknowledgement arrived within 15 seconds. Late confirmations can still update the result.',
-              ),
-              const _DefinitionLine(
-                title: 'Failed',
-                body:
-                    'A known dispatch failure. Only eligible failed contacts can be retried.',
-              ),
-              const SizedBox(height: 8),
-              TextButton.icon(
-                onPressed: widget.onSafety,
-                icon: const Icon(Icons.shield_outlined),
-                label: const Text('Open trail Safety'),
-              ),
-            ],
-          ),
-        ),
-      ],
+    _Bars(
+      title: 'SOS contact outcomes',
+      rows: snapshot.hasSources(['sosWhatsAppDispatches'])
+          ? _model.periodContacts
+          : const [],
+      suffix: 'contacts',
+      emptyLabel: _model.emptyLabel(['sosWhatsAppDispatches']),
+      partial: _model.partial(['sosWhatsAppDispatches']),
+    ),
+    const SizedBox(height: 8),
+    Align(
+      alignment: AlignmentDirectional.centerEnd,
+      child: TextButton.icon(
+        onPressed: widget.onSafety,
+        icon: const Icon(Icons.shield_outlined),
+        label: const Text('Open trail Safety'),
+      ),
     ),
     const SizedBox(height: 18),
     _ResponsiveGrid(
@@ -642,18 +547,11 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 12),
-    const _DashboardNote(
-      text:
-          'Weather cautions expire after 24 hours for critical risks or 12 hours otherwise. Other trail reports keep their seven-day lifetime. Expiry is not proof that a condition is safe.',
-    ),
   ];
 
   /// Analyses catalogue quality and coverage without exposing private hike locations.
   List<Widget> _trails(AdminAnalyticsSnapshot snapshot) => [
-    const AdminSectionHeading(
-      title: 'Trail catalogue quality',
-      subtitle: 'Current catalogue · all records',
-    ),
+    const AdminSectionHeading(title: 'Trail catalogue quality'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -772,7 +670,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
     const SizedBox(height: 18),
     _ActionPanel(
       title: 'Trail submissions',
-      detail: 'Review recorded trails before adding them to the catalogue.',
       metric: _model.metric(
         'Pending review',
         'feedback.pendingTrailRequests',
@@ -784,18 +681,11 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       action: 'Review trail submissions',
     ),
     const SizedBox(height: 12),
-    const _DashboardNote(
-      text:
-          'A stale forecast normally refreshes when it is requested. It is not evidence of a provider outage. Stored route coverage uses saved geometry metadata, not whether a map was opened.',
-    ),
   ];
 
   /// Shows account adoption and recognition alongside aggregate community engagement.
   List<Widget> _people(AdminAnalyticsSnapshot snapshot) => [
-    const AdminSectionHeading(
-      title: 'People & participation',
-      subtitle: 'Accounts and recorded hiking engagement',
-    ),
+    const AdminSectionHeading(title: 'People & participation'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -845,14 +735,7 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
     const SizedBox(height: 18),
     _ResponsiveGrid(
       children: [
-        _bars(
-          'Account availability',
-          'users.byStatus',
-          ['users'],
-          'accounts',
-          subtitle:
-              'Administrators remain part of the enabled or disabled account totals.',
-        ),
+        _bars('Account availability', 'users.byStatus', ['users'], 'accounts'),
         _Bars(
           title: 'Achievement definitions',
           rows: _model.definitionRows,
@@ -863,10 +746,7 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 24),
-    const AdminSectionHeading(
-      title: 'Rewards & recognition',
-      subtitle: 'Unlocked awards and the rules currently stored',
-    ),
+    const AdminSectionHeading(title: 'Rewards & recognition'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -911,27 +791,17 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 18),
-    _bars(
-      'Hiking participation funnel',
-      'users.hikingFunnel',
-      ['users', 'hikeSessions'],
-      'current accounts',
-      subtitle:
-          'Current accounts with a recorded start and completion; each account counts once.',
-    ),
+    _bars('Hiking participation funnel', 'users.hikingFunnel', [
+      'users',
+      'hikeSessions',
+    ], 'current accounts'),
     const SizedBox(height: 18),
-    _bars(
-      'Most awarded achievements',
-      'rewards.topAwards',
-      ['userAchievements', 'achievements'],
-      'unlocked awards',
-      subtitle: 'All time · top eight · archived awards stay in history.',
-    ),
+    _bars('Most awarded achievements', 'rewards.topAwards', [
+      'userAchievements',
+      'achievements',
+    ], 'unlocked awards'),
     const SizedBox(height: 24),
-    const AdminSectionHeading(
-      title: 'Community engagement',
-      subtitle: 'Aggregate current post records · no personal content',
-    ),
+    const AdminSectionHeading(title: 'Community engagement'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -976,18 +846,11 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 12),
-    const _DashboardNote(
-      text:
-          'Recent sign-ins count the latest stored sign-in for each account, not app visits or a full login history. Archived achievements remain part of historical awards. Deleted records are not reconstructed.',
-    ),
   ];
 
   /// Presents recorded delivery work and source coverage, not inferred infrastructure uptime.
   List<Widget> _operations(AdminAnalyticsSnapshot snapshot) => [
-    const AdminSectionHeading(
-      title: 'Notification operations',
-      subtitle: 'Current job states · all retained notification records',
-    ),
+    const AdminSectionHeading(title: 'Notification operations'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -1045,8 +908,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
           'operations.notifications.byStatus',
           ['fcmOutbox'],
           'jobs',
-          subtitle:
-              'Sent means accepted by FCM, not delivered to or read by a hiker.',
         ),
         _bars('Notification categories', 'operations.notifications.byType', [
           'fcmOutbox',
@@ -1054,10 +915,7 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 24),
-    const AdminSectionHeading(
-      title: 'Forecast cache & location sharing',
-      subtitle: 'Latest stored state · three-hour forecast freshness',
-    ),
+    const AdminSectionHeading(title: 'Forecast cache & location sharing'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       compact: true,
@@ -1112,8 +970,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
           'operations.weather.byFreshness',
           ['trailWeatherCache'],
           'cache entries',
-          subtitle:
-              'Stale entries refresh on demand; this is not an uptime monitor.',
         ),
         _bars(
           'Checkpoint forecast freshness',
@@ -1124,16 +980,12 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 24),
-    const AdminSectionHeading(
-      title: 'Administrative workload',
-      subtitle: 'Current queues that need follow-up',
-    ),
+    const AdminSectionHeading(title: 'Administrative workload'),
     const SizedBox(height: 10),
     _ResponsiveGrid(
       children: [
         _ActionPanel(
           title: 'Hiker feedback',
-          detail: 'Follow up on unresolved feedback and support requests.',
           metric: _model.metric('Open feedback', 'feedback.open', [
             'appFeedback',
           ], ''),
@@ -1143,7 +995,6 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
         ),
         _ActionPanel(
           title: 'Trail submissions',
-          detail: 'Review recorded trails awaiting publication.',
           metric: _model.metric(
             'Pending review',
             'feedback.pendingTrailRequests',
@@ -1168,10 +1019,7 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     ),
     const SizedBox(height: 24),
-    const AdminSectionHeading(
-      title: 'Analysis coverage',
-      subtitle: 'What this snapshot can reliably describe',
-    ),
+    const AdminSectionHeading(title: 'Analysis coverage'),
     const SizedBox(height: 10),
     _CoveragePanel(
       snapshot: snapshot,
@@ -1182,17 +1030,11 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       title: 'Activity date exclusions',
       rows: _model.dateIssues,
       suffix: 'events',
-      subtitle:
-          'Missing dates or event times after this snapshot are excluded from period metrics.',
       emptyLabel: snapshot.hasExpandedAnalysis
           ? 'No date exclusions in the analysed activity.'
           : 'Date quality analysis is unavailable.',
     ),
     const SizedBox(height: 12),
-    const _DashboardNote(
-      text:
-          'These figures describe stored application work. They do not measure server uptime, app crashes, network availability, message reads or rescue response. Sources are collected independently; the snapshot is not an atomic live view.',
-    ),
   ];
 
   /// Plots only valid buckets for the selected source and reporting period.
@@ -1228,63 +1070,50 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
             AdminDashboardViewModel.trendSources[_model.trendMetric]!,
           ]),
         ),
-        const SizedBox(height: 8),
-        Text(
-          '${_model.trendLabel} · ${_model.periodHint}',
-          style: TextStyle(fontSize: 11, color: AdminUi.muted(context)),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Tap a point to inspect its value. Missing and future-dated events are excluded.',
-          style: TextStyle(
-            fontSize: 11,
-            height: 1.4,
-            color: AdminUi.muted(context),
-          ),
-        ),
       ],
     ),
   );
 
   /// Routes each finding to the relevant analysis or management destination.
-  Widget _attention(AdminAnalyticsSnapshot snapshot) => AdminPanel(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const AdminSectionHeading(
-          title: 'Needs attention',
-          subtitle: 'Recorded findings at snapshot time',
-        ),
-        const SizedBox(height: 8),
-        if (snapshot.rows('attention').isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            child: Text(
-              snapshot.incompleteCount > 0
-                  ? 'No findings in the available sources. Review incomplete coverage in Operations.'
-                  : 'No outstanding findings in the monitored queues.',
-              style: TextStyle(color: AdminUi.muted(context), height: 1.5),
+  Widget _attention(AdminAnalyticsSnapshot snapshot) => RunningBorder(
+    color: Theme.of(context).colorScheme.primary,
+    radius: 20,
+    child: AdminPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const AdminSectionHeading(title: 'Needs attention'),
+          const SizedBox(height: 8),
+          if (snapshot.rows('attention').isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child: Text(
+                snapshot.incompleteCount > 0
+                    ? 'No findings in available data'
+                    : 'No outstanding findings',
+                style: TextStyle(color: AdminUi.muted(context), height: 1.5),
+              ),
             ),
-          ),
-        for (final issue in snapshot.rows('attention'))
-          _AttentionRow(
-            issue: issue,
-            onTap: () {
-              final key = '${issue['key']}';
-              if (key.startsWith('sos-')) {
-                _model.selectArea(AdminDashboardArea.safety);
-              } else if (key == 'critical-hazards') {
-                widget.onSafety();
-              } else if (key == 'trail-requests') {
-                (widget.onTrailRequests ?? widget.onTools)();
-              } else if (key == 'feedback') {
-                (widget.onFeedback ?? widget.onTools)();
-              } else {
-                _model.selectArea(AdminDashboardArea.operations);
-              }
-            },
-          ),
-      ],
+          for (final issue in snapshot.rows('attention'))
+            _AttentionRow(
+              issue: issue,
+              onTap: () {
+                final key = '${issue['key']}';
+                if (key.startsWith('sos-')) {
+                  _model.selectArea(AdminDashboardArea.safety);
+                } else if (key == 'critical-hazards') {
+                  widget.onSafety();
+                } else if (key == 'trail-requests') {
+                  (widget.onTrailRequests ?? widget.onTools)();
+                } else if (key == 'feedback') {
+                  (widget.onFeedback ?? widget.onTools)();
+                } else {
+                  _model.selectArea(AdminDashboardArea.operations);
+                }
+              },
+            ),
+        ],
+      ),
     ),
   );
 
@@ -1293,13 +1122,11 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
     String title,
     String path,
     List<String> sources,
-    String suffix, {
-    String? subtitle,
-  }) => _Bars(
+    String suffix,
+  ) => _Bars(
     title: title,
     rows: _model.rows(path, sources),
     suffix: suffix,
-    subtitle: subtitle,
     emptyLabel: _model.emptyLabel(sources),
     partial: _model.partial(sources),
   );

@@ -1,5 +1,6 @@
 // CommunityFlag keeps moderation provenance and safe rule evidence distinct.
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'community_moderation_policy.dart';
 
 /// Defines the community flag source choices.
 enum CommunityFlagSource {
@@ -32,51 +33,6 @@ enum CommunityFlagSourceFilter {
     unavailable => 'Source unavailable',
   };
 }
-
-/// These are policy phrases, never arbitrary text copied from a community post.
-const communityFlagAllowedKeywords = <String>[
-  'my name is',
-  'nama saya',
-  'password',
-  'kata laluan',
-  'otp',
-  'verification code',
-  'authenticator',
-  'diagnosed',
-  'diagnosis',
-  'medical record',
-  'my injury',
-  'my illness',
-  'alamat rumah',
-  'home address',
-  'ic number',
-  'passport',
-];
-
-const _categoryLabels = <String, String>{
-  'spam_scam': 'Possible spam or scam',
-  'harassment': 'Possible harassment',
-  'hate': 'Possible hate speech',
-  'sexual': 'Possible sexual content',
-  'violence': 'Possible threats or graphic violence',
-  'privacy': 'Personal information',
-  'unsafe_advice': 'Potentially dangerous advice',
-  'integrity': 'Content record needs review',
-  'sensitive_content': 'Sensitive information',
-  'provider_safety': 'Earlier safety review',
-  'check_unavailable': 'Check unavailable',
-};
-
-const _ruleLabels = <String, String>{
-  'pattern:email_address': 'Email address pattern',
-  'pattern:phone_number': 'Phone number pattern',
-  'pattern:coordinates': 'Coordinate pattern',
-  'record:invalid_path': 'Invalid content reference',
-  'record:invalid_text': 'Invalid text format',
-  'record:empty_comment': 'Empty comment',
-  'record:text_too_long': 'Text exceeds the length limit',
-  'record:invalid_author': 'Missing or invalid author',
-};
 
 /// Represents community flag.
 class CommunityFlag {
@@ -120,7 +76,7 @@ class CommunityFlag {
   /// Returns category labels.
   List<String> get categoryLabels => {
     for (final category in categories)
-      _categoryLabels[category] ?? 'Other review concern',
+      CommunityModerationPolicy.categoryLabel(category),
   }.toList(growable: false);
 
   /// Returns reasons.
@@ -199,7 +155,7 @@ class CommunityFlag {
     CommunityFlagSource.keywords =>
       'A policy phrase matched. Pattern checks may also have matched.',
     CommunityFlagSource.pattern =>
-      'A sensitive information pattern matched; the value is not copied into this flag.',
+      'An authored policy pattern matched. Personal values are not copied into the evidence.',
     CommunityFlagSource.integrity =>
       'A content record needs checking for missing or invalid data.',
     CommunityFlagSource.earlierReview =>
@@ -213,7 +169,7 @@ class CommunityFlag {
   /// Returns matched keywords.
   List<String> get matchedKeywords => _strings(data['matchedKeywords'])
       .map((value) => value.toLowerCase())
-      .where(communityFlagAllowedKeywords.contains)
+      .where(CommunityModerationPolicy.keywords.contains)
       .toSet()
       .toList(growable: false);
 
@@ -221,16 +177,10 @@ class CommunityFlag {
   List<String> get evidenceLabels {
     final labels = <String>{};
     for (final evidence in _strings(data['detectionEvidence'])) {
-      final label = _ruleLabels[evidence];
+      final label = CommunityModerationPolicy.evidenceLabel(evidence);
       if (label != null) {
         labels.add(label);
         continue;
-      }
-      for (final phrase in communityFlagAllowedKeywords) {
-        if (evidence == 'keyword:${phrase.replaceAll(' ', '_')}') {
-          labels.add('Matched phrase “$phrase”');
-          break;
-        }
       }
     }
     for (final phrase in matchedKeywords) {

@@ -178,7 +178,7 @@ class _ButtonDebuggingPageState extends State<ButtonDebuggingPage> {
                 const SizedBox(height: 12),
                 Text(
                   _debug.recording
-                      ? 'Listening for button traffic. Popups will not interrupt this session.'
+                      ? 'Capturing button traffic. Use Arm safe test before a test press.'
                       : 'Start a session to inspect button messages and their decoded values.',
                   style: TextStyle(
                     color: AdminUi.muted(context),

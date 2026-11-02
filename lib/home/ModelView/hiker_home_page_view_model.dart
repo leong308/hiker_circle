@@ -679,6 +679,13 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
 
   /// Computes enqueue ble ui event.
   void commandEnqueueBleUiEvent(HikerBleEvent event) {
+    if (event is HikerBleSosHelpEvent &&
+        !event.canPresentTestPreview(
+          DateTime.now().toUtc(),
+          debugCaptureEnabled: HikerBleService.isButtonDebugCaptureEnabled,
+        )) {
+      return;
+    }
     final key = switch (event) {
       HikerBleNearbySosButtonEvent() =>
         '${event.deviceId}:${event.counter ?? event.receivedAt.millisecondsSinceEpoch ~/ 1000}',
@@ -2140,14 +2147,13 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
 
   /// Handles ble sos help event.
   Future<void> commandHandleBleSosHelpEvent(HikerBleSosHelpEvent event) async {
-    final receivedAt = event.location.capturedAt ?? event.receivedAt;
-    await commandRecordNearbySosEvent(
-      deviceId: 'help_${event.phoneNumberHash.toRadixString(16)}',
-      counter: receivedAt.toUtc().millisecondsSinceEpoch ~/ 1000,
-      receivedAt: receivedAt,
-      rssi: event.rssi,
-      location: event.location,
-    );
+    if (!event.canPresentTestPreview(
+      DateTime.now().toUtc(),
+      debugCaptureEnabled: HikerBleService.isButtonDebugCaptureEnabled,
+    )) {
+      return;
+    }
+    // The type-three transport is an explicit test; never save or forward it as an incident.
     await effectShowBleSosHelpPopupForLocation(
       latitude: event.location.latitude,
       longitude: event.location.longitude,
@@ -2180,6 +2186,7 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
       location: location,
       detectorLocation: LocationSnapshotService.instance.latestLocation,
     );
+    if (event.isDiagnosticTest) return;
     try {
       await stateNearbySosEventRepository.save(event);
       if (mounted) {
@@ -2193,6 +2200,7 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
 
   /// Computes forward nearby sos event.
   Future<void> commandForwardNearbySosEvent(NearbySosEvent event) async {
+    if (event.isDiagnosticTest) return;
     try {
       await stateHikerCircleRepository.forwardNearbySosIncident(event: event);
     } on HikerCircleFirebaseRepositoryException catch (error) {

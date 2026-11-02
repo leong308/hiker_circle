@@ -247,13 +247,27 @@ const mfaTotpEncryptionKey = defineSecret('MFA_TOTP_ENCRYPTION_KEY');
 
 // checkCommunityContentIntegrity: Scan only public community text and preserve pending human review decisions.
 exports.checkCommunityContentIntegrity = onSchedule({
-  schedule: 'every 30 minutes', secrets: [], timeoutSeconds: 240,
+  schedule: 'every 1 minutes', secrets: [], timeoutSeconds: 240,
   memory: '256MiB', maxInstances: 1, concurrency: 1,
 }, async () => {
   const result = await require('./community_moderation').runIntegrityCheck({
     db: admin.firestore(), fieldPath: FieldPath.documentId(),
   });
-  logger.log('Community integrity check finished.', result);
+  if (!result.skipped) logger.log('Community integrity check finished.', result);
+});
+
+// Run the same protected rule scan immediately and restart its shared thirty-minute deadline.
+exports.refreshCommunityContentIntegrity = onCall({timeoutSeconds: 240, memory: '256MiB', maxInstances: 2}, async request => {
+  try {
+    return await require('./community_integrity_schedule').runManualIntegrityCheck({
+      request, authorization: adminAuthorization, db: admin.firestore(), fieldPath: FieldPath.documentId(),
+      run: require('./community_moderation').runIntegrityCheck,
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    logger.error('Manual community integrity check failed.', {code: String(error.code || 'scan-failed')});
+    throw new HttpsError('unavailable', 'Checks could not finish. Please try again.');
+  }
 });
 
 function recordedTrailRequestError(error, message) {

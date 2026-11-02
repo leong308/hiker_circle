@@ -4741,8 +4741,11 @@ class _HikerHomePageState extends State<HikerHomePage>
       context: context,
       builder: (context) {
         return AlertDialog(
-          icon: const Icon(Icons.sos_rounded, color: Color(0xFFFF3B30)),
-          title: const Text('Nearby SOS Needs Help'),
+          icon: Icon(
+            Icons.bluetooth_searching_rounded,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          title: const Text('BLE SOS test received'),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
@@ -4750,9 +4753,7 @@ class _HikerHomePageState extends State<HikerHomePage>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'A nearby HikerCircle BLE SOS test beacon was received.',
-                  ),
+                  const Text('A nearby phone sent a test signal.'),
                   const SizedBox(height: 12),
                   SizedBox(
                     height: 280,

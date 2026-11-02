@@ -969,6 +969,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   }
 
   private func emitNearbySosButton(_ packet: HikerBleProtocol.PairedSosRemotePacket) {
+    guard packet.mode == 1 else { return }
     let fingerprint = "paired_sos:\(packet.deviceIdHex):\(packet.eventId)"
     guard !hasHandledEvent(fingerprint) else {
       return
@@ -977,6 +978,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       "type": "nearbySosButton",
       "source": "paired_ble_button",
       "deviceId": packet.deviceIdHex,
+      "mode": packet.mode,
       "counter": Int(packet.eventId),
       "rssi": packet.rssi,
       "receivedAtMillis": Self.currentTimeMillis()
@@ -1019,6 +1021,8 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     emitEvent([
       "type": "pairedSosButtonTest",
       "source": "paired_ble_button_test",
+      "mode": 2,
+      "isTest": true,
       "deviceId": packet.deviceIdHex,
       "displayName": displayName,
       "counter": Int(packet.eventId),
@@ -1102,6 +1106,8 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   }
 
   private func emitSosHelp(_ packet: HikerBleProtocol.SosHelpBeaconPacket) {
+    // Type-three beacons are diagnostics: never persist, wake the app or notify as an emergency.
+    guard isApplicationActive, UIApplication.shared.applicationState == .active else { return }
     let now = Self.currentTimeMillis()
     guard packet.capturedAtMillis <= now + Self.maxHelpPacketFutureSkewMillis,
           now - packet.capturedAtMillis <= Self.maxHelpPacketAgeMillis else {
@@ -1114,6 +1120,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     let delivered = emitEvent([
       "type": "sosHelp",
       "source": "ble_sos_test",
+      "isTest": true,
       "phoneNumberHash": Int(packet.phoneNumberHash),
       "latitude": packet.latitude,
       "longitude": packet.longitude,
@@ -1121,7 +1128,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       "capturedAtMillis": Int64(packet.capturedAtMillis),
       "receivedAtMillis": now,
       "rssi": packet.rssi
-    ], durable: true, notificationTitle: "Nearby SOS needs help")
+    ])
     if delivered {
       rememberHandledEvent(fingerprint)
     }
@@ -1682,7 +1689,9 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
             let deviceId = event["deviceId"] as? String,
             let decodedId = Data(hexString: deviceId), decodedId.count == 6,
             let counter = Self.int64Value(event["counter"]),
-            (0...Int64(UInt32.max)).contains(counter) else {
+            (0...Int64(UInt32.max)).contains(counter),
+            event["isTest"] as? Bool != true,
+            (Self.int64Value(event["mode"]) ?? 1) == 1 else {
         return nil
       }
       validated["deviceId"] = deviceId.uppercased()
@@ -1697,18 +1706,8 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
         }
       }
     case "sosHelp":
-      guard source == "ble_sos_test",
-            let latitude = Self.doubleValue(event["latitude"]),
-            let longitude = Self.doubleValue(event["longitude"]),
-            let capturedAtMillis = Self.int64Value(event["capturedAtMillis"]),
-            latitude.isFinite, longitude.isFinite,
-            (-90...90).contains(latitude),
-            (-180...180).contains(longitude),
-            !(latitude == 0 && longitude == 0),
-            capturedAtMillis <= now + Self.maxPendingSosFutureSkewMillis,
-            now - capturedAtMillis <= Self.maxPendingSosAgeMillis else {
-        return nil
-      }
+      // Discard diagnostic beacons queued as emergencies by older builds.
+      return nil
     default:
       return nil
     }

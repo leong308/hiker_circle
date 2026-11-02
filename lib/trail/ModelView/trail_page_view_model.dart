@@ -146,60 +146,23 @@ class _AddTrailSheetStateViewModel extends ChangeNotifier {
       stateCountry = '';
     });
     try {
-      final geocoding = GoogleCityGeocodingService();
-      final result = await geocoding.resolveCity(
+      final result = await TrailStartLocationResolver().resolve(
         latitude: latitude,
         longitude: longitude,
       );
-      final region = await WorldwideRegionCatalog.normalize(
-        country: result.country,
-        state: result.state,
-      );
-      if (result.city.trim().isEmpty ||
-          (region?.state ?? result.state).trim().isEmpty ||
-          (region?.country ?? result.country).trim().isEmpty) {
-        throw StateError('The starting point location is incomplete.');
-      }
       if (mounted && generation == stateLocationGeneration) {
         _publish(() {
           stateIsResolvingLocation = false;
           if (stateArea.isEmpty) {
-            stateArea = result.city;
+            stateArea = result.area;
           }
-          stateLocationState = region?.state ?? result.state;
-          stateCountry = region?.country ?? result.country;
+          stateLocationState = result.state;
+          stateCountry = result.country;
         });
       }
       return;
     } catch (_) {
       if (!mounted || generation != stateLocationGeneration) return;
-      try {
-        final geoapify = GeoapifyService();
-        final result = await geoapify.reverseGeocode(
-          latitude: latitude,
-          longitude: longitude,
-        );
-        final region = await WorldwideRegionCatalog.normalize(
-          country: result.country,
-          state: result.state,
-        );
-        if (result.area.trim().isEmpty ||
-            (region?.state ?? result.state).trim().isEmpty ||
-            (region?.country ?? result.country).trim().isEmpty) {
-          throw StateError('The starting point location is incomplete.');
-        }
-        if (mounted && generation == stateLocationGeneration) {
-          _publish(() {
-            stateIsResolvingLocation = false;
-            if (stateArea.isEmpty && result.area.isNotEmpty) {
-              stateArea = result.area;
-            }
-            stateLocationState = region?.state ?? result.state;
-            stateCountry = region?.country ?? result.country;
-          });
-        }
-        return;
-      } catch (_) {}
     }
     if (mounted && generation == stateLocationGeneration) {
       _publish(() {
