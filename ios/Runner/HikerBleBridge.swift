@@ -9,7 +9,6 @@ import UserNotifications
 final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private enum AdvertisementMode {
     case none
-    case sosHelp
     case teamLocation
   }
 
@@ -63,19 +62,15 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       CBPeripheralManagerOptionRestoreIdentifierKey: "hiker_circle_ble_peripheral"
     ]
   )
-  private var sosHelpCharacteristic: CBMutableCharacteristic?
   private var teamLocationCharacteristic: CBMutableCharacteristic?
   private var didInstallGattServices = false
   private var isSosMonitorRequested = false
   private var isTeamExchangeRequested = false
   private var latestTeamPayload: [String: Any]?
   private var latestTeamPacket: Data?
-  private var latestSosHelpPacket: Data?
   private var advertisedMode = AdvertisementMode.none
-  private var sosHelpStopTimer: Timer?
   private var handledEventIds = Set<String>()
   private var handledEventIdOrder: [String] = []
-  private var legacyEventHandledAtUptime: [String: TimeInterval] = [:]
   private var handledTeamPackets = Set<String>()
   private var handledTeamPacketOrder: [String] = []
   private var connectedPeripherals: [UUID: CBPeripheral] = [:]
@@ -338,39 +333,6 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     case "readPairedSosButtonLog":
       let deviceId = (call.arguments as? [String: Any])?["deviceId"] as? String ?? ""
       beginLogDownload(deviceId: deviceId, result: result)
-    case "setLegacyUnpairedSosButtonEnabled":
-      guard let key = legacyUnpairedSettingKey else {
-        result(FlutterError(
-          code: "paired_button_account_missing",
-          message: "Sign in before changing the legacy SOS button setting.",
-          details: nil
-        ))
-        return
-      }
-      let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
-      UserDefaults.standard.set(enabled, forKey: key)
-      UserDefaults.standard.removeObject(forKey: Self.legacyUnpairedEnabledKey)
-      result(nil)
-    case "isLegacyUnpairedSosButtonEnabled":
-      guard let key = legacyUnpairedSettingKey else {
-        result(false)
-        return
-      }
-      result(UserDefaults.standard.bool(forKey: key))
-    case "broadcastPhysicalSosTest":
-      guard let payload = sosHelpPayload(from: call) else {
-        result(FlutterError(
-          code: "ble_sos_test_invalid",
-          message: "Physical SOS test payload is invalid.",
-          details: nil
-        ))
-        return
-      }
-      let packet = HikerBleProtocol.encodeSosHelpBeacon(payload)
-      latestSosHelpPacket = packet
-      _ = peripheralManager
-      advertiseSosHelp(durationMillis: payload.durationMillis)
-      result(nil)
     case "startTeamLocationExchange", "updateTeamLocation":
       isTeamExchangeRequested = false
       latestTeamPayload = nil
@@ -636,36 +598,8 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     if savePairedButtons(pairedButtons) == nil { recordPresence(pairedButtons[index], previous: previous, now: now) }
   }
 
-  private func advertiseSosHelp(durationMillis: Int64) {
-    sosHelpStopTimer?.invalidate()
-    let duration = max(3000, min(8000, durationMillis))
-    guard peripheralManager.state == .poweredOn else {
-      emitStatus("ios_ble_sos_test_waiting", message: peripheralStateMessage)
-      return
-    }
-    installGattServicesIfNeeded()
-    startAdvertising(.sosHelp)
-    sosHelpStopTimer = Timer.scheduledTimer(withTimeInterval: Double(duration) / 1000.0, repeats: false) {
-      [weak self] _ in
-      self?.stopSosHelpAdvertising()
-    }
-  }
-
-  private func stopSosHelpAdvertising() {
-    sosHelpStopTimer?.invalidate()
-    sosHelpStopTimer = nil
-    latestSosHelpPacket = nil
-    if advertisedMode == .sosHelp {
-      stopAdvertising()
-    }
-    advertiseTeamLocationIfReady()
-  }
-
   private func advertiseTeamLocationIfReady() {
     guard isTeamExchangeRequested, latestTeamPacket != nil else {
-      return
-    }
-    guard latestSosHelpPacket == nil else {
       return
     }
     guard peripheralManager.state == .poweredOn else {
@@ -683,9 +617,6 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     let serviceUuid: CBUUID
     let status: String
     switch mode {
-    case .sosHelp:
-      serviceUuid = HikerBleProtocol.sosHelpServiceUUID
-      status = "ios_ble_sos_test_advertising_started"
     case .teamLocation:
       serviceUuid = HikerBleProtocol.teamLocationServiceUUID
       status = "ios_team_ble_advertising_started"
@@ -710,18 +641,6 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     guard !didInstallGattServices else {
       return
     }
-    let helpCharacteristic = CBMutableCharacteristic(
-      type: HikerBleProtocol.sosHelpCharacteristicUUID,
-      properties: [.read],
-      value: nil,
-      permissions: [.readable]
-    )
-    let helpService = CBMutableService(
-      type: HikerBleProtocol.sosHelpServiceUUID,
-      primary: true
-    )
-    helpService.characteristics = [helpCharacteristic]
-
     let teamCharacteristic = CBMutableCharacteristic(
       type: HikerBleProtocol.teamLocationCharacteristicUUID,
       properties: [.read],
@@ -734,9 +653,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     )
     teamService.characteristics = [teamCharacteristic]
 
-    sosHelpCharacteristic = helpCharacteristic
     teamLocationCharacteristic = teamCharacteristic
-    peripheralManager.add(helpService)
     peripheralManager.add(teamService)
     didInstallGattServices = true
   }
@@ -824,22 +741,6 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
         }
         return
       }
-      if HikerBleProtocol.isSosPacket(payload), isLegacyUnpairedEnabled {
-        logPhysicalSosPackage(
-          peripheral: peripheral,
-          rssi: rssiValue,
-          manufacturerData: manufacturerData,
-          payload: payload,
-          counter: HikerBleProtocol.sosCounter(from: payload),
-          serviceUuids: advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
-        )
-        emitSosButton(
-          counter: HikerBleProtocol.sosCounter(from: payload),
-          legacyDeviceId: peripheral.identifier.uuidString,
-          rssi: rssiValue
-        )
-        return
-      }
     }
 
     let serviceUuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
@@ -868,38 +769,6 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       connectForRead(peripheral: peripheral, kind: .teamLocation, rssi: rssiValue)
       return
     }
-    if serviceUuids.contains(HikerBleProtocol.sosServiceUUID),
-       isLegacyUnpairedEnabled {
-      logPhysicalSosPackage(
-        peripheral: peripheral,
-        rssi: rssiValue,
-        manufacturerData: nil,
-        payload: nil,
-        counter: nil,
-        serviceUuids: serviceUuids
-      )
-      emitSosButton(counter: nil, legacyDeviceId: peripheral.identifier.uuidString, rssi: rssiValue)
-    }
-  }
-
-  private func logPhysicalSosPackage(
-    peripheral: CBPeripheral,
-    rssi: Int,
-    manufacturerData: Data?,
-    payload: Data?,
-    counter: Int?,
-    serviceUuids: [CBUUID]
-  ) {
-    NSLog(
-      "HikerCircle physical SOS BLE package: peripheral=%@ rssi=%d eventId=%@ manufacturerId=0x%04X manufacturerData=%@ payload=%@ serviceUuids=[%@]",
-      peripheral.identifier.uuidString,
-      rssi,
-      counter.map { String($0) } ?? "none",
-      Int(HikerBleProtocol.manufacturerId),
-      hexString(manufacturerData),
-      hexString(payload),
-      serviceUuids.map { $0.uuidString }.joined(separator: ",")
-    )
   }
 
   private func connectForRead(peripheral: CBPeripheral, kind: PendingReadKind, rssi: Int) {
@@ -929,43 +798,6 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     pendingReadKinds.removeValue(forKey: identifier)
     pendingRssi.removeValue(forKey: identifier)
     centralManager.cancelPeripheralConnection(peripheral)
-  }
-
-  private func emitSosButton(counter: Int?, legacyDeviceId: String, rssi: Int) {
-    let fingerprint = counter.map { "sos_button:event:\(legacyDeviceId):\($0)" } ??
-      "sos_button_legacy_device:\(legacyDeviceId)"
-    let now = Self.currentTimeMillis()
-    if counter == nil {
-      let uptime = ProcessInfo.processInfo.systemUptime
-      if let previous = legacyEventHandledAtUptime[fingerprint], uptime - previous < 10 {
-        return
-      }
-      legacyEventHandledAtUptime[fingerprint] = uptime
-      if legacyEventHandledAtUptime.count > 128,
-         let oldest = legacyEventHandledAtUptime.min(by: { $0.value < $1.value })?.key {
-        legacyEventHandledAtUptime.removeValue(forKey: oldest)
-      }
-    } else {
-      guard !hasHandledEvent(fingerprint) else {
-        return
-      }
-      rememberHandledEvent(fingerprint)
-    }
-    var event: [String: Any] = [
-      "type": "sosButton",
-      "source": "ble_button",
-      "rssi": rssi,
-      "receivedAtMillis": now
-    ]
-    if let counter {
-      event["counter"] = counter
-      event["broadcastId"] = counter
-    }
-    emitEvent(
-      event,
-      durable: true,
-      notificationTitle: "Your SOS button was pressed"
-    )
   }
 
   private func emitNearbySosButton(_ packet: HikerBleProtocol.PairedSosRemotePacket) {
@@ -1274,32 +1106,6 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     }
   }
 
-  private func sosHelpPayload(from call: FlutterMethodCall) -> HikerBleProtocol.SosHelpPayload? {
-    guard let arguments = call.arguments as? [String: Any],
-          let phoneNumber = arguments["phoneNumber"] as? String,
-          let latitude = Self.doubleValue(arguments["latitude"]),
-          let longitude = Self.doubleValue(arguments["longitude"]) else {
-      return nil
-    }
-    let accuracyMeters = Self.doubleValue(arguments["accuracyMeters"])
-    guard Self.isValidBleLocation(
-      latitude: latitude,
-      longitude: longitude,
-      accuracyMeters: accuracyMeters
-    ) else { return nil }
-    let phoneHash = UInt32(truncatingIfNeeded:
-      Self.int64Value(arguments["phoneNumberHash"]) ?? Int64(HikerBleProtocol.phoneHash(phoneNumber))
-    )
-    return HikerBleProtocol.SosHelpPayload(
-      phoneNumberHash: phoneHash,
-      latitude: latitude,
-      longitude: longitude,
-      accuracyMeters: accuracyMeters,
-      capturedAtMillis: Self.int64Value(arguments["capturedAtMillis"]) ?? Self.currentTimeMillis(),
-      durationMillis: Self.int64Value(arguments["durationMillis"]) ?? 5000
-    )
-  }
-
   private func teamPayload(from call: FlutterMethodCall) -> HikerBleProtocol.TeamLocationPayload? {
     guard let arguments = call.arguments as? [String: Any],
           let teamSessionId = arguments["teamSessionId"] as? String,
@@ -1377,15 +1183,6 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
 
   private var buttonsForActiveOwner: [PairedButtonRecord] {
     pairedButtons.filter(belongsToActiveOwner)
-  }
-
-  private var isLegacyUnpairedEnabled: Bool {
-    guard let key = legacyUnpairedSettingKey else { return false }
-    return UserDefaults.standard.bool(forKey: key)
-  }
-
-  private var legacyUnpairedSettingKey: String? {
-    activeOwnerScope.map { Self.legacyUnpairedEnabledKeyPrefix + $0 }
   }
 
   private func belongsToActiveOwner(_ button: PairedButtonRecord) -> Bool {
@@ -1499,12 +1296,11 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     registryErrorNotified = false
     handledEventIds.removeAll()
     handledEventIdOrder.removeAll()
-    legacyEventHandledAtUptime.removeAll()
 
     let defaults = UserDefaults.standard
     defaults.removeObject(forKey: Self.pendingEventsKey)
     defaults.removeObject(forKey: Self.legacyUnpairedEnabledKey)
-    if let key = legacyUnpairedSettingKey {
+    for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(Self.legacyUnpairedEnabledKeyPrefix) {
       defaults.removeObject(forKey: key)
     }
     // Deliberately preserve activeOwnerScope and its persisted account key. A
@@ -2569,11 +2365,7 @@ extension HikerBleBridge: CBPeripheralManagerDelegate {
   func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
     if peripheral.state == .poweredOn {
       installGattServicesIfNeeded()
-      if latestSosHelpPacket != nil {
-        advertiseSosHelp(durationMillis: 5000)
-      } else {
-        advertiseTeamLocationIfReady()
-      }
+      advertiseTeamLocationIfReady()
     } else {
       emitStatus("ios_ble_advertising_unavailable", message: peripheralStateMessage)
     }
@@ -2581,11 +2373,7 @@ extension HikerBleBridge: CBPeripheralManagerDelegate {
 
   func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
     installGattServicesIfNeeded()
-    if latestSosHelpPacket != nil {
-      advertiseSosHelp(durationMillis: 5000)
-    } else {
-      advertiseTeamLocationIfReady()
-    }
+    advertiseTeamLocationIfReady()
   }
 
   func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
@@ -2601,9 +2389,7 @@ extension HikerBleBridge: CBPeripheralManagerDelegate {
     debugPacket("RX", "server_read_request", device: request.central.identifier.uuidString,
       characteristic: request.characteristic.uuid.uuidString, message: "offset=\(request.offset)")
     let data: Data?
-    if request.characteristic.uuid == HikerBleProtocol.sosHelpCharacteristicUUID {
-      data = latestSosHelpPacket
-    } else if request.characteristic.uuid == HikerBleProtocol.teamLocationCharacteristicUUID {
+    if request.characteristic.uuid == HikerBleProtocol.teamLocationCharacteristicUUID {
       data = latestTeamPacket
     } else {
       data = nil
@@ -2659,14 +2445,7 @@ private enum HikerBleProtocol {
   private static let logDataType: UInt8 = 0x12
   private static let testControlType: UInt8 = 0x13
 
-  struct SosHelpPayload {
-    let phoneNumberHash: UInt32
-    let latitude: Double
-    let longitude: Double
-    let accuracyMeters: Double?
-    let capturedAtMillis: Int64
-    let durationMillis: Int64
-  }
+
 
   struct TeamLocationPayload {
     let raw: [String: Any]
@@ -2761,15 +2540,6 @@ private enum HikerBleProtocol {
       return nil
     }
     return Data(data.dropFirst(2))
-  }
-
-  static func isSosPacket(_ data: Data) -> Bool {
-    data.count == 9 &&
-      data[0] == magicH &&
-      data[1] == magicC &&
-      data[2] == version &&
-      data[3] == typeSos &&
-      data[4] == 0x01
   }
 
   static func decodePairedButtonSetupStatus(
@@ -2947,23 +2717,6 @@ private enum HikerBleProtocol {
     )
     signed.append(contentsOf: tag.prefix(8))
     return signed
-  }
-
-  static func sosCounter(from data: Data) -> Int? {
-    guard isSosPacket(data), data.count >= 9 else {
-      return nil
-    }
-    return Int(readUInt32(data, at: 5))
-  }
-
-  static func encodeSosHelpBeacon(_ payload: SosHelpPayload) -> Data {
-    var data = Data([magicH, magicC, version, typeSosHelp])
-    appendUInt32(payload.phoneNumberHash, to: &data)
-    appendInt32(coordinateE7(payload.latitude, limit: 90), to: &data)
-    appendInt32(coordinateE7(payload.longitude, limit: 180), to: &data)
-    appendUInt16(accuracyDecimeters(payload.accuracyMeters), to: &data)
-    appendUInt32(UInt32(truncatingIfNeeded: payload.capturedAtMillis / 1000), to: &data)
-    return data
   }
 
   static func decodeSosHelpBeacon(_ data: Data, rssi: Int) -> SosHelpBeaconPacket? {

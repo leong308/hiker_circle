@@ -549,7 +549,7 @@ const sosHelp = [
     actions: [
       'Use the gesture demo to practise tapping and holding without sending an SOS.',
       'Warn contacts before using the WhatsApp test message.',
-      'Siren tests make noise; the BLE broadcast test can alert nearby phones.',
+      'Siren tests make noise. Warn people nearby before starting them.',
     ],
     tip:
         'Tests have different effects. Read the test description; never trigger a real SOS just to practise.',

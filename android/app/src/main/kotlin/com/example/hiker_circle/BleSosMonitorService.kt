@@ -75,7 +75,6 @@ class BleSosMonitorService : Service() {
         private const val READ_GATT_TIMEOUT_MILLIS = 10000L
         private const val MAX_HANDLED_EVENT_IDS = 256
         private const val HANDLED_EVENT_RETENTION_MILLIS = 24 * 60 * 60 * 1000L
-        private const val LEGACY_EVENT_DEBOUNCE_MILLIS = 10000L
         private const val MAX_HELP_PACKET_AGE_MILLIS = 5 * 60 * 1000L
         private const val MAX_HELP_PACKET_FUTURE_SKEW_MILLIS = 2 * 60 * 1000L
         private const val MAX_CANDIDATE_PACKAGE_LOGS = 40
@@ -115,7 +114,6 @@ class BleSosMonitorService : Service() {
     private val handledEventIds = mutableSetOf<String>()
     private val handledEventIdOrder = ArrayDeque<String>()
     private val handledEventTimes = mutableMapOf<String, Long>()
-    private val legacyEventHandledAtMillis = mutableMapOf<String, Long>()
     private val activeHelpGatts = mutableMapOf<String, BluetoothGatt>()
     private val helpGattTimeouts = mutableMapOf<String, Runnable>()
     private val lastHelpConnectAtMillis = mutableMapOf<String, Long>()
@@ -386,80 +384,6 @@ class BleSosMonitorService : Service() {
             handlePairedSosLocationRelay(packet)
             return
         }
-        if (!HikerBleProtocol.isSosAdvertisement(result)) {
-            return
-        }
-        if (!pairedButtonRegistry.isLegacyUnpairedEnabled()) {
-            // Version-1 packets are deliberately opt-in. Treating every
-            // nearby legacy packet as this phone's SOS is unsafe.
-            return
-        }
-        val eventId = HikerBleProtocol.sosEventIdFrom(result)
-        logPhysicalSosPackage(result, eventId)
-        val manufacturerData = result.scanRecord?.getManufacturerSpecificData(
-            HikerBleProtocol.MANUFACTURER_ID,
-        )
-        val serviceUuidText = result.scanRecord
-            ?.serviceUuids
-            .orEmpty()
-            .joinToString(",") { it.uuid.toString() }
-        val fingerprint = sosButtonFingerprint(result, eventId)
-        val now = System.currentTimeMillis()
-        val isDuplicate = if (eventId == null) {
-            val debounceNow = android.os.SystemClock.elapsedRealtime()
-            val lastHandledAt = legacyEventHandledAtMillis[fingerprint]
-            val duplicate = lastHandledAt != null &&
-                debounceNow - lastHandledAt < LEGACY_EVENT_DEBOUNCE_MILLIS
-            if (!duplicate) {
-                legacyEventHandledAtMillis[fingerprint] = debounceNow
-            }
-            duplicate
-        } else {
-            hasHandledEvent(fingerprint)
-        }
-        if (isDuplicate) {
-            Log.d(TAG, "BLE SOS button duplicate ignored: $fingerprint")
-            return
-        }
-        if (eventId == null) {
-            if (legacyEventHandledAtMillis.size > MAX_HANDLED_EVENT_IDS) {
-                legacyEventHandledAtMillis.minByOrNull { it.value }?.key?.let {
-                    legacyEventHandledAtMillis.remove(it)
-                }
-            }
-        } else {
-            rememberHandledEvent(fingerprint)
-        }
-        broadcastSosButtonDetected(eventId, result.rssi, now)
-        val deepLink = Uri.Builder()
-            .scheme("hikercircle")
-            .authority("sos")
-            .path("instant")
-            .appendQueryParameter("source", "ble_button")
-            .appendQueryParameter("rssi", result.rssi.toString())
-            .appendQueryParameter("receivedAt", now.toString())
-            .appendQueryParameter("deviceAddress", result.device?.address ?: "")
-            .appendQueryParameter("manufacturerData", hexString(manufacturerData))
-            .appendQueryParameter("serviceUuids", serviceUuidText)
-            .apply {
-                if (eventId != null) {
-                    appendQueryParameter("broadcastId", eventId.toString())
-                    appendQueryParameter("counter", eventId.toString())
-                }
-            }
-            .build()
-        val launchIntent = Intent(Intent.ACTION_VIEW).apply {
-            data = deepLink
-            setPackage(packageName)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        postSosDetectedNotification(deepLink)
-        Log.d(TAG, "Launching BLE SOS workflow: $deepLink")
-        // Android can defer or block an activity launch from a background
-        // foreground service. Keep the direct launch for an active app, and
-        // always provide the notification action as a reliable fallback.
-        runCatching { startActivity(launchIntent) }
-            .onFailure { Log.w(TAG, "Unable to open BLE SOS workflow", it) }
     }
 
     private fun handlePairedSosRemote(packet: HikerBleProtocol.PairedSosRemotePacket) {
@@ -833,19 +757,6 @@ class BleSosMonitorService : Service() {
         }.onFailure { Log.w(TAG, "Unable to open nearby-button popup", it) }
     }
 
-    private fun broadcastSosButtonDetected(eventId: Long?, rssi: Int, receivedAtMillis: Long) {
-        val intent = Intent(ACTION_SOS_BUTTON_DETECTED).apply {
-            setPackage(packageName)
-            putExtra(EXTRA_SOURCE, "ble_button")
-            putExtra(EXTRA_RSSI, rssi)
-            putExtra(EXTRA_RECEIVED_AT_MILLIS, receivedAtMillis)
-            if (eventId != null) {
-                putExtra(EXTRA_COUNTER, eventId)
-            }
-        }
-        sendBroadcast(intent, INTERNAL_BLE_SOS_PERMISSION)
-    }
-
     private fun logBleCandidatePackage(result: ScanResult) {
         if (candidatePackageLogCount >= MAX_CANDIDATE_PACKAGE_LOGS) {
             return
@@ -866,26 +777,6 @@ class BleSosMonitorService : Service() {
                 "address=${result.device?.address} rssi=${result.rssi} " +
                 "manufacturers=$manufacturers serviceUuids=[$serviceUuids] " +
                 "rawScanRecord=${hexString(record.bytes)}",
-        )
-    }
-
-    private fun logPhysicalSosPackage(result: ScanResult, eventId: Long?) {
-        val record = result.scanRecord
-        val manufacturerData = record?.getManufacturerSpecificData(
-            HikerBleProtocol.MANUFACTURER_ID,
-        )
-        val serviceUuids = record
-            ?.serviceUuids
-            .orEmpty()
-            .joinToString(",") { it.uuid.toString() }
-        Log.i(
-            TAG,
-            "Physical SOS BLE package: address=${result.device?.address} " +
-                "rssi=${result.rssi} eventId=${eventId ?: "none"} " +
-                "manufacturerId=0x${HikerBleProtocol.MANUFACTURER_ID.toString(16)} " +
-                "manufacturerData=${hexString(manufacturerData)} " +
-                "serviceUuids=[$serviceUuids] " +
-                "rawScanRecord=${hexString(record?.bytes)}",
         )
     }
 
@@ -1016,13 +907,6 @@ class BleSosMonitorService : Service() {
             },
             INTERNAL_BLE_SOS_PERMISSION,
         )
-    }
-
-    private fun sosButtonFingerprint(result: ScanResult, eventId: Long?): String {
-        val address = result.device?.address
-        return eventId?.let { "sos_button:event:${address ?: "unknown"}:$it" }
-            ?: address?.let { "sos_button_legacy_device:$it" }
-            ?: "sos_button_legacy_service:${HikerBleProtocol.SOS_SERVICE_UUID}"
     }
 
     private fun sosHelpFingerprint(packet: HikerBleProtocol.SosHelpBeaconPacket): String {

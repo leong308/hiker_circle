@@ -2,7 +2,6 @@
 package com.leongziqi.hikercircle
 
 import android.bluetooth.le.ScanResult
-import android.os.ParcelUuid
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -62,30 +61,6 @@ object HikerBleProtocol {
     private const val LOG_DATA_TYPE = 0x12
     private const val LOG_CHALLENGE_BYTES = 26
     private const val LOG_RECORD_BYTES = 20
-
-    fun isSosAdvertisement(result: ScanResult): Boolean {
-        val record = result.scanRecord ?: return false
-        val hasService = record.serviceUuids
-            ?.contains(ParcelUuid(SOS_SERVICE_UUID)) == true
-        val manufacturerData = record.getManufacturerSpecificData(MANUFACTURER_ID)
-        // Type-4 paired packets have separate owner/non-owner handling. They
-        // must never fall through to the legacy SOS path.
-        val hasPacket = manufacturerData?.let(::isLegacySosPacket) == true
-        return hasService || hasPacket
-    }
-
-    fun sosEventIdFrom(result: ScanResult): Long? {
-        val data = result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID)
-            ?: return null
-        if (!isLegacySosPacket(data) || data.size < 9) {
-            return null
-        }
-        return ByteBuffer.wrap(data, 5, 4)
-            .order(ByteOrder.BIG_ENDIAN)
-            .int
-            .toLong()
-            .and(0xffffffffL)
-    }
 
     fun decodePairedSosRemote(result: ScanResult): PairedSosRemotePacket? {
         val data = result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID)
@@ -330,38 +305,6 @@ object HikerBleProtocol {
         )
     }
 
-
-    private fun isLegacySosPacket(data: ByteArray): Boolean {
-        return data.size == 9 &&
-            data[0] == MAGIC_H &&
-            data[1] == MAGIC_C &&
-            data[2] == VERSION &&
-            data[3] == TYPE_SOS &&
-            data[4].toInt().and(0xff) == 1
-    }
-
-    fun encodeSosHelpBeacon(
-        phoneNumberHash: Long,
-        latitude: Double,
-        longitude: Double,
-        accuracyMeters: Double?,
-        capturedAtMillis: Long,
-    ): ByteArray {
-        requireValidLocation(latitude, longitude, accuracyMeters)
-        val accuracyDecimeters = accuracyDecimeters(accuracyMeters)
-        return ByteBuffer.allocate(22)
-            .order(ByteOrder.BIG_ENDIAN)
-            .put(MAGIC_H)
-            .put(MAGIC_C)
-            .put(VERSION)
-            .put(TYPE_SOS_HELP)
-            .putInt(phoneNumberHash.toInt())
-            .putInt((latitude * 10_000_000).roundToInt())
-            .putInt((longitude * 10_000_000).roundToInt())
-            .putShort(accuracyDecimeters.toShort())
-            .putInt((capturedAtMillis / 1000L).toInt())
-            .array()
-    }
 
     fun decodeSosHelpBeacon(result: ScanResult): SosHelpBeaconPacket? {
         val data = result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID)

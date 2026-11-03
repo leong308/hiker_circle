@@ -93,7 +93,9 @@ function createMobileWriteSync({database, authorize, HttpsError, timestamp, prev
     const {uid, phoneNumber} = authorize(request), field = request.data?.field;
     let value = request.data?.value;
     if (field === 'sos_contacts') {
-      if (!Array.isArray(value) || value.length > 3) fail('Save up to three contacts.');
+      if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
+        fail('Save between one and three emergency contacts.');
+      }
       const seen = new Set();
       value = value.map(c => {
         if (!PHONE.test(c?.phoneNumber) || c.phoneNumber === phoneNumber || seen.has(c.phoneNumber)) fail('Invalid emergency contact.');

@@ -1373,11 +1373,6 @@ class _HikerHomePageState extends State<HikerHomePage>
     switch (event) {
       case HikerBlePairedButtonSetupEvent():
         break;
-      case HikerBleSosButtonEvent():
-        requestImmediateSos(
-          SosAlertMode.manual,
-          triggerSource: SosAlertTriggerSource.emergencyButton,
-        );
       case HikerBlePairedSosButtonEvent():
         _handlePairedSosButtonEvent(event);
       case HikerBlePairedSosButtonTestEvent():

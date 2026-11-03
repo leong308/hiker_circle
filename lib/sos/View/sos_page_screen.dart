@@ -2149,9 +2149,6 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   SosDeviceAlertService get _deviceAlertService =>
       _screenModel.stateDeviceAlertService;
 
-  /// Returns ble service.
-  HikerBleService get _bleService => _screenModel.stateBleService;
-
   /// Returns test stop timer.
   Timer? get _testStopTimer => _screenModel.stateTestStopTimer;
 
@@ -2176,10 +2173,6 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   set _isMedicalSirenActive(bool value) =>
       _screenModel.stateIsMedicalSirenActive = value;
 
-  /// Returns legacy unpaired button enabled.
-  bool get _legacyUnpairedButtonEnabled =>
-      _screenModel.stateLegacyUnpairedButtonEnabled;
-
   /// Returns is gyroscope test active.
   bool get _isGyroscopeTestActive => _screenModel.stateIsGyroscopeTestActive;
 
@@ -2198,11 +2191,7 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
     if (mounted) setState(() {});
   }
 
-  static const Duration _bleSosTestDuration = Duration(seconds: 5);
-
   StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
-
-  bool _isBroadcastingBleSosTest = false;
 
   /// Initializes bindings and starts the screen lifecycle.
   @override
@@ -2213,7 +2202,6 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
       effectShowTestResult: _showTestResult,
     )..addListener(_renderScreenModel);
 
-    unawaited(_loadLegacyButtonSetting());
     _gyroscopeSubscription =
         gyroscopeEventStream(
           samplingPeriod: const Duration(milliseconds: 200),
@@ -2233,14 +2221,6 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
           },
         );
   }
-
-  /// Delegates load legacy button setting to the ViewModel.
-  Future<void> _loadLegacyButtonSetting() =>
-      _screenModel.commandLoadLegacyButtonSetting();
-
-  /// Delegates toggle legacy button setting to the ViewModel.
-  Future<void> _toggleLegacyButtonSetting() =>
-      _screenModel.commandToggleLegacyButtonSetting();
 
   /// Releases resources owned by this instance.
   @override
@@ -2287,40 +2267,6 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                         ),
                         const _HorizontalSeparator(),
                         _SosTestRow(
-                          icon: Icons.bluetooth_searching_rounded,
-                          title: 'Physical SOS button broadcast',
-                          subtitle: _isBroadcastingBleSosTest
-                              ? 'Broadcasting a BLE help beacon for nearby phones.'
-                              : 'Pretend this phone is the ESP32 button and broadcast your GPS help beacon.',
-                          onTap: _isBroadcastingBleSosTest
-                              ? null
-                              : () => unawaited(_broadcastBleSosTest()),
-                        ),
-                        const _HorizontalSeparator(),
-                        _SosTestRow(
-                          icon: Icons.settings_remote_rounded,
-                          title: 'Paired SOS button',
-                          subtitle:
-                              'Add a button, wait for physical confirmation, or manage paired buttons.',
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => PairedSosButtonPage(
-                                accountId: widget.phoneNumber,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const _HorizontalSeparator(),
-                        _SosTestRow(
-                          icon: Icons.settings_remote_rounded,
-                          title: 'Legacy unpaired button (migration)',
-                          subtitle: _legacyUnpairedButtonEnabled
-                              ? 'Enabled: v1 buttons can trigger this phone. Turn off after upgrading to a paired v2 button.'
-                              : 'Disabled by default. Planned paired v2 buttons use authenticated type-4 packets.',
-                          onTap: () => unawaited(_toggleLegacyButtonSetting()),
-                        ),
-                        const _HorizontalSeparator(),
-                        _SosTestRow(
                           icon: Icons.flash_on_rounded,
                           title: 'SOS flashlight pattern',
                           subtitle: _isFlashlightActive
@@ -2362,17 +2308,21 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const FallDetectionTestCard(),
+                          const FallDetectionTestCard(inline: true),
                           const _HorizontalSeparator(),
-                          _SensorTestCard(
+                          SensorTestCard(
                             icon: Icons.threesixty_rounded,
                             title: 'Gyroscope rotation test',
                             instruction:
                                 'Rotate your wrist in a figure-eight or left-right tilt.',
                             progress: _gyroscopeTestProgress,
                             status: _gyroscopeTestStatus,
-                            isActive: _isGyroscopeTestActive,
-                            onStart: _startGyroscopeTest,
+                            actionLabel: _gyroscopeTestProgress >= 1
+                                ? 'Retest'
+                                : 'Start',
+                            onAction: _isGyroscopeTestActive
+                                ? null
+                                : _startGyroscopeTest,
                           ),
                         ],
                       ),
@@ -2390,45 +2340,6 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   /// Delegates send whats app test message to the ViewModel.
   Future<void> _sendWhatsAppTestMessage() =>
       _screenModel.commandSendWhatsAppTestMessage();
-
-  /// Computes broadcast ble sos test.
-  Future<void> _broadcastBleSosTest() async {
-    if (_isBroadcastingBleSosTest) {
-      return;
-    }
-    setState(() {
-      _isBroadcastingBleSosTest = true;
-    });
-
-    try {
-      final snapshotService = LocationSnapshotService.instance;
-      final location =
-          await snapshotService.refresh() ?? snapshotService.latestLocation;
-      if (location == null) {
-        _showTestResult('Location unavailable. Turn on GPS and try again.');
-        return;
-      }
-      await _bleService.broadcastPhysicalSosTest(
-        phoneNumber: widget.phoneNumber,
-        location: location,
-        duration: _bleSosTestDuration,
-      );
-      _showTestResult(
-        'BLE test broadcast for 5 seconds. Nearby HikerCircle phones can show a test preview.',
-      );
-      await Future<void>.delayed(_bleSosTestDuration);
-    } on HikerBleException catch (error) {
-      _showTestResult(error.message);
-    } catch (_) {
-      _showTestResult('Unable to broadcast the BLE SOS test right now.');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isBroadcastingBleSosTest = false;
-        });
-      }
-    }
-  }
 
   /// Toggles flashlight test.
   Future<void> _toggleFlashlightTest() async {

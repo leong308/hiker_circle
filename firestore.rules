@@ -290,6 +290,7 @@ service cloud.firestore {
 
     function validEmergencyContacts(data) {
       return data.sos_contacts is list
+        && data.sos_contacts.size() >= 1
         && data.sos_contacts.size() <= 3
         && data.sosContactsCount is int
         && data.sosContactsCount == data.sos_contacts.size()

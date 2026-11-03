@@ -69,16 +69,14 @@ class EmergencyContactsViewModel extends ChangeNotifier {
       return false;
     }
 
-    _contacts.add(
+    return _saveContacts([
+      ..._contacts,
       EmergencyContact(
         name: name.trim(),
         phoneNumber: normalizedPhoneNumber,
         relationship: relationship.trim(),
       ),
-    );
-    notifyListeners();
-    await _saveContacts();
-    return true;
+    ]);
   }
 
   /// Updates contact.
@@ -110,13 +108,13 @@ class EmergencyContactsViewModel extends ChangeNotifier {
       return;
     }
 
-    _contacts[index] = EmergencyContact(
+    final updated = List<EmergencyContact>.of(_contacts);
+    updated[index] = EmergencyContact(
       name: name.trim(),
       phoneNumber: normalizedPhoneNumber,
       relationship: relationship.trim(),
     );
-    notifyListeners();
-    await _saveContacts();
+    await _saveContacts(updated);
   }
 
   /// Deletes contact.
@@ -124,14 +122,18 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     if (index < 0 || index >= _contacts.length || _isSaving) {
       return;
     }
+    if (_contacts.length <= EmergencyContactsRepository.minContacts) {
+      _saveErrorMessage = EmergencyContactsRepository.minimumContactsMessage;
+      notifyListeners();
+      return;
+    }
 
-    _contacts.removeAt(index);
-    notifyListeners();
-    await _saveContacts();
+    final updated = List<EmergencyContact>.of(_contacts)..removeAt(index);
+    await _saveContacts(updated);
   }
 
-  /// Expose save progress and a recoverable validation/storage error while preserving the edited contact list.
-  Future<void> _saveContacts() async {
+  /// Only confirmed saves change the contact list or clear the add-contact form.
+  Future<bool> _saveContacts(List<EmergencyContact> updated) async {
     _isSaving = true;
     _saveErrorMessage = null;
     notifyListeners();
@@ -139,8 +141,13 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     try {
       await _repository.saveEmergencyContacts(
         session: _session,
-        contacts: contacts,
+        contacts: updated,
       );
+      _contacts
+        ..clear()
+        ..addAll(updated);
+      _saveErrorMessage = null;
+      return true;
     } on EmergencyContactsRepositoryException catch (error) {
       _saveErrorMessage = error.message;
     } catch (_) {
@@ -150,6 +157,7 @@ class EmergencyContactsViewModel extends ChangeNotifier {
       _isSaving = false;
       notifyListeners();
     }
+    return false;
   }
 
   /// Computes normalized phone number.

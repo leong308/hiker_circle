@@ -68,7 +68,6 @@ class HikerBleBridge(
     private var teamScanCallback: ScanCallback? = null
     private var pairedButtonSetupScanCallback: ScanCallback? = null
     private var teamAdvertiseCallback: AdvertiseCallback? = null
-    private var sosTestAdvertiseCallback: AdvertiseCallback? = null
     private var latestTeamPayload: Map<String, Any?>? = null
     private val activeTeamGatts = mutableMapOf<String, BluetoothGatt>()
     private val teamGattTimeouts = mutableMapOf<String, Runnable>()
@@ -259,20 +258,7 @@ class HikerBleBridge(
                     return
                 }
             }
-            emitSosButton(
-                counter = if (intent.hasExtra(BleSosMonitorService.EXTRA_COUNTER)) {
-                    intent.getLongExtra(BleSosMonitorService.EXTRA_COUNTER, 0L)
-                } else {
-                    null
-                },
-                rssi = intent.getIntExtra(BleSosMonitorService.EXTRA_RSSI, 0),
-                receivedAtMillis = intent.getLongExtra(
-                    BleSosMonitorService.EXTRA_RECEIVED_AT_MILLIS,
-                    System.currentTimeMillis(),
-                ),
-                source = intent.getStringExtra(BleSosMonitorService.EXTRA_SOURCE)
-                    ?: "ble_button",
-            )
+
         }
     }
 
@@ -637,7 +623,6 @@ class HikerBleBridge(
         ButtonDebugTrace.stop()
         stopTeamLocationExchange()
         stopPairedButtonSetupScan()
-        stopSosTestAdvertiser()
         finishPairing(
             success = false,
             errorCode = "paired_button_bridge_disposed",
@@ -978,37 +963,6 @@ class HikerBleBridge(
                     withBlePermissions(result, includeAdvertisePermission = false) {
                         beginLogDownload(deviceId, result)
                     }
-                }
-            }
-            "setLegacyUnpairedSosButtonEnabled" -> {
-                val saved = pairedButtonRegistry.setLegacyUnpairedEnabled(
-                    call.argument<Boolean>("enabled") ?: false,
-                )
-                if (saved) {
-                    result.success(null)
-                } else {
-                    result.error(
-                        "paired_button_setting_write_failed",
-                        "Unable to save the legacy-button setting.",
-                        null,
-                    )
-                }
-            }
-            "isLegacyUnpairedSosButtonEnabled" ->
-                result.success(pairedButtonRegistry.isLegacyUnpairedEnabled())
-            "broadcastPhysicalSosTest" -> {
-                val payload = sosHelpPayloadFrom(call)
-                if (payload == null) {
-                    result.error(
-                        "ble_sos_test_invalid",
-                        "Physical SOS test payload is invalid.",
-                        null,
-                    )
-                    return
-                }
-                withBlePermissions(result, includeAdvertisePermission = true) {
-                    broadcastPhysicalSosTest(payload)
-                    result.success(null)
                 }
             }
             "startTeamLocationExchange",
@@ -1455,58 +1409,6 @@ class HikerBleBridge(
         }
     }
 
-    private fun broadcastPhysicalSosTest(payload: Map<String, Any?>) {
-        stopSosTestAdvertiser()
-        if (!hasAdvertisePermission()) {
-            emitStatus("ble_sos_test_failed", "Bluetooth advertising permission is missing.")
-            return
-        }
-        val advertiser = bluetoothManager?.adapter?.bluetoothLeAdvertiser ?: run {
-            emitStatus("ble_sos_test_failed", "This phone cannot advertise BLE packets.")
-            return
-        }
-        val durationMillis = (payload["durationMillis"] as Long).coerceIn(3000L, 8000L)
-        val packet = HikerBleProtocol.encodeSosHelpBeacon(
-            phoneNumberHash = payload["phoneNumberHash"] as Long,
-            latitude = payload["latitude"] as Double,
-            longitude = payload["longitude"] as Double,
-            accuracyMeters = payload["accuracyMeters"] as? Double,
-            capturedAtMillis = payload["capturedAtMillis"] as Long,
-        )
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(false)
-            .setTimeout(durationMillis.toInt())
-            .build()
-        val data = AdvertiseData.Builder()
-            .addManufacturerData(HikerBleProtocol.MANUFACTURER_ID, packet)
-            .setIncludeDeviceName(false)
-            .build()
-        val callback = object : AdvertiseCallback() {
-            override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-                emitStatus("ble_sos_test_broadcast_started")
-            }
-
-            override fun onStartFailure(errorCode: Int) {
-                emitStatus(
-                    "ble_sos_test_failed",
-                    "Android BLE advertiser failed with code $errorCode.",
-                )
-            }
-        }
-        sosTestAdvertiseCallback = callback
-        advertiser.startAdvertising(settings, data, callback)
-        mainHandler.postDelayed(
-            {
-                if (sosTestAdvertiseCallback === callback) {
-                    stopSosTestAdvertiser()
-                }
-            },
-            durationMillis + 500L,
-        )
-    }
-
     private fun startTeamScanner() {
         if (teamScanCallback != null || !hasScanPermission()) {
             return
@@ -1623,16 +1525,6 @@ class HikerBleBridge(
     private fun stopTeamAdvertiser() {
         val callback = teamAdvertiseCallback ?: return
         teamAdvertiseCallback = null
-        if (hasAdvertisePermission()) {
-            runCatching {
-                bluetoothManager?.adapter?.bluetoothLeAdvertiser?.stopAdvertising(callback)
-            }
-        }
-    }
-
-    private fun stopSosTestAdvertiser() {
-        val callback = sosTestAdvertiseCallback ?: return
-        sosTestAdvertiseCallback = null
         if (hasAdvertisePermission()) {
             runCatching {
                 bluetoothManager?.adapter?.bluetoothLeAdvertiser?.stopAdvertising(callback)
@@ -1779,26 +1671,6 @@ class HikerBleBridge(
                 "receivedAtMillis" to System.currentTimeMillis(),
                 "rssi" to packet.rssi,
             ),
-        )
-    }
-
-    private fun emitSosButton(
-        counter: Long?,
-        rssi: Int,
-        receivedAtMillis: Long,
-        source: String,
-    ) {
-        emitEvent(
-            buildMap<String, Any> {
-                put("type", "sosButton")
-                put("source", source)
-                put("rssi", rssi)
-                put("receivedAtMillis", receivedAtMillis)
-                if (counter != null) {
-                    put("counter", counter)
-                    put("broadcastId", counter)
-                }
-            },
         )
     }
 
@@ -3174,28 +3046,6 @@ class HikerBleBridge(
             "longitude" to longitude,
             "accuracyMeters" to accuracyMeters,
             "capturedAtMillis" to capturedAtMillis,
-        )
-    }
-
-    private fun sosHelpPayloadFrom(call: MethodCall): Map<String, Any?>? {
-        val phoneNumber = call.argument<String>("phoneNumber") ?: return null
-        val latitude = call.argument<Number>("latitude")?.toDouble() ?: return null
-        val longitude = call.argument<Number>("longitude")?.toDouble() ?: return null
-        val accuracyMeters = call.argument<Number>("accuracyMeters")?.toDouble()
-        if (!isValidBleLocation(latitude, longitude, accuracyMeters)) return null
-        val capturedAtMillis = call.argument<Number>("capturedAtMillis")?.toLong()
-            ?: System.currentTimeMillis()
-        val durationMillis = call.argument<Number>("durationMillis")?.toLong() ?: 5000L
-        return mapOf(
-            "phoneNumberHash" to (
-                call.argument<Number>("phoneNumberHash")?.toLong()
-                    ?: HikerBleProtocol.phoneHash(phoneNumber)
-                ),
-            "latitude" to latitude,
-            "longitude" to longitude,
-            "accuracyMeters" to accuracyMeters,
-            "capturedAtMillis" to capturedAtMillis,
-            "durationMillis" to durationMillis,
         )
     }
 

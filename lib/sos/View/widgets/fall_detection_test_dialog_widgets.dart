@@ -7,9 +7,11 @@ class FallDetectionTestCard extends StatefulWidget {
     super.key,
     this.initialSensitivity,
     this.events,
+    this.inline = false,
   });
   final double? initialSensitivity;
   final Stream<AccelerometerEvent>? events;
+  final bool inline;
 
   /// Creates the presentation state for this widget.
   @override
@@ -55,6 +57,37 @@ class _FallDetectionTestCardState extends State<FallDetectionTestCard>
   @override
   Widget build(BuildContext context) {
     final passed = _viewModel.passed;
+    if (widget.inline) {
+      return SensorTestCard(
+        icon: Icons.sensors_rounded,
+        title: 'Live acceleration test',
+        instruction:
+            'Hold your phone securely and move it gently. Never drop or strike it.',
+        progress: _viewModel.progress,
+        status:
+            _viewModel.phase == FallDetectionTestPhase.idle &&
+                !_viewModel.hasActiveHike
+            ? 'Ready to test using your selected sensitivity.'
+            : _viewModel.status,
+        actionLabel: _viewModel.active
+            ? 'Stop'
+            : _viewModel.phase == FallDetectionTestPhase.idle
+            ? 'Start'
+            : 'Retest',
+        onAction: _viewModel.hasActiveHike
+            ? null
+            : _viewModel.active
+            ? _viewModel.stop
+            : _viewModel.start,
+        actionKey: const ValueKey('fall-test-action'),
+        statusKey: const ValueKey('fall-test-status'),
+        progressValueLabel: passed
+            ? 'Target reached'
+            : _viewModel.active
+            ? '${(_viewModel.progress * 100).round()} percent of the test target'
+            : 'Test is not running',
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,

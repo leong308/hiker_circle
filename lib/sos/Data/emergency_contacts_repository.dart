@@ -43,16 +43,23 @@ class EmergencyContactsRepository {
     LocalSessionDatabase? localDatabase,
     ConditionalCloudCache? readCache,
     Duration cloudTimeout = const Duration(seconds: 5),
+    Duration cloudWriteTimeout = const Duration(seconds: 40),
+    ConditionalCacheRequest? cloudRequest,
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _localDatabase = localDatabase,
        _providedReadCache = readCache,
        _cloudTimeout = cloudTimeout,
+       _cloudWriteTimeout = cloudWriteTimeout,
+       _cloudRequest = cloudRequest,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
   static final LocalSessionDatabase _defaultLocalDatabase =
       LocalSessionDatabase();
+  static const int minContacts = 1;
   static const int maxContacts = 3;
+  static const minimumContactsMessage =
+      'At least one emergency contact must remain. Add another contact before deleting this one.';
   static const ownNumberMessage =
       'You cannot use your own phone number as an emergency contact.';
 
@@ -68,6 +75,8 @@ class EmergencyContactsRepository {
   static final Map<String, int> _revisions = {};
   static final Map<String, Future<void>> _localWrites = {};
   final Duration _cloudTimeout;
+  final Duration _cloudWriteTimeout;
+  final ConditionalCacheRequest? _cloudRequest;
 
   /// Applies local lock.
   Future<T> _withLocalLock<T>(String owner, Future<T> Function() action) async {
@@ -273,6 +282,54 @@ class EmergencyContactsRepository {
   }
 
   /// Computes push cloud contacts.
+  Future<Map<String, dynamic>> _requestContactCloud(
+    String callable,
+    Map<String, Object?> arguments,
+  ) async {
+    if (_cloudRequest != null) {
+      return _cloudRequest(callable, arguments).timeout(_cloudWriteTimeout);
+    }
+    final result = await FirebaseFunctions.instance
+        .httpsCallable(
+          callable,
+          options: HttpsCallableOptions(timeout: _cloudWriteTimeout),
+        )
+        .call<Map<String, dynamic>>(arguments)
+        .timeout(_cloudWriteTimeout);
+    return Map<String, dynamic>.from(result.data);
+  }
+
+  /// A cached snapshot cannot confirm a write whose acknowledgement was lost.
+  Future<bool> _confirmCloudContacts(
+    AppSession session,
+    List<EmergencyContact> contacts,
+  ) async {
+    final data = await _requestContactCloud('readMobileResource', {
+      'expectedOwner': session.phoneNumber,
+      'resourceType': 'sos_preferences',
+      'forcePayload': true,
+    });
+    final raw = data['contacts'];
+    if (data['notModified'] == true || raw is! List) return false;
+    return stableContentHash(raw) ==
+        stableContentHash(
+          contacts.map((contact) => contact.toFirestore()).toList(),
+        );
+  }
+
+  bool _mayHaveSaved(Object error) =>
+      error is TimeoutException ||
+      error is EmergencyContactsRepositoryException ||
+      (error is FirebaseFunctionsException &&
+          const {
+            'deadline-exceeded',
+            'unavailable',
+            'internal',
+            'unknown',
+            'cancelled',
+          }.contains(error.code));
+
+  /// The backend has a thirty-second execution limit; allow its reply to arrive.
   @protected
   Future<void> pushCloudContacts(
     AppSession session,
@@ -283,18 +340,12 @@ class EmergencyContactsRepository {
         'Connect to the internet to update emergency contacts.',
       );
     }
-    final result = await FirebaseFunctions.instance
-        .httpsCallable(
-          'syncSafetyPreferences',
-          options: HttpsCallableOptions(timeout: _cloudTimeout),
-        )
-        .call<Map<String, dynamic>>({
-          'expectedOwner': session.phoneNumber,
-          'field': 'sos_contacts',
-          'value': contacts.map((contact) => contact.toFirestore()).toList(),
-        })
-        .timeout(_cloudTimeout);
-    if (result.data['confirmed'] != true) {
+    final result = await _requestContactCloud('syncSafetyPreferences', {
+      'expectedOwner': session.phoneNumber,
+      'field': 'sos_contacts',
+      'value': contacts.map((contact) => contact.toFirestore()).toList(),
+    });
+    if (result['confirmed'] != true) {
       throw const EmergencyContactsRepositoryException(
         'The contact update was not confirmed.',
       );
@@ -306,6 +357,9 @@ class EmergencyContactsRepository {
     required AppSession session,
     required List<EmergencyContact> contacts,
   }) async {
+    if (contacts.length < minContacts) {
+      throw const EmergencyContactsRepositoryException(minimumContactsMessage);
+    }
     if (contacts.length > maxContacts) {
       throw const EmergencyContactsRepositoryException(
         'You can save up to 3 emergency contacts.',
@@ -335,26 +389,53 @@ class EmergencyContactsRepository {
     final revision = (_revisions[owner] ?? 0) + 1;
     _revisions[owner] = revision;
     try {
-      await pushCloudContacts(
-        session,
-        normalizedContacts,
-      ).timeout(_cloudTimeout);
-    } catch (_) {
-      throw const EmergencyContactsRepositoryException(
-        'Contacts were not saved. Connect to the internet and try again.',
-      );
+      await pushCloudContacts(session, normalizedContacts);
+    } catch (error) {
+      var confirmed = false;
+      if (_firebaseBootstrapResult.isAvailable && _mayHaveSaved(error)) {
+        try {
+          confirmed = await _confirmCloudContacts(session, normalizedContacts);
+        } catch (_) {
+          // Keep an uncertain result distinct from a confirmed cloud save.
+        }
+      }
+      if (!confirmed) {
+        if (error is FirebaseFunctionsException &&
+            error.code == 'unauthenticated') {
+          throw const EmergencyContactsRepositoryException(
+            'Your sign-in session could not be verified. Sign in again and retry saving your contacts.',
+          );
+        }
+        if (error is FirebaseFunctionsException &&
+            error.code == 'permission-denied') {
+          throw const EmergencyContactsRepositoryException(
+            'You do not have permission to update these contacts.',
+          );
+        }
+        throw const EmergencyContactsRepositoryException(
+          'The contact update could not be confirmed. Check your connection and try again.',
+        );
+      }
     }
     await _withLocalLock(owner, () async {
       if ((_revisions[owner] ?? 0) != revision) return;
-      await _resolvedLocalDatabase.saveEmergencyContacts(
-        phoneNumber: owner,
-        contacts: normalizedContacts,
-      );
-      await _resolvedLocalDatabase.saveLocalPreference(
-        ownerPhoneNumber: owner,
-        key: pendingPreferenceKey,
-        value: null,
-      );
+      try {
+        await _resolvedLocalDatabase.saveEmergencyContacts(
+          phoneNumber: owner,
+          contacts: normalizedContacts,
+        );
+        await _resolvedLocalDatabase.saveLocalPreference(
+          ownerPhoneNumber: owner,
+          key: pendingPreferenceKey,
+          value: null,
+        );
+      } catch (_) {
+        // The cloud has confirmed the save. A later refresh can repair its
+        // device cache; do not misreport that the contact was not saved.
+        debugPrint(
+          'Confirmed emergency contact save: local cache update failed.',
+        );
+      }
       _emit(owner, normalizedContacts);
     });
     try {

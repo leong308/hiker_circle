@@ -281,6 +281,21 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
       showCupertinoDialog<bool>(
         context: context,
         builder: (context) {
+          if (viewModel.contacts.length <=
+              EmergencyContactsRepository.minContacts) {
+            return CupertinoAlertDialog(
+              title: const Text('Keep an emergency contact'),
+              content: const Text(
+                EmergencyContactsRepository.minimumContactsMessage,
+              ),
+              actions: [
+                CupertinoDialogAction(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('OK'),
+                ),
+              ],
+            );
+          }
           return CupertinoAlertDialog(
             title: const Text('Delete contact?'),
             content: Text('${contact.name} will be removed from SOS alerts.'),

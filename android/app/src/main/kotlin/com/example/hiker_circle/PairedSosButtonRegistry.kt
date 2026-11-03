@@ -196,19 +196,6 @@ class PairedSosButtonRegistry(context: Context) {
         return MessageDigest.isEqual(tag, packet.messageTag)
     }
 
-    fun isLegacyUnpairedEnabled(): Boolean =
-        legacyUnpairedSettingKey()?.let { preferences.getBoolean(it, false) } ?: false
-
-    fun setLegacyUnpairedEnabled(enabled: Boolean): Boolean {
-        val key = legacyUnpairedSettingKey() ?: return false
-        return preferences.edit()
-            .putBoolean(key, enabled)
-            // Never inherit the old process-global migration switch into a
-            // different signed-in account.
-            .remove(LEGACY_UNPAIRED_ENABLED)
-            .commit()
-    }
-
     /**
      * Drops only device-local pairing material so a registry restored without
      * its Keystore key can recover in-app. The active account scope is kept so
@@ -218,7 +205,7 @@ class PairedSosButtonRegistry(context: Context) {
         val editor = preferences.edit()
             .remove(ENCRYPTED_ENTRIES)
             .remove(LEGACY_UNPAIRED_ENABLED)
-        legacyUnpairedSettingKey()?.let(editor::remove)
+        preferences.all.keys.filter { it.startsWith(LEGACY_UNPAIRED_ENABLED) }.forEach(editor::remove)
         check(
             editor.commit(),
         ) { "Unable to clear the paired SOS button registry." }
@@ -288,9 +275,6 @@ class PairedSosButtonRegistry(context: Context) {
 
     private fun activeOwnerScope(): String? =
         preferences.getString(ACTIVE_OWNER_SCOPE, null)?.takeIf { it.isNotBlank() }
-
-    private fun legacyUnpairedSettingKey(): String? =
-        activeOwnerScope()?.let { "$LEGACY_UNPAIRED_ENABLED.$it" }
 
     private fun belongsToActiveOwner(button: Button): Boolean {
         val active = activeOwnerScope() ?: return false

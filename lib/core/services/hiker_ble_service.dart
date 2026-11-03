@@ -439,22 +439,6 @@ class HikerBleService {
     }
   }
 
-  /// Checks whether legacy unpaired sos button enabled.
-  Future<bool> isLegacyUnpairedSosButtonEnabled() async {
-    try {
-      return await _methodChannel.invokeMethod<bool>(
-            'isLegacyUnpairedSosButtonEnabled',
-          ) ??
-          false;
-    } on MissingPluginException {
-      return false;
-    } on PlatformException catch (error) {
-      throw HikerBleException(
-        error.message ?? 'Unable to read the legacy-button setting.',
-      );
-    }
-  }
-
   /// Computes unpair sos button.
   Future<bool> unpairSosButton(String deviceId) async {
     try {
@@ -501,49 +485,6 @@ class HikerBleService {
       );
     } on TimeoutException {
       throw const HikerBleException('SOS button location handoff timed out.');
-    }
-  }
-
-  /// Sets legacy unpaired sos button enabled.
-  Future<void> setLegacyUnpairedSosButtonEnabled(bool enabled) async {
-    try {
-      await _methodChannel.invokeMethod<void>(
-        'setLegacyUnpairedSosButtonEnabled',
-        {'enabled': enabled},
-      );
-    } on MissingPluginException {
-      // Unsupported on platforms without the Android paired-button registry.
-    } on PlatformException catch (error) {
-      throw HikerBleException(
-        error.message ?? 'Unable to save the legacy-button setting.',
-      );
-    }
-  }
-
-  /// Computes broadcast physical sos test.
-  Future<void> broadcastPhysicalSosTest({
-    required String phoneNumber,
-    required SosTriggerLocation location,
-    Duration duration = const Duration(seconds: 5),
-  }) async {
-    final broadcastStartedAt = DateTime.now().toUtc();
-    try {
-      await _methodChannel.invokeMethod<void>('broadcastPhysicalSosTest', {
-        'manufacturerId': manufacturerId,
-        'phoneNumber': phoneNumber,
-        'phoneNumberHash': hikerBlePhoneHash(phoneNumber),
-        'latitude': location.latitude,
-        'longitude': location.longitude,
-        'accuracyMeters': location.accuracyMeters,
-        'capturedAtMillis': broadcastStartedAt.millisecondsSinceEpoch,
-        'durationMillis': duration.inMilliseconds.clamp(3000, 8000).toInt(),
-      });
-    } on MissingPluginException {
-      throw const HikerBleException('BLE bridge is not available here.');
-    } on PlatformException catch (error) {
-      throw HikerBleException(
-        error.message ?? 'Unable to broadcast the BLE SOS test.',
-      );
     }
   }
 
@@ -646,11 +587,17 @@ sealed class HikerBleEvent {
     }
     final data = Map<Object?, Object?>.from(raw);
     final type = _stringFrom(data['type']);
+    // Ignore old queued native events as well as new unpaired-button packets.
+    if (type == 'sosButton') {
+      return HikerBleStatusEvent(
+        status: 'unsupported_unpaired_button',
+        receivedAt: DateTime.now().toUtc(),
+      );
+    }
     final mode =
         _intFrom(data['mode']) ?? int.tryParse('${data['mode']}'.trim());
     final source = _stringFrom(data['source'])?.toLowerCase();
     if (const {
-          'sosButton',
           'pairedSosButton',
           'nearbySosButton',
           'nearbySosLocation',
@@ -668,7 +615,6 @@ sealed class HikerBleEvent {
       'pairedButtonSetupDevice' => HikerBlePairedButtonSetupEvent.fromPlatform(
         data,
       ),
-      'sosButton' => HikerBleSosButtonEvent.fromPlatform(data),
       'pairedSosButton' => HikerBlePairedSosButtonEvent.fromPlatform(data),
       'pairedSosButtonTest' => HikerBlePairedSosButtonTestEvent.fromPlatform(
         data,
@@ -1006,32 +952,6 @@ class HikerBleButtonLogRecord {
     20 => 'Test request rejected',
     _ => 'Unknown event ($type)',
   };
-}
-
-/// Represents hiker ble sos button event.
-class HikerBleSosButtonEvent extends HikerBleEvent {
-  /// Creates hiker ble sos button event.
-  const HikerBleSosButtonEvent({
-    required this.receivedAt,
-    this.counter,
-    this.rssi,
-    this.source = 'ble_button',
-  });
-
-  /// Creates hiker ble sos button event using from platform.
-  factory HikerBleSosButtonEvent.fromPlatform(Map<Object?, Object?> data) {
-    return HikerBleSosButtonEvent(
-      receivedAt: _dateFromMillis(data['receivedAtMillis']),
-      counter: _intFrom(data['counter']),
-      rssi: _intFrom(data['rssi']),
-      source: _stringFrom(data['source'], fallback: 'ble_button')!,
-    );
-  }
-
-  final DateTime receivedAt;
-  final int? counter;
-  final int? rssi;
-  final String source;
 }
 
 /// An authenticated type-4 press from a button paired to this phone.

@@ -698,8 +698,6 @@ class _SosTestSettingsPageStateViewModel extends ChangeNotifier {
   final SosDeviceAlertService stateDeviceAlertService =
       const SosDeviceAlertService();
 
-  final HikerBleService stateBleService = const HikerBleService();
-
   Timer? stateTestStopTimer;
 
   bool stateIsFlashlightActive = false;
@@ -708,35 +706,12 @@ class _SosTestSettingsPageStateViewModel extends ChangeNotifier {
 
   bool stateIsMedicalSirenActive = false;
 
-  bool stateLegacyUnpairedButtonEnabled = false;
-
   bool stateIsGyroscopeTestActive = false;
 
   double stateGyroscopeTestProgress = 0;
 
   String stateGyroscopeTestStatus =
       'Tap Start, then rotate your wrist left-right and tilt forward-back.';
-
-  /// Loads legacy button setting.
-  Future<void> commandLoadLegacyButtonSetting() async {
-    final enabled = await stateBleService.isLegacyUnpairedSosButtonEnabled();
-    if (mounted) {
-      _publish(() => stateLegacyUnpairedButtonEnabled = enabled);
-    }
-  }
-
-  /// Toggles legacy button setting.
-  Future<void> commandToggleLegacyButtonSetting() async {
-    final enabled = !stateLegacyUnpairedButtonEnabled;
-    try {
-      await stateBleService.setLegacyUnpairedSosButtonEnabled(enabled);
-      if (mounted) {
-        _publish(() => stateLegacyUnpairedButtonEnabled = enabled);
-      }
-    } on HikerBleException catch (error) {
-      effectShowTestResult(error.message);
-    }
-  }
 
   /// Sends whats app test message.
   Future<void> commandSendWhatsAppTestMessage() async {
