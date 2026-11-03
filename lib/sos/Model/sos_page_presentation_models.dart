@@ -15,12 +15,3 @@ class _QueuedSosRequest {
   final SosAlertTriggerSource triggerSource;
   final int presentationId;
 }
-
-/// Represents whats app note update.
-class _WhatsAppNoteUpdate {
-  /// Creates whats app note update.
-  const _WhatsAppNoteUpdate({required this.mode, required this.note});
-
-  final SosAlertMode mode;
-  final String note;
-}

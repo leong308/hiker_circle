@@ -538,13 +538,10 @@ class _SosPageState extends State<SosPage> {
                       session: widget.session,
                       latestResult: viewModel.latestSosAlertResult,
                       customWhatsAppNotes: _customWhatsAppNotes,
-                      onCustomWhatsAppNoteChanged: (mode, note) {
-                        unawaited(
-                          viewModel
-                              .saveCustomWhatsAppNote(mode: mode, note: note)
-                              .catchError((_) {}),
-                        );
-                      },
+                      onCustomWhatsAppNoteChanged: (mode, note) => viewModel
+                          .saveCustomWhatsAppNote(mode: mode, note: note),
+                      loadNoteSyncStates:
+                          viewModel.loadCustomWhatsAppNoteSyncStates,
                     ),
                     const SizedBox(height: 12),
                     _AdminSosSystemLogsPanel(
@@ -1871,14 +1868,17 @@ class _SosSafetyToolsGrid extends StatelessWidget {
 }
 
 /// Displays the whats app message detail page.
-class _WhatsAppMessageDetailPage extends StatefulWidget {
+class EmergencyWhatsAppMessagePage extends StatefulWidget {
   /// Creates whats app message detail page.
-  const _WhatsAppMessageDetailPage({
+  const EmergencyWhatsAppMessagePage({
+    super.key,
     required this.session,
     required this.initialNotes,
     required this.previewMode,
     required this.previewTriggeredAt,
     required this.previewLocation,
+    required this.onSave,
+    required this.loadSyncStates,
   });
 
   final AppSession session;
@@ -1886,16 +1886,20 @@ class _WhatsAppMessageDetailPage extends StatefulWidget {
   final SosAlertMode previewMode;
   final DateTime previewTriggeredAt;
   final SosTriggerLocation? previewLocation;
+  final Future<SosCustomNoteChange> Function(SosAlertMode mode, String note)
+  onSave;
+  final Future<Map<SosAlertMode, bool>> Function() loadSyncStates;
 
   /// Creates the presentation state for this widget.
   @override
-  State<_WhatsAppMessageDetailPage> createState() =>
+  State<EmergencyWhatsAppMessagePage> createState() =>
       _WhatsAppMessageDetailPageState();
 }
 
 /// Manages the whats app message detail page presentation and lifecycle.
 class _WhatsAppMessageDetailPageState
-    extends State<_WhatsAppMessageDetailPage> {
+    extends State<EmergencyWhatsAppMessagePage>
+    with WidgetsBindingObserver {
   late final _WhatsAppMessageDetailPageStateViewModel _screenModel;
 
   /// Returns notes.
@@ -1912,22 +1916,72 @@ class _WhatsAppMessageDetailPageState
 
   late final TextEditingController _noteController;
   late SosAlertMode _selectedMode;
+  bool _isSaving = false;
+  String? _saveError;
+  final Map<SosAlertMode, bool> _syncStates = {};
+  final Map<SosAlertMode, int> _updatedSyncModes = {};
+  late final Map<SosAlertMode, String> _savedNotes;
+  StreamSubscription<SosCustomNoteChange>? _syncSubscription;
+  HikerCircleLoadingDialogRoute? _savingRoute;
 
   /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _screenModel = _WhatsAppMessageDetailPageStateViewModel()
       ..addListener(_renderScreenModel);
 
     _notes = {..._SosPageState._defaultWhatsAppNotes(), ...widget.initialNotes};
+    _savedNotes = Map.of(_notes);
     _selectedMode = _editableModeFor(widget.previewMode);
     _noteController = TextEditingController(text: _noteFor(_selectedMode));
+    _syncSubscription = SosAlertRepository.customNoteChanges.listen((change) {
+      if (!mounted ||
+          !change.isCurrent ||
+          change.phoneNumber != widget.session.phoneNumber) {
+        return;
+      }
+      setState(() {
+        _updatedSyncModes[change.mode] =
+            (_updatedSyncModes[change.mode] ?? 0) + 1;
+        _syncStates[change.mode] = change.isSynced;
+        _savedNotes[change.mode] = change.note;
+      });
+    });
+    unawaited(_loadSyncStates());
+  }
+
+  Future<void> _loadSyncStates() async {
+    final revisions = Map<SosAlertMode, int>.of(_updatedSyncModes);
+    try {
+      final states = await widget.loadSyncStates();
+      if (!mounted) return;
+      setState(() {
+        for (final entry in states.entries) {
+          if ((revisions[entry.key] ?? 0) ==
+              (_updatedSyncModes[entry.key] ?? 0)) {
+            _syncStates[entry.key] = entry.value;
+          }
+        }
+      });
+    } catch (_) {
+      // Unknown state is never displayed as a confirmed cloud save.
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_loadSyncStates());
   }
 
   /// Releases resources owned by this instance.
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_syncSubscription?.cancel());
+    final savingRoute = _savingRoute;
+    WidgetsBinding.instance.addPostFrameCallback((_) => savingRoute?.close());
     _noteController.dispose();
 
     _screenModel.removeListener(_renderScreenModel);
@@ -1938,6 +1992,11 @@ class _WhatsAppMessageDetailPageState
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
+    final hasUnsavedChanges =
+        _noteController.text.replaceAll(RegExp(r'\s+'), ' ').trim() !=
+        (_savedNotes[_selectedMode] ?? '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
     final preview = SosAlertMessageComposer.compose(
       mode: _selectedMode,
       phoneNumber: widget.session.phoneNumber,
@@ -1946,164 +2005,197 @@ class _WhatsAppMessageDetailPageState
       customNote: _noteController.text,
     );
 
-    return Scaffold(
-      backgroundColor: _SosColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _SosDetailHeader(
-                    title: 'Emergency WhatsApp',
-                    subtitle: 'Make every emergency message clear and useful',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const _Glyph(
-                            icon: Icons.chat_bubble_rounded,
-                            color: _SosColors.green,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Message instructions',
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(
-                                  color: _SosColors.textFor(context),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 6),
-                          CupertinoSlidingSegmentedControl<SosAlertMode>(
-                            groupValue: _selectedMode,
-                            children: const {
-                              SosAlertMode.manual: Padding(
-                                padding: EdgeInsets.symmetric(vertical: 8),
-                                child: Text('Manual'),
-                              ),
-                              SosAlertMode.duress: Padding(
-                                padding: EdgeInsets.symmetric(vertical: 8),
-                                child: Text('Duress'),
-                              ),
-                              SosAlertMode.medical: Padding(
-                                padding: EdgeInsets.symmetric(vertical: 8),
-                                child: Text('Medical'),
-                              ),
-                            },
-                            onValueChanged: (mode) {
-                              if (mode == null) {
-                                return;
-                              }
-                              _saveCurrentNote();
-                              setState(() {
-                                _selectedMode = mode;
-                                _noteController.text = _noteFor(mode);
-                              });
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: _noteController,
-                            minLines: 3,
-                            maxLines: 5,
-                            maxLength: 240,
-                            decoration: const InputDecoration(
-                              hintText:
-                                  'Tell contacts what to do when they receive your SOS.',
-                              alignLabelWithHint: true,
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () {
-                                    setState(() {
-                                      _noteController.text =
-                                          _SosPageState._defaultWhatsAppNotes()[_selectedMode]!;
-                                    });
-                                  },
-                                  child: const Text('Reset Default'),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: FilledButton.icon(
-                                  onPressed: () {
-                                    _saveCurrentNote();
-                                    Navigator.of(context).pop(
-                                      _WhatsAppNoteUpdate(
-                                        mode: _selectedMode,
-                                        note:
-                                            _notes[_selectedMode]?.trim() ?? '',
-                                      ),
-                                    );
-                                  },
-                                  icon: const Icon(Icons.check_rounded),
-                                  label: const Text('Use Message'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+    return PopScope(
+      canPop: !_isSaving,
+      child: Scaffold(
+        backgroundColor: _SosColors.backgroundFor(context),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _SosDetailHeader(
+                      title: 'Emergency WhatsApp',
+                      subtitle: 'Make every emergency message clear and useful',
+                      onBack: () {
+                        if (!_isSaving) Navigator.of(context).pop();
+                      },
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            'WhatsApp preview',
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(
-                                  color: _SosColors.textFor(context),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: _SosColors.greenSoftFor(context),
-                              borderRadius: const BorderRadius.only(
-                                topLeft: Radius.circular(18),
-                                topRight: Radius.circular(18),
-                                bottomLeft: Radius.circular(18),
-                                bottomRight: Radius.circular(5),
-                              ),
+                    const SizedBox(height: 16),
+                    _InsetGroup(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const _Glyph(
+                              icon: Icons.chat_bubble_rounded,
+                              color: _SosColors.green,
                             ),
-                            child: SelectableText(
-                              preview,
-                              style: Theme.of(context).textTheme.bodySmall
+                            const SizedBox(height: 12),
+                            Text(
+                              'Message instructions',
+                              style: Theme.of(context).textTheme.titleLarge
                                   ?.copyWith(
                                     color: _SosColors.textFor(context),
-                                    height: 1.4,
+                                    fontWeight: FontWeight.w800,
                                     letterSpacing: 0,
                                   ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 6),
+                            CupertinoSlidingSegmentedControl<SosAlertMode>(
+                              groupValue: _selectedMode,
+                              children: const {
+                                SosAlertMode.manual: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Text('Manual'),
+                                ),
+                                SosAlertMode.duress: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Text('Duress'),
+                                ),
+                                SosAlertMode.medical: Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Text('Medical'),
+                                ),
+                              },
+                              onValueChanged: (mode) {
+                                if (mode == null || _isSaving) {
+                                  return;
+                                }
+                                _notes = {
+                                  ..._notes,
+                                  _selectedMode: _noteController.text,
+                                };
+                                setState(() {
+                                  _selectedMode = mode;
+                                  _noteController.text = _noteFor(mode);
+                                  _saveError = null;
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              enabled: !_isSaving,
+                              controller: _noteController,
+                              minLines: 3,
+                              maxLines: 5,
+                              maxLength: 240,
+                              decoration: const InputDecoration(
+                                hintText:
+                                    'Tell contacts what to do when they receive your SOS.',
+                                alignLabelWithHint: true,
+                              ),
+                              onChanged: (_) => setState(() {}),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: _isSaving
+                                        ? null
+                                        : () {
+                                            setState(() {
+                                              _noteController.text =
+                                                  _SosPageState._defaultWhatsAppNotes()[_selectedMode]!;
+                                            });
+                                          },
+                                    child: const Text('Reset Default'),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: FilledButton.icon(
+                                    onPressed: _isSaving
+                                        ? null
+                                        : () => unawaited(_saveCurrentNote()),
+                                    icon: const Icon(Icons.check_rounded),
+                                    label: const Text('Save Message'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Semantics(
+                              liveRegion: true,
+                              child: Text(
+                                _saveError ??
+                                    (hasUnsavedChanges
+                                        ? 'Unsaved changes. Tap Save Message.'
+                                        : switch (_syncStates[_selectedMode]) {
+                                            true =>
+                                              'Saved on this phone and synced to Firebase.',
+                                            false =>
+                                              'Saved on this phone. Waiting to sync to Firebase; it will retry when connected.',
+                                            null =>
+                                              'Tap Save Message to save your instructions.',
+                                          }),
+                                key: const ValueKey(
+                                  'whatsapp-note-save-status',
+                                ),
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: _saveError != null
+                                          ? _SosColors.destructiveFor(context)
+                                          : _SosColors.secondaryTextFor(
+                                              context,
+                                            ),
+                                    ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 14),
+                    _InsetGroup(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              'WhatsApp preview',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
+                                    color: _SosColors.textFor(context),
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0,
+                                  ),
+                            ),
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: _SosColors.greenSoftFor(context),
+                                borderRadius: const BorderRadius.only(
+                                  topLeft: Radius.circular(18),
+                                  topRight: Radius.circular(18),
+                                  bottomLeft: Radius.circular(18),
+                                  bottomRight: Radius.circular(5),
+                                ),
+                              ),
+                              child: SelectableText(
+                                preview,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: _SosColors.textFor(context),
+                                      height: 1.4,
+                                      letterSpacing: 0,
+                                    ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -2120,8 +2212,61 @@ class _WhatsAppMessageDetailPageState
   String _noteFor(SosAlertMode mode) => _screenModel.commandNoteFor(mode);
 
   /// Saves current note.
-  void _saveCurrentNote() {
-    _notes = {..._notes, _selectedMode: _noteController.text.trim()};
+  Future<void> _saveCurrentNote() async {
+    if (_isSaving) return;
+    final mode = _selectedMode;
+    final note = _noteController.text;
+    setState(() {
+      _isSaving = true;
+      _saveError = null;
+    });
+    final loading = HikerCircleLoadingDialogRoute(
+      context: context,
+      message: 'Saving message…',
+      detail: 'Saving on this phone and checking Firebase confirmation.',
+      compact: true,
+    );
+    _savingRoute = loading;
+    unawaited(Navigator.of(context, rootNavigator: true).push<void>(loading));
+    try {
+      final result = await widget.onSave(mode, note);
+      if (!mounted) return;
+      if (!result.isCurrent) {
+        await _loadSyncStates();
+        return;
+      }
+      setState(() {
+        _notes = {..._notes, mode: result.note};
+        _savedNotes[mode] = result.note;
+        _updatedSyncModes[mode] = (_updatedSyncModes[mode] ?? 0) + 1;
+        _syncStates[mode] = result.isSynced;
+        _noteController.text = result.note;
+      });
+      loading.close();
+      HikerCircleToast.show(
+        context,
+        result.isSynced
+            ? 'Message saved on this phone and synced to Firebase.'
+            : 'Message saved on this phone. Waiting to sync to Firebase when connected.',
+        tone: result.isSynced
+            ? HikerCircleToastTone.success
+            : HikerCircleToastTone.warning,
+        title: result.isSynced ? 'Message saved' : 'Saved locally',
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _saveError = 'Message was not saved. Please try again.');
+      loading.close();
+      HikerCircleToast.show(
+        context,
+        _saveError!,
+        tone: HikerCircleToastTone.error,
+      );
+    } finally {
+      loading.close();
+      _savingRoute = null;
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 }
 

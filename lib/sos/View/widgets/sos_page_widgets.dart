@@ -1223,13 +1223,15 @@ class _SosTriggerLogPanel extends StatelessWidget {
     required this.latestResult,
     required this.customWhatsAppNotes,
     required this.onCustomWhatsAppNoteChanged,
+    required this.loadNoteSyncStates,
   });
 
   final AppSession session;
   final SosAlertResult? latestResult;
   final Map<SosAlertMode, String> customWhatsAppNotes;
-  final void Function(SosAlertMode mode, String note)
+  final Future<SosCustomNoteChange> Function(SosAlertMode mode, String note)
   onCustomWhatsAppNoteChanged;
+  final Future<Map<SosAlertMode, bool>> Function() loadNoteSyncStates;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -1253,23 +1255,21 @@ class _SosTriggerLogPanel extends StatelessWidget {
   /// Opens whats app message editor.
   Future<void> _openWhatsAppMessageEditor(BuildContext context) async {
     final latestAlert = latestResult?.alert;
-    final update = await Navigator.of(context).push<_WhatsAppNoteUpdate>(
-      MaterialPageRoute<_WhatsAppNoteUpdate>(
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
         builder: (context) {
-          return _WhatsAppMessageDetailPage(
+          return EmergencyWhatsAppMessagePage(
             session: session,
             initialNotes: customWhatsAppNotes,
             previewMode: latestAlert?.mode ?? SosAlertMode.manual,
             previewTriggeredAt: latestAlert?.triggeredAt ?? DateTime.now(),
             previewLocation: latestAlert?.triggerLocation,
+            onSave: onCustomWhatsAppNoteChanged,
+            loadSyncStates: loadNoteSyncStates,
           );
         },
       ),
     );
-
-    if (update != null && context.mounted) {
-      onCustomWhatsAppNoteChanged(update.mode, update.note);
-    }
   }
 }
 

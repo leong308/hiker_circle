@@ -603,6 +603,7 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   StreamSubscription<String>? _planningChangesSubscription;
   StreamSubscription<UpcomingHikeSyncNotice>? _upcomingSyncSubscription;
+  StreamSubscription<SosCustomNoteChange>? _customNoteSyncSubscription;
   final _syncedUpcomingHikeIds = <String>{};
   Timer? _upcomingSyncToastTimer;
 
@@ -955,6 +956,23 @@ class _HikerHomePageState extends State<HikerHomePage>
             unawaited(_restoreCachedUpcomingPlanningState());
           }
         });
+    _customNoteSyncSubscription = SosAlertRepository.customNoteChanges.listen((
+      change,
+    ) {
+      if (!mounted ||
+          change.phoneNumber != widget.session.phoneNumber ||
+          !change.isCurrent ||
+          !change.isSynced ||
+          !change.syncedAfterRetry) {
+        return;
+      }
+      HikerCircleToast.show(
+        context,
+        '${change.mode.label} message synced to Firebase.',
+        title: 'Emergency WhatsApp synced',
+        tone: HikerCircleToastTone.success,
+      );
+    });
     _upcomingSyncSubscription = HikerCircleFirebaseRepository.upcomingHikeSyncs
         .listen((notice) {
           if (!mounted || notice.ownerPhoneNumber != widget.session.phoneNumber)
@@ -6484,6 +6502,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     _myUpcomingHikesSubscription?.cancel();
     _planningChangesSubscription?.cancel();
     _upcomingSyncSubscription?.cancel();
+    _customNoteSyncSubscription?.cancel();
     _upcomingSyncToastTimer?.cancel();
     _trailsSubscription?.cancel();
     _pendingTrailRequestsSubscription?.cancel();

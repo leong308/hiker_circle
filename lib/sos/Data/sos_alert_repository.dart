@@ -19,6 +19,7 @@ import '../Model/sos_models.dart';
 import '../Model/sos_delivery_policy.dart';
 import 'sos_confirmation_store.dart';
 import '../../home/Model/hike_shirt_color.dart';
+import '../../core/services/network_reachability_service.dart';
 
 /// Represents sos alert repository exception.
 class SosAlertRepositoryException implements Exception {
@@ -70,11 +71,15 @@ class SosCustomNoteChange {
     required this.mode,
     required this.note,
     required this.revision,
+    this.isSynced = false,
+    this.syncedAfterRetry = false,
   });
   final String phoneNumber;
   final SosAlertMode mode;
   final String note;
   final int revision;
+  final bool isSynced;
+  final bool syncedAfterRetry;
 
   /// A queued broadcast cannot undo a newer local edit before it is delivered.
   bool get isCurrent =>
@@ -128,6 +133,7 @@ class SosAlertRepository {
 
   static const int _maxImmediateSendAttempts = 1;
   static final Map<String, int> _noteRevisions = {};
+  static final Map<String, Future<bool>> _notePushes = {};
   static const _customNoteModes = [
     SosAlertMode.manual,
     SosAlertMode.duress,
@@ -144,6 +150,8 @@ class SosAlertRepository {
     ConditionalCloudCache? readCache,
     Duration sendAttemptTimeout = const Duration(seconds: 15),
     Duration cloudWriteTimeout = const Duration(seconds: 4),
+    Duration customNoteWriteTimeout = const Duration(seconds: 40),
+    bool Function()? customNoteCanSync,
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
@@ -152,6 +160,8 @@ class SosAlertRepository {
        _providedReadCache = readCache,
        _sendAttemptTimeout = sendAttemptTimeout,
        _cloudWriteTimeout = cloudWriteTimeout,
+       _customNoteWriteTimeout = customNoteWriteTimeout,
+       _customNoteCanSync = customNoteCanSync,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
   final FirebaseFirestore? _firestore;
@@ -180,6 +190,8 @@ class SosAlertRepository {
   );
   final Duration _sendAttemptTimeout;
   final Duration _cloudWriteTimeout;
+  final Duration _customNoteWriteTimeout;
+  final bool Function()? _customNoteCanSync;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
   /// Returns resolved firestore.
@@ -272,6 +284,20 @@ class SosAlertRepository {
     return saved;
   }
 
+  /// Dirty flags survive app restarts and distinguish device saves from Firebase acknowledgements.
+  Future<Map<SosAlertMode, bool>> loadCustomWhatsAppNoteSyncStates({
+    required AppSession session,
+  }) async {
+    final saved = await _loadSavedCustomNotes(session);
+    final dirty = await _localDatabase.loadDirtyLocalPreferences(
+      ownerPhoneNumber: session.phoneNumber,
+    );
+    return {
+      for (final mode in saved.keys)
+        mode: !dirty.containsKey('sos_whatsapp_note_${mode.firestoreValue}'),
+    };
+  }
+
   Future<Map<SosAlertMode, String>> _refreshCustomWhatsAppNotes(
     AppSession session, {
     bool cacheOnly = false,
@@ -336,6 +362,7 @@ class SosAlertRepository {
                 mode: mode,
                 note: bounded,
                 revision: revisions[mode] ?? 0,
+                isSynced: true,
               ),
             );
           }
@@ -366,7 +393,7 @@ class SosAlertRepository {
       final note = dirty[key];
       if (note is! String) continue;
       try {
-        await _pushCustomNote(session, mode, note);
+        await _pushCustomNote(session, mode, note, fromRetry: true);
       } catch (_) {
         // Keep this mode dirty; another independent mode may still sync.
       }
@@ -397,7 +424,7 @@ class SosAlertRepository {
     final response = await FirebaseFunctions.instance
         .httpsCallable(
           'syncSafetyPreferences',
-          options: HttpsCallableOptions(timeout: _cloudWriteTimeout),
+          options: HttpsCallableOptions(timeout: _customNoteWriteTimeout),
         )
         .call<Map<String, dynamic>>({
           'expectedOwner': session.phoneNumber,
@@ -405,7 +432,7 @@ class SosAlertRepository {
           'value': note,
           'operationSeq': operationSeq,
         })
-        .timeout(_cloudWriteTimeout);
+        .timeout(_customNoteWriteTimeout);
     if (response.data['confirmed'] != true ||
         response.data['superseded'] == true) {
       throw const SosAlertRepositoryException('The note was not acknowledged.');
@@ -413,11 +440,38 @@ class SosAlertRepository {
   }
 
   /// Computes push custom note.
-  Future<void> _pushCustomNote(
+  Future<bool> _pushCustomNote(
     AppSession session,
     SosAlertMode mode,
-    String note,
-  ) async {
+    String note, {
+    bool fromRetry = false,
+  }) async {
+    final key = 'sos_whatsapp_note_${mode.firestoreValue}';
+    final snapshot = await _localDatabase.loadVersionedPreference(
+      session.phoneNumber,
+      key,
+    );
+    final flightKey =
+        '${session.phoneNumber}:${mode.name}:${snapshot.sequence}';
+    final existing = _notePushes[flightKey];
+    if (existing != null) return existing;
+    final work = _pushCustomNoteNow(session, mode, note, fromRetry: fromRetry);
+    _notePushes[flightKey] = work;
+    try {
+      return await work;
+    } finally {
+      if (identical(_notePushes[flightKey], work)) {
+        _notePushes.remove(flightKey);
+      }
+    }
+  }
+
+  Future<bool> _pushCustomNoteNow(
+    AppSession session,
+    SosAlertMode mode,
+    String note, {
+    required bool fromRetry,
+  }) async {
     final revision = _noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0;
     final key = 'sos_whatsapp_note_${mode.firestoreValue}';
     final snapshot = await _localDatabase.loadVersionedPreference(
@@ -425,22 +479,27 @@ class SosAlertRepository {
       key,
     );
     final pending = snapshot.value;
+    final dirtyBefore = await _localDatabase.loadDirtyLocalPreferences(
+      ownerPhoneNumber: session.phoneNumber,
+    );
+    if (!dirtyBefore.containsKey(key)) {
+      // Another drain may have already confirmed this exact revision while
+      // the explicit save was awaiting its local snapshot.
+      return pending == note &&
+          revision ==
+              (_noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0);
+    }
     if (pending != note ||
         revision !=
             (_noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0)) {
-      return;
+      return false;
     }
     await pushCloudCustomNote(
       session,
       mode,
       note,
       operationSeq: snapshot.sequence,
-    ).timeout(_cloudWriteTimeout);
-    await _readCache.invalidate(
-      owner: session.phoneNumber,
-      type: 'mobile_sos_preferences',
-      id: 'current',
-    );
+    ).timeout(_customNoteWriteTimeout);
     final latest = await _localDatabase.loadLocalPreference(
       ownerPhoneNumber: session.phoneNumber,
       key: key,
@@ -457,12 +516,42 @@ class SosAlertRepository {
         ownerPhoneNumber: session.phoneNumber,
         key: key,
         expectedValue: note,
+        expectedSequence: snapshot.sequence,
       );
+      final dirty = await _localDatabase.loadDirtyLocalPreferences(
+        ownerPhoneNumber: session.phoneNumber,
+      );
+      if (dirty.containsKey(key) ||
+          revision !=
+              (_noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0)) {
+        return false;
+      }
+      _customNoteChanges.add(
+        SosCustomNoteChange(
+          phoneNumber: session.phoneNumber,
+          mode: mode,
+          note: note,
+          revision: revision,
+          isSynced: true,
+          syncedAfterRetry: fromRetry,
+        ),
+      );
+      try {
+        await _readCache.invalidate(
+          owner: session.phoneNumber,
+          type: 'mobile_sos_preferences',
+          id: 'current',
+        );
+      } catch (_) {
+        // Cache invalidation cannot undo a confirmed note acknowledgement.
+      }
+      return true;
     }
+    return false;
   }
 
   /// Saves custom whats app note.
-  Future<void> saveCustomWhatsAppNote({
+  Future<SosCustomNoteChange> saveCustomWhatsAppNote({
     required AppSession session,
     required SosAlertMode mode,
     required String note,
@@ -502,12 +591,24 @@ class SosAlertRepository {
         ),
       );
     }
-    if (!_firebaseBootstrapResult.isAvailable) return;
-    try {
-      await _pushCustomNote(session, mode, normalizedNote);
-    } catch (_) {
-      // Persisted dirty notes are replayed on load and reconnection.
+    var synced = false;
+    if (_firebaseBootstrapResult.isAvailable &&
+        (_customNoteCanSync?.call() ??
+            NetworkReachabilityService.instance.latest.state !=
+                NetworkReachabilityState.offline)) {
+      try {
+        synced = await _pushCustomNote(session, mode, normalizedNote);
+      } catch (_) {
+        // Persisted dirty notes are replayed on load and reconnection.
+      }
     }
+    return SosCustomNoteChange(
+      phoneNumber: session.phoneNumber,
+      mode: mode,
+      note: normalizedNote,
+      revision: revision,
+      isSynced: synced,
+    );
   }
 
   /// Loads alert logs.

@@ -218,22 +218,25 @@ class SosViewModel extends ChangeNotifier {
   }
 
   /// Saves custom whats app note.
-  Future<void> saveCustomWhatsAppNote({
+  Future<SosCustomNoteChange> saveCustomWhatsAppNote({
     required SosAlertMode mode,
     required String note,
   }) async {
     if (_isDisposed) {
-      return;
+      throw const SosAlertRepositoryException(
+        'The message editor is no longer available.',
+      );
     }
     _customNoteReadRevisions[mode] = (_customNoteReadRevisions[mode] ?? 0) + 1;
-    _customWhatsAppNotes = {..._customWhatsAppNotes, mode: note};
-    _notifyListenersIfActive();
-    await _sosAlertRepository.saveCustomWhatsAppNote(
+    return _sosAlertRepository.saveCustomWhatsAppNote(
       session: _session,
       mode: mode,
       note: note,
     );
   }
+
+  Future<Map<SosAlertMode, bool>> loadCustomWhatsAppNoteSyncStates() =>
+      _sosAlertRepository.loadCustomWhatsAppNoteSyncStates(session: _session);
 
   /// Loads cloud alert logs.
   Future<void> loadCloudAlertLogs() async {

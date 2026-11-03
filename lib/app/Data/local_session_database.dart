@@ -2132,16 +2132,24 @@ class LocalSessionDatabase {
     required String ownerPhoneNumber,
     required String key,
     required Object? expectedValue,
+    int? expectedSequence,
   }) async {
     final database = await _openDatabase();
     await database.update(
       'local_preferences',
       {'is_dirty': 0},
-      where: 'owner_phone_number = ? AND preference_key = ? AND value_json = ?',
+      where:
+          'owner_phone_number = ? AND preference_key = ? AND value_json = ?'
+          '${expectedSequence == null ? '' : ' AND EXISTS (SELECT 1 FROM local_preferences AS revision WHERE revision.owner_phone_number = ? AND revision.preference_key = ? AND revision.value_json = ?)'}',
       whereArgs: [
         ownerPhoneNumber.trim(),
         key.trim(),
         jsonEncode(expectedValue),
+        if (expectedSequence != null) ...[
+          ownerPhoneNumber.trim(),
+          'sync_sequence:${key.trim()}',
+          jsonEncode(expectedSequence),
+        ],
       ],
     );
   }
