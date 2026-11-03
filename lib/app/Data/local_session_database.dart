@@ -1027,13 +1027,14 @@ class LocalSessionDatabase {
           'upcoming_hike_id': entry.key,
           'upcoming_payload_json': jsonEncode(payload),
           'completed_checklist_json': jsonEncode(initialChecklist),
-          'is_consumed': 0,
+          'is_consumed': hike.teamLaunchConsumed ? 1 : 0,
           'updated_at': now,
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
         await transaction.update(
           'planned_hike_state',
           {
             'upcoming_payload_json': jsonEncode(payload),
+            if (hike.teamLaunchConsumed) 'is_consumed': 1,
             if (!localEdit) 'has_cloud_snapshot': 1,
             if (localEdit)
               'completed_checklist_json': jsonEncode(initialChecklist),
@@ -1158,17 +1159,18 @@ class LocalSessionDatabase {
       if (!pruneMissing) return;
       final savedRows = await transaction.query(
         'planned_hike_state',
-        columns: ['upcoming_hike_id', 'upcoming_payload_json'],
+        columns: ['upcoming_hike_id', 'upcoming_payload_json', 'is_consumed'],
         where: 'owner_phone_number = ?',
         whereArgs: [owner],
       );
       final preserved = savedRows
           .where(
             (row) =>
+                row['is_consumed'] == 1 ||
                 _decodeJsonMap(
-                  row['upcoming_payload_json'] as String?,
-                )['deletedReason'] ==
-                'user_cancelled',
+                      row['upcoming_payload_json'] as String?,
+                    )['deletedReason'] ==
+                    'user_cancelled',
           )
           .map((row) => row['upcoming_hike_id'] as String)
           .toList();

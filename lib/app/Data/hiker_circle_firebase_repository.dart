@@ -1278,22 +1278,44 @@ class HikerCircleFirebaseRepository {
       List<UpcomingHike>? joined;
       var createdFromServer = false;
       var joinedFromServer = false;
+      var emissionRevision = 0;
 
       /// Computes emit.
-      void emit() {
+      Future<void> emit() async {
         if (created == null || joined == null) {
           return;
         }
-        final seen = <String>{};
-        final results = <UpcomingHike>[];
-        for (final hike in [...created!, ...joined!]) {
-          if (seen.add(hike.id) && _shouldRenderUpcomingHike(hike)) {
-            results.add(hike);
+        final revision = ++emissionRevision;
+        final snapshots = [...created!, ...joined!];
+        // Keep an owner-scoped local marker before filtering started plans out.
+        // Otherwise an older read cache can restore the same upcoming card.
+        try {
+          final started = snapshots
+              .where((hike) => hike.teamLaunchConsumed)
+              .toList();
+          if (started.isNotEmpty) {
+            await _localDatabase.saveUpcomingHikesForPlanning(
+              ownerPhoneNumber: phoneNumber,
+              upcomingHikes: started,
+            );
           }
+          final hidden = await loadLocallyHiddenUpcomingHikeIds(phoneNumber);
+          if (revision != emissionRevision || controller.isClosed) return;
+          final seen = <String>{};
+          final results = <UpcomingHike>[];
+          for (final hike in snapshots) {
+            if (seen.add(hike.id) &&
+                !hidden.contains(hike.id) &&
+                _shouldRenderUpcomingHike(hike)) {
+              results.add(hike);
+            }
+          }
+          results.sort((a, b) => b.departureTime.compareTo(a.departureTime));
+          onSourceChanged?.call(createdFromServer && joinedFromServer);
+          controller.add(results);
+        } catch (error, stack) {
+          if (!controller.isClosed) controller.addError(error, stack);
         }
-        results.sort((a, b) => b.departureTime.compareTo(a.departureTime));
-        onSourceChanged?.call(createdFromServer && joinedFromServer);
-        controller.add(results);
       }
 
       final sub1 = _upcomingHikes
@@ -1305,7 +1327,7 @@ class HikerCircleFirebaseRepository {
             created = s.docs
                 .map((d) => UpcomingHike.fromFirestore(d.id, d.data()))
                 .toList();
-            emit();
+            unawaited(emit());
           }, onError: controller.addError);
 
       final sub2 = _upcomingHikes
@@ -1317,7 +1339,7 @@ class HikerCircleFirebaseRepository {
             joined = s.docs
                 .map((d) => UpcomingHike.fromFirestore(d.id, d.data()))
                 .toList();
-            emit();
+            unawaited(emit());
           }, onError: controller.addError);
       final cacheSubscription = cachedReadUpdates.listen((change) async {
         if (change.owner != phoneNumber ||
@@ -1334,6 +1356,7 @@ class HikerCircleFirebaseRepository {
       });
 
       controller.onCancel = () {
+        emissionRevision++;
         sub1.cancel();
         sub2.cancel();
         cacheSubscription.cancel();

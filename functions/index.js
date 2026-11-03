@@ -6261,7 +6261,7 @@ async function readOwnerMobileResource(request, type, args) {
         Filter.where('participantPhones', 'array-contains', phoneNumber)))
       .where('departureTimeLocal', '>=', cutoff)
       .orderBy('departureTimeLocal').limit(args.limit || 200).get();
-    return {hikes: snapshot.docs.filter(doc => doc.data().isDeleted !== true)
+    return {hikes: snapshot.docs.filter(doc => doc.data().isDeleted !== true && doc.data().teamLaunchConsumed !== true)
       .map(doc => ({...sanitizedPlainValue(doc.data()), hikeId: doc.id}))};
   }
   if (type === 'chat_list') {

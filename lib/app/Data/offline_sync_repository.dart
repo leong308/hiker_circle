@@ -17,6 +17,15 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
       for (final state in states)
         if (state.isConsumed) state.upcomingHike.id,
     };
+    // A restored active team session also fences an older offline plan cache.
+    final active = await _localDatabase.loadActiveHikeSession(
+      phoneNumber: owner,
+    );
+    if (active != null &&
+        active.teamHikeSessionId.isNotEmpty &&
+        active.sourceUpcomingHikeId.isNotEmpty) {
+      hidden.add(active.sourceUpcomingHikeId);
+    }
     for (final entry in dirty.entries) {
       if (!entry.key.startsWith('pending_hike_cancellation:') ||
           entry.value is! Map) {
