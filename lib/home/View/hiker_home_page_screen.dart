@@ -646,7 +646,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   _networkReachabilitySubscription;
 
   bool _isDrainingTeamReadiness = false;
-  String? _activeTeamNamingChatId;
+  final _teamNamingGate = FormedTeamNamingGate();
+  String? get _activeTeamNamingChatId => _teamNamingGate.activeChatId;
 
   final Set<String> _completedUpcomingJoinRequestReviewIds = <String>{};
   final Map<String, DateTime> _recentUpcomingJoinRequestAttempts =
@@ -1157,6 +1158,8 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (_isDrainingTeamReadiness ||
         _hasTriggeredSos ||
         !mounted ||
+        isRestoringActiveHike ||
+        activeHike != null ||
         !_notificationUiReady ||
         _appLifecycleState != AppLifecycleState.resumed ||
         _navigatingTeamSessionId != null) {
@@ -1166,6 +1169,8 @@ class _HikerHomePageState extends State<HikerHomePage>
     try {
       while (mounted &&
           !_hasTriggeredSos &&
+          activeHike == null &&
+          !isRestoringActiveHike &&
           _appLifecycleState == AppLifecycleState.resumed &&
           _navigatingTeamSessionId == null &&
           _pendingTeamReadinessSessions.isNotEmpty) {
@@ -1189,7 +1194,7 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   /// Computes prompt for formed team chat name.
   void _promptForFormedTeamChatName(List<GroupChat> chats) {
-    if (_hasTriggeredSos) {
+    if (_hasTriggeredSos || _navigatingTeamSessionId != null) {
       _pendingFormedTeamChats = chats;
       return;
     }
@@ -1200,22 +1205,13 @@ class _HikerHomePageState extends State<HikerHomePage>
       _pendingFormedTeamChats = chats;
       return;
     }
-    final ownPhoneKey = _formedChatPhoneKey(widget.session.phoneNumber);
     for (final chat in chats) {
-      final isHost = _formedChatPhoneKey(chat.creatorPhone) == ownPhoneKey;
-      if (chat.isDirect ||
-          !isHost ||
-          !chat.requiresHostNaming ||
-          chat.namingPromptShown ||
-          chat.hikeEndedAt != null ||
-          chat.participantPhones.length < 2 ||
-          chat.isDeleted) {
+      if (!_teamNamingGate.reserve(chat, widget.session.phoneNumber)) {
         continue;
       }
-      _activeTeamNamingChatId = chat.id;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
-          _activeTeamNamingChatId = null;
+          _teamNamingGate.release(chat.id);
           return;
         }
         unawaited(_showFormedTeamNamingDialog(chat));
@@ -1224,43 +1220,43 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
   }
 
-  /// Delegates formed chat phone key to the ViewModel.
-  String _formedChatPhoneKey(String value) =>
-      _screenModel.commandFormedChatPhoneKey(value);
-
   /// Shows formed team naming dialog.
   Future<void> _showFormedTeamNamingDialog(GroupChat chat) async {
+    if (!_teamNamingGate.canOffer(chat, widget.session.phoneNumber) ||
+        _navigatingTeamSessionId != null) {
+      _teamNamingGate.release(chat.id);
+      return;
+    }
     final trailName = chat.trailName.trim().isEmpty
         ? 'this hike'
         : chat.trailName.trim();
     final departure = chat.departureTime ?? chat.createdAt;
     final initialName = GroupChat.defaultGroupName(chat.trailName, departure);
     try {
-      await _HikerHomePageDataActions.markFormedHikeGroupNamingPromptShown(
-        hikerCircleRepository,
-      )(chatId: chat.id, defaultName: initialName);
-    } catch (_) {
-      // The mandatory dialog still lets the host retry the final save. If the
-      // app is killed before this acknowledgement reaches Firebase, the chat
-      // remains pending and will be offered again instead of being lost.
-    }
-    if (!mounted) {
+      final allowed = await _teamNamingGate.authorize(
+        chat.id,
+        () => _HikerHomePageDataActions.markFormedHikeGroupNamingPromptShown(
+          hikerCircleRepository,
+        )(chatId: chat.id, defaultName: initialName),
+      );
+      if (!allowed || !mounted) return;
+      while (mounted && _hasTriggeredSos) {
+        await _waitForTriggeredSosToClose();
+      }
+      if (!mounted || _navigatingTeamSessionId != null) return;
+      final created = await _presentShowFormedTeamNamingDialogEffect1(
+        chat,
+        trailName,
+        initialName,
+      );
+      if (!mounted || created != true) return;
+    } catch (error) {
+      debugPrint('Group naming authorization failed: $error');
       return;
+    } finally {
+      _teamNamingGate.release(chat.id);
     }
-    while (mounted && _hasTriggeredSos) {
-      await _waitForTriggeredSosToClose();
-    }
-    if (!mounted) return;
-    final created = await _presentShowFormedTeamNamingDialogEffect1(
-      chat,
-      trailName,
-      initialName,
-    );
-    if (!mounted) {
-      return;
-    }
-    _activeTeamNamingChatId = null;
-    if (created == true) {
+    if (mounted && _navigatingTeamSessionId == null) {
       HikerCircleToast.show(
         context,
         'The team has been added and the conversation is ready.',
@@ -1277,7 +1273,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         while (mounted && _hasTriggeredSos) {
           await _waitForTriggeredSosToClose();
         }
-        if (!mounted) return;
+        if (!mounted || _navigatingTeamSessionId != null) return;
         await _presentShowFormedTeamNamingDialogEffect2(namedChat);
       }
     }
@@ -1328,14 +1324,8 @@ class _HikerHomePageState extends State<HikerHomePage>
       );
       return;
     }
-    final ownPhoneKey = _formedChatPhoneKey(widget.session.phoneNumber);
-    final isHost = _formedChatPhoneKey(chat.creatorPhone) == ownPhoneKey;
-    if (isHost &&
-        chat.requiresHostNaming &&
-        !chat.namingPromptShown &&
-        chat.hikeEndedAt == null &&
-        !chat.isDeleted) {
-      _activeTeamNamingChatId = chat.id;
+    if (_navigatingTeamSessionId == null &&
+        _teamNamingGate.reserve(chat, widget.session.phoneNumber)) {
       await _showFormedTeamNamingDialog(chat);
       return;
     }
@@ -1790,6 +1780,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         setState(() {
           isRestoringActiveHike = false;
         });
+        unawaited(_drainPendingTeamReadiness());
       }
     }
   }
@@ -3534,11 +3525,16 @@ class _HikerHomePageState extends State<HikerHomePage>
 
     // The team may have started before a previous local startup attempt failed.
     if (teamSession.phase == TeamHikePhase.active) return teamSession;
+    // Reserve navigation before the readiness write emits to the host's stream.
+    _navigatingTeamSessionId = teamSession.id;
     try {
       teamSession = await _HikerHomePageDataActions.beginTeamHikeReadiness(
         hikerCircleRepository,
       )(session: widget.session, teamHikeSessionId: teamSession.id);
     } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (_navigatingTeamSessionId == teamSession.id) {
+        _navigatingTeamSessionId = null;
+      }
       if (mounted) {
         HikerCircleToast.show(
           context,
@@ -3551,9 +3547,18 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     if (!mounted) {
+      _navigatingTeamSessionId = null;
       return null;
     }
 
+    final readinessKey = _teamReadinessKey(teamSession);
+    if (readinessKey != null) {
+      _screenModel.teamReadinessNavigation.claim(
+        readinessKey,
+        allowReopen: true,
+      );
+      _pendingTeamReadinessSessions.remove(readinessKey);
+    }
     _navigatingTeamSessionId = teamSession.id;
     try {
       final launchedSession = await _presentCoordinateTeamHikeStartEffect1(
@@ -4346,7 +4351,16 @@ class _HikerHomePageState extends State<HikerHomePage>
           'This trail is unavailable, so the invitation was not accepted.',
         );
       }
-      final acceptedSession = pendingSession.phase == TeamHikePhase.active
+      final ownParticipant = pendingSession.participants
+          .where(
+            (p) => _sameTeamPhone(p.phoneNumber, widget.session.phoneNumber),
+          )
+          .firstOrNull;
+      // Reading a resumed launch must not accept an already-joined invitation
+      // again or reset the shared countdown/readiness state.
+      final acceptedSession =
+          pendingSession.phase == TeamHikePhase.active ||
+              ownParticipant?.status != TeamHikeParticipantStatus.invited
           ? pendingSession
           : await _HikerHomePageDataActions.acceptTeamHikeInvite(
               hikerCircleRepository,
@@ -5752,25 +5766,30 @@ class _HikerHomePageState extends State<HikerHomePage>
       isNativeSafetyDialogVisible = true;
       var wasCancelled = false;
       try {
-        await showCupertinoDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (dialogContext) {
-            _nativeSafetyCountdownRoute = ModalRoute.of(dialogContext);
-            _nativeSafetyCountdownEventId = event.eventId;
-            return _NativeSafetyCountdownDialog(
-              event: event,
-              onCancel: () async {
-                wasCancelled = true;
-                await _cancelNativeSafetyCountdown();
-                if (dialogContext.mounted) {
-                  HikeStartNavigation.closeOwnedRoute(
-                    ModalRoute.of(dialogContext),
-                  );
-                }
-              },
-            );
-          },
+        await Navigator.of(context, rootNavigator: true).push<void>(
+          MaterialPageRoute<void>(
+            fullscreenDialog: true,
+            builder: (dialogContext) {
+              _nativeSafetyCountdownRoute = ModalRoute.of(dialogContext);
+              _nativeSafetyCountdownEventId = event.eventId;
+              return NativeSafetyCountdownPage(
+                deadline: deadline,
+                isStillness: event.isProlongedStillness,
+                onExpired: () => HikeStartNavigation.closeOwnedRoute(
+                  ModalRoute.of(dialogContext),
+                ),
+                onCancel: () async {
+                  wasCancelled = true;
+                  await _cancelNativeSafetyCountdown();
+                  if (dialogContext.mounted) {
+                    HikeStartNavigation.closeOwnedRoute(
+                      ModalRoute.of(dialogContext),
+                    );
+                  }
+                },
+              );
+            },
+          ),
         );
       } finally {
         _nativeSafetyCountdownRoute = null;
@@ -8311,7 +8330,7 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
         title: Text(host ? 'Cancel team readiness?' : 'Leave team readiness?'),
         content: Text(
           host
-              ? 'This cancels the launch for everyone.'
+              ? 'This closes team readiness for everyone. Your upcoming hike stays saved and can be launched again.'
               : 'You will leave this team launch.',
         ),
         actions: [
@@ -9669,117 +9688,6 @@ class _SummaryDivider extends StatelessWidget {
         thickness: 0.7,
         color: _SummaryColors.separatorFor(context),
       ),
-    );
-  }
-}
-
-/// Displays the native safety countdown dialog.
-class _NativeSafetyCountdownDialog extends StatefulWidget {
-  /// Creates native safety countdown dialog.
-  const _NativeSafetyCountdownDialog({
-    required this.event,
-    required this.onCancel,
-  });
-
-  final NativeHikeSafetyEvent event;
-  final Future<void> Function() onCancel;
-
-  /// Creates the presentation state for this widget.
-  @override
-  State<_NativeSafetyCountdownDialog> createState() =>
-      _NativeSafetyCountdownDialogState();
-}
-
-/// Manages the native safety countdown dialog presentation and lifecycle.
-class _NativeSafetyCountdownDialogState
-    extends State<_NativeSafetyCountdownDialog> {
-  Timer? _timer;
-  bool _isCancelling = false;
-
-  /// Initializes bindings and starts the screen lifecycle.
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {});
-      if (_secondsRemaining == 0) {
-        HikeStartNavigation.closeOwnedRoute(ModalRoute.of(context));
-      }
-    });
-  }
-
-  /// Returns seconds remaining.
-  int get _secondsRemaining {
-    final deadline = widget.event.deadlineAt;
-    if (deadline == null) {
-      return 0;
-    }
-    final milliseconds = deadline
-        .difference(DateTime.now().toUtc())
-        .inMilliseconds;
-    if (milliseconds <= 0) {
-      return 0;
-    }
-    return (milliseconds / 1000).ceil();
-  }
-
-  /// Releases resources owned by this instance.
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    final seconds = _secondsRemaining;
-    final isStillness = widget.event.isProlongedStillness;
-    return CupertinoAlertDialog(
-      title: Text(
-        isStillness ? 'Prolonged Stillness Detected' : 'Possible Fall Detected',
-      ),
-      content: Padding(
-        padding: const EdgeInsets.only(top: 12),
-        child: Column(
-          children: [
-            Text(
-              isStillness
-                  ? 'Your phone has remained still longer than your selected rest time.'
-                  : 'A possible fall followed by stillness was detected.',
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'SOS in $seconds seconds',
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        CupertinoDialogAction(
-          onPressed: _isCancelling
-              ? null
-              : () {
-                  setState(() => _isCancelling = true);
-                  unawaited(widget.onCancel());
-                },
-          child: _isCancelling
-              ? const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    HikerCircleMinorLoadingIndicator(size: 24),
-                    SizedBox(width: 8),
-                    Text('Cancelling SOS…'),
-                  ],
-                )
-              : const Text('I’M SAFE — CANCEL SOS'),
-        ),
-      ],
     );
   }
 }

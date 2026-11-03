@@ -775,6 +775,20 @@ class TeamHikeSession {
   final Map<String, int> participantColorsByPhone;
   final Map<String, dynamic>? summarySnapshot;
 
+  /// Restores unfinished preparation for both the organizer and invited hikers.
+  bool canResumePreparationFor(String phoneNumber) {
+    final key = _modelPhoneKey(phoneNumber);
+    return key.isNotEmpty &&
+        readinessStartedAt != null &&
+        phase != TeamHikePhase.completed &&
+        phase != TeamHikePhase.active &&
+        participants.any(
+          (p) =>
+              _modelPhoneKey(p.phoneNumber) == key &&
+              p.status != TeamHikeParticipantStatus.ended,
+        );
+  }
+
   /// Returns ready count.
   int get readyCount => participants
       .where((participant) => participant.status.isReadyForStart)

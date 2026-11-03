@@ -126,6 +126,7 @@ function scheduledTeamLaunchCanResume(
     sourceId
     && teamId
     && String(team.phase || '') === 'completed'
+    && !require('./team_launch_lifecycle').teamTrackingStarted(team)
     && String(upcoming.teamHikeSessionId || '').trim() === teamId
     && !startedPhones.some((phone) => Boolean(String(phone || '').trim()))
   );

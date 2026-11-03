@@ -26,7 +26,7 @@ abstract final class _HikerHomePageDataActions {
       receiver.flushPendingHikeEnds;
 
   /// Binds mark formed hike group naming prompt shown to the selected data source.
-  static Future<void> Function({
+  static Future<bool> Function({
     required String chatId,
     required String defaultName,
   })

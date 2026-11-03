@@ -1545,7 +1545,7 @@ async function sendValidatedSosDispatch({uid, ownerPhone, dispatch}) {
               triggerSource: dispatch.triggerSource,
               preferredTimeZone: claim.preferredTimeZone,
               shirtColor,
-            }) + (dispatch.isTest ? '' : `\n\nSOS reference: ${claim.confirmationReference}`),
+            }),
           }),
           signal: AbortSignal.timeout(dispatch.isTest ? 12000 : sosConfirmation.WINDOW_MS),
         }
@@ -3231,7 +3231,7 @@ exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
   }
   const db = admin.firestore();
   const chatReference = db.collection('groupChats').doc(chatId);
-  await db.runTransaction(async (transaction) => {
+  const shouldPrompt = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(chatReference);
     if (!snapshot.exists) {
       throw new HttpsError('not-found', 'This group chat is no longer available.');
@@ -3243,7 +3243,18 @@ exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
     ) {
       throw new HttpsError('permission-denied', 'Only the hike host can name this group.');
     }
-    if (chat.hikeEndedAtLocal || chat.isDeleted === true) {
+    const upcomingId = chatId.startsWith('hike_') ? chatId.slice(5) : '';
+    const upcoming = validFirestoreDocumentId(upcomingId)
+      ? await transaction.get(db.collection('upcomingHikes').doc(upcomingId))
+      : null;
+    const teamId = String(chat.teamHikeSessionId || upcoming?.data()?.teamHikeSessionId || '').trim();
+    const team = validFirestoreDocumentId(teamId)
+      ? await transaction.get(db.collection('teamHikeSessions').doc(teamId))
+      : null;
+    const launch = team?.data() || {};
+    const isLaunching = Boolean(launch.sourceUpcomingHikeId || launch.readinessStartedAt
+      || launch.readinessStartedAtLocal || ['countdown', 'active', 'completed'].includes(launch.phase));
+    if (chat.hikeEndedAtLocal || chat.isDeleted === true || isLaunching) {
       const fallback = String(chat.customName || '').trim()
         || defaultFormedHikeGroupName(chat);
       transaction.set(chatReference, {
@@ -3255,7 +3266,13 @@ exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAtLocal: new Date().toISOString(),
       }, { merge: true });
-      return;
+      return false;
+    }
+    // A stale snapshot or a second device must not reopen a claimed/finalized name.
+    if (chat.namingPromptShown === true || chat.requiresHostNaming !== true
+      || chat.hostNamingFinalizedAt || chat.hostNamingFinalizedAtLocal
+      || (String(chat.customName || '').trim() && chat.namingPromptActive !== true)) {
+      return false;
     }
     const fallback = requestedDefaultName.length >= 2 && requestedDefaultName.length <= 60
       ? requestedDefaultName
@@ -3271,8 +3288,16 @@ exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAtLocal: new Date().toISOString(),
     }, { merge: true });
+    return true;
   });
-  return { prepared: true, chatId };
+  return { prepared: true, chatId, shouldPrompt };
+});
+
+exports.saveSosAlertLog = onCall({}, async request => {
+  const {uid, phoneNumber} = authenticatedPhoneFor(request, 'Sign in to save SOS history.');
+  return require('./sos_alert_log').saveSosAlertLog(admin.firestore(), {
+    uid, phoneNumber, alert: request.data?.alert,
+  }, HttpsError, () => admin.firestore.FieldValue.serverTimestamp());
 });
 
 // loadAchievementLeaderboard: Return bounded public achievement rankings without private user modules.
@@ -4153,12 +4178,32 @@ async function ensureTeamChatDocument(
     team = currentTeam;
     const snapshot = await transaction.get(chatReference);
     const existing = snapshot.data() || {};
+    const upcomingId = String(team.sourceUpcomingHikeId || '').trim();
+    const plannedChatReference = validFirestoreDocumentId(upcomingId)
+      ? db.collection('groupChats').doc(`hike_${upcomingId}`) : null;
+    const plannedChatSnapshot = plannedChatReference
+      ? await transaction.get(plannedChatReference) : null;
+    const plannedChat = plannedChatSnapshot?.data() || {};
+    const plannedName = String(plannedChat.creatorPhone || '') === String(team.hostPhoneNumber || '')
+      ? String(plannedChat.customName || '').trim() : '';
+    // Joining a launch is not forming a new group. Reuse its saved name and
+    // never interrupt either phone's safety/gear readiness with chat naming.
+    const launchHasStarted = Boolean(upcomingId || team.readinessStartedAt
+      || team.readinessStartedAtLocal || ['countdown', 'active', 'completed'].includes(team.phase));
+    const launchName = plannedName || String(existing.customName || '').trim()
+      || defaultFormedHikeGroupName({
+        trailName: String(team.trailName || team.draft?.trail?.name || 'Team hike'),
+        departureTimeLocal: String(team.plannedStartTimeLocal || team.draft?.departureTime || ''),
+      });
     const safeJoinedName = String(newlyJoinedName || '').trim().slice(0, 80);
     const shouldRequestHostNaming = Boolean(
-      safeJoinedName && !String(existing.customName || '').trim()
+      !launchHasStarted && safeJoinedName && !String(existing.customName || '').trim()
+      && existing.namingPromptShown !== true && !existing.hostNamingFinalizedAt
+      && !existing.hostNamingFinalizedAtLocal
     );
     const phase = String(team.phase || '');
-    const shouldArchive = phase === 'completed' && !existing.hikeEndedAtLocal;
+    const shouldArchive = phase === 'completed' && !existing.hikeEndedAtLocal
+      && require('./team_launch_lifecycle').teamTrackingStarted(team);
     transaction.set(
       chatReference,
       {
@@ -4181,6 +4226,23 @@ async function ensureTeamChatDocument(
               teamFormedAtLocal: String(existing.teamFormedAtLocal || now.toISOString()),
             }
           : {}),
+        ...(launchHasStarted ? {
+          customName: launchName,
+          requiresHostNaming: false,
+          namingPromptShown: true,
+          namingPromptActive: false,
+          nameSource: plannedName ? String(plannedChat.nameSource || 'host')
+            : String(existing.customName || '').trim()
+            ? String(existing.nameSource || 'host')
+            : 'automatic',
+        } : {}),
+        ...(!require('./team_launch_lifecycle').teamTrackingStarted(team)
+          && ['inviting', 'readyCheck', 'countdown'].includes(phase)
+          && existing.closureReason === 'team_hike_completed' ? {
+            hikeEndedAtLocal: admin.firestore.FieldValue.delete(),
+            chatRemovesAtLocal: admin.firestore.FieldValue.delete(),
+            closureReason: admin.firestore.FieldValue.delete(),
+          } : {}),
         ...(!snapshot.exists
           ? {
               isDeleted: false,
@@ -4190,16 +4252,7 @@ async function ensureTeamChatDocument(
           : {}),
         ...(shouldArchive
           ? {
-              customName: String(existing.customName || '').trim()
-                || defaultFormedHikeGroupName({
-                  ...existing,
-                  trailName: String(
-                    team.trailName || team.draft?.trail?.name || 'Hike'
-                  ),
-                  departureTimeLocal: String(
-                    team.plannedStartTimeLocal || team.draft?.departureTime || ''
-                  ),
-                }),
+              customName: launchName,
               requiresHostNaming: false,
               namingPromptShown: true,
               namingPromptActive: false,
@@ -4218,6 +4271,19 @@ async function ensureTeamChatDocument(
       },
       { merge: true }
     );
+    if (plannedChatSnapshot?.exists && launchHasStarted
+      && String(plannedChat.creatorPhone || '') === String(team.hostPhoneNumber || '')
+      && (!plannedName || plannedChat.requiresHostNaming !== false
+        || plannedChat.namingPromptShown !== true || plannedChat.namingPromptActive === true)) {
+      transaction.set(plannedChatReference, {
+        customName: plannedName || launchName,
+        requiresHostNaming: false,
+        namingPromptShown: true,
+        namingPromptActive: false,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: now.toISOString(),
+      }, { merge: true });
+    }
     if (shouldArchive) {
       transaction.set(chatReference.collection('messages').doc('team_closed'), {
         chatId: chatReference.id,
@@ -7016,10 +7082,10 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
           teamId,
           nowIso,
         });
+        phase = participants.some((participant) => participant.status === 'invited')
+          ? 'inviting'
+          : 'readyCheck';
       }
-      phase = participants.some((participant) => participant.status === 'invited')
-        ? 'inviting'
-        : 'readyCheck';
     } else if (action === 'beginReadiness') {
       if (participants.length > teamPolicy.MAX_TEAM_HIKERS) throw new HttpsError('failed-precondition', 'A team hike supports at most 30 hikers. Reduce the roster before starting.');
       if (!isHost) {
@@ -7179,6 +7245,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
         }));
         phase = 'completed';
         teamPatch.endedAtLocal = nowIso;
+        teamPatch.completionReason = 'launch_cancelled';
         everyoneEnded = true;
         didChange = true;
         queueTeamOutboxForParticipants(
@@ -7567,9 +7634,12 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
     participants = coloredParticipants;
     teamPatch.participantColorsByPhone = participantColorsByPhone;
     teamPatch.participantColorVersion = 1;
-    if (['active', 'completed'].includes(phase) && validFirestoreDocumentId(String(team.sourceUpcomingHikeId || ''))) {
+    if (validFirestoreDocumentId(String(team.sourceUpcomingHikeId || ''))
+      && (require('./team_launch_lifecycle').consumesUpcomingHike(team, phase)
+        || action === 'cancel')) {
       transaction.set(db.collection('upcomingHikes').doc(team.sourceUpcomingHikeId), {
-        teamLaunchConsumed: true, updatedAtLocal: nowIso,
+        teamLaunchConsumed: require('./team_launch_lifecycle').consumesUpcomingHike(team, phase),
+        updatedAtLocal: nowIso,
       }, {merge: true});
     }
     const nextTeam = {

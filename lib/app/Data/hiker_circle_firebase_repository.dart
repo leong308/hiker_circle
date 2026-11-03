@@ -1748,18 +1748,19 @@ class HikerCircleFirebaseRepository {
   }
 
   /// Marks formed hike group naming prompt shown.
-  Future<void> markFormedHikeGroupNamingPromptShown({
+  Future<bool> markFormedHikeGroupNamingPromptShown({
     required String chatId,
     required String defaultName,
   }) async {
     _throwIfFirebaseUnavailable();
     try {
-      await _resolvedFunctions
+      final result = await _resolvedFunctions
           .httpsCallable('markFormedHikeGroupNamingPromptShown')
-          .call(<String, dynamic>{
+          .call<Map<String, dynamic>>(<String, dynamic>{
             'chatId': chatId.trim(),
             'defaultName': defaultName.trim(),
           });
+      return result.data['shouldPrompt'] == true;
     } on FirebaseFunctionsException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to prepare the group chat name.',
@@ -3186,10 +3187,7 @@ class HikerCircleFirebaseRepository {
               .whereType<TeamHikeSession>()
               .where(
                 (teamSession) =>
-                    teamSession.readinessStartedAt != null &&
-                    teamSession.phase != TeamHikePhase.completed &&
-                    teamSession.phase != TeamHikePhase.active &&
-                    teamSession.hostPhoneNumber.trim() != normalizedPhone,
+                    teamSession.canResumePreparationFor(normalizedPhone),
               )
               .toList();
           sessions.sort(
@@ -3226,10 +3224,15 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
     required String teamHikeSessionId,
     required bool isHost,
-  }) => _manageTeamHikeAction(
-    action: isHost ? 'cancel' : 'leaveReadiness',
-    teamHikeSessionId: teamHikeSessionId,
-  );
+  }) async {
+    final team = await _manageTeamHikeAction(
+      action: isHost ? 'cancel' : 'leaveReadiness',
+      teamHikeSessionId: teamHikeSessionId,
+    );
+    await _invalidateReadModel(session.phoneNumber, 'my_upcoming_hikes');
+    _planningChanges.add(session.phoneNumber);
+    return team;
+  }
 
   /// Loads team hike session.
   Future<TeamHikeSession?> loadTeamHikeSession(String teamHikeSessionId) async {
