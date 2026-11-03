@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../Model/hike_session_models.dart';
 import '../Model/hike_reminder_timeline.dart';
 import '../ModelView/hike_reminder_preferences_view_model.dart';
+import '../Data/hike_reminder_permissions.dart';
 import 'widgets/hike_reminder_timeline.dart';
 
 /// Shows hike reminder preferences sheet.
@@ -218,6 +219,7 @@ class _HikeReminderPreferencesSheet extends StatefulWidget {
 class _HikeReminderPreferencesSheetState
     extends State<_HikeReminderPreferencesSheet> {
   late HikeReminderPreference _preference;
+  bool _checkingPermission = false;
 
   /// Initializes bindings and starts the screen lifecycle.
   @override
@@ -267,19 +269,16 @@ class _HikeReminderPreferencesSheetState
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: _checkingPermission
+                        ? null
+                        : () => Navigator.of(context).pop(),
                     child: const Text('Not now'),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(
-                      _preference.fitToDeparture(
-                        widget.departureTime,
-                        DateTime.now(),
-                      ),
-                    ),
+                    onPressed: _checkingPermission ? null : _saveReminders,
                     icon: const Icon(Icons.notifications_active_rounded),
                     label: const Text('Save reminders'),
                   ),
@@ -290,5 +289,22 @@ class _HikeReminderPreferencesSheetState
         ),
       ),
     );
+  }
+
+  Future<void> _saveReminders() async {
+    setState(() => _checkingPermission = true);
+    final access = await requestHikeReminderPermissions(
+      enabled: _preference.enabled,
+    );
+    if (!mounted) return;
+    final warning = access.warning;
+    if (warning != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(warning)));
+    }
+    Navigator.of(
+      context,
+    ).pop(_preference.fitToDeparture(widget.departureTime, DateTime.now()));
   }
 }

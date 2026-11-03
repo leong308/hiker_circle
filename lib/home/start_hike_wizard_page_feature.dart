@@ -28,6 +28,7 @@ import 'Model/hike_session_models.dart';
 import 'Model/hike_arrival_timing.dart';
 import 'View/widgets/hike_arrival_time_fields.dart';
 import 'Data/location_update_interval_controller.dart';
+import 'Data/hike_reminder_permissions.dart';
 import 'View/hike_reminder_preferences_sheet.dart';
 part 'View/start_hike_wizard_page_screen.dart';
 part 'ModelView/start_hike_wizard_page_view_model.dart';

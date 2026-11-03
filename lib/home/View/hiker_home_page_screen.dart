@@ -602,6 +602,9 @@ class _HikerHomePageState extends State<HikerHomePage>
   bool get _hasTriggeredSos => _screenModel.commandHasTriggeredSos;
 
   StreamSubscription<String>? _planningChangesSubscription;
+  StreamSubscription<UpcomingHikeSyncNotice>? _upcomingSyncSubscription;
+  final _syncedUpcomingHikeIds = <String>{};
+  Timer? _upcomingSyncToastTimer;
 
   Timer? _upcomingHikeExpiryTimer;
 
@@ -951,6 +954,17 @@ class _HikerHomePageState extends State<HikerHomePage>
             unawaited(_restoreCachedUpcomingPlanningState());
           }
         });
+    _upcomingSyncSubscription = HikerCircleFirebaseRepository.upcomingHikeSyncs
+        .listen((notice) {
+          if (!mounted || notice.ownerPhoneNumber != widget.session.phoneNumber)
+            return;
+          _syncedUpcomingHikeIds.addAll(notice.hikeIds);
+          _upcomingSyncToastTimer?.cancel();
+          _upcomingSyncToastTimer = Timer(
+            const Duration(milliseconds: 600),
+            _showUpcomingSyncToast,
+          );
+        });
     unawaited(_initializeLocalNotifications());
     _listenForFormedTeamChats();
     _listenForTeamReadiness();
@@ -995,7 +1009,16 @@ class _HikerHomePageState extends State<HikerHomePage>
         .connectionAvailable
         .listen((_) {
           unawaited(_retryQueuedSosAlerts());
+          unawaited(
+            hikerCircleRepository.flushPendingCautionReports(
+              session: widget.session,
+              forceRetry: true,
+            ),
+          );
         });
+    unawaited(
+      hikerCircleRepository.flushPendingCautionReports(session: widget.session),
+    );
     nearbySosEventRepository = NearbySosEventRepository();
     fallStillnessMonitor = FallStillnessMonitor(
       onEmergencyReady: _handleFallStillnessEmergencyReady,
@@ -1027,6 +1050,11 @@ class _HikerHomePageState extends State<HikerHomePage>
       if (!mounted) {
         return;
       }
+      unawaited(
+        hikerCircleRepository.flushPendingCautionReports(
+          session: widget.session,
+        ),
+      );
       unawaited(
         _HikerHomePageDataActions.flushPendingUpcomingHikes(
           hikerCircleRepository,
@@ -1078,6 +1106,34 @@ class _HikerHomePageState extends State<HikerHomePage>
         .snapshots
         .listen(_handleNetworkReachabilityChanged);
     unawaited(NetworkReachabilityService.instance.start());
+  }
+
+  /// Shows confirmed planning uploads after any safety prompt has closed.
+  void _showUpcomingSyncToast() {
+    if (!mounted || _syncedUpcomingHikeIds.isEmpty) return;
+    _upcomingSyncToastTimer?.cancel();
+    if (_appLifecycleState != AppLifecycleState.resumed ||
+        !_notificationUiReady ||
+        _hasTriggeredSos ||
+        isFallStillnessDialogVisible ||
+        fallStillnessMonitor.isAwaitingResponse ||
+        _arrivalSafetyRoute != null) {
+      _upcomingSyncToastTimer = Timer(
+        const Duration(seconds: 3),
+        _showUpcomingSyncToast,
+      );
+      return;
+    }
+    final notice = UpcomingHikeSyncNotice(
+      ownerPhoneNumber: widget.session.phoneNumber,
+      hikeIds: _syncedUpcomingHikeIds,
+    );
+    _syncedUpcomingHikeIds.clear();
+    HikerCircleToast.show(
+      context,
+      notice.message,
+      tone: HikerCircleToastTone.success,
+    );
   }
 
   /// Delegates handle live sharing changed to the ViewModel.
@@ -3730,6 +3786,11 @@ class _HikerHomePageState extends State<HikerHomePage>
               hike.id,
             ),
             onSave: (value) => _saveHikeSafetyDraft(value, hike.id),
+            onDelete:
+                _sameTeamPhone(hike.creatorPhone, widget.session.phoneNumber)
+                ? () => _cancelUpcomingHike(hike)
+                : null,
+            onRemoved: () => HikeStartNavigation.revealHome(context),
             onEditContacts: _editSafetyContacts,
             onContinue: (safetyDraft) {
               plan = plan.copyWith(
@@ -3856,22 +3917,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     UpcomingHike hike, {
     String? hazardId,
   }) async {
-    var target = hike;
-    if (hike.isLocalPendingSync) {
-      final confirmed = await _HikerHomePageDataActions.loadMyUpcomingHikes(
-        hikerCircleRepository,
-      )(widget.session.phoneNumber);
-      final matches = confirmed.where(
-        (candidate) =>
-            PlannedHikeStateResolver.representsSameSchedule(candidate, hike),
-      );
-      if (matches.isEmpty) {
-        throw const HikerCircleFirebaseRepositoryException(
-          'Reconnect and let this hike finish syncing before cancelling it.',
-        );
-      }
-      target = matches.first;
-    }
+    final target = hike;
     await _HikerHomePageDataActions.cancelUpcomingHike(hikerCircleRepository)(
       hikeId: target.id,
       withdrawSelf: !_sameTeamPhone(
@@ -3879,6 +3925,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         widget.session.phoneNumber,
       ),
       hazardId: hazardId,
+      snapshot: hike,
     );
     for (final id in {hike.id, target.id}) {
       try {
@@ -5084,6 +5131,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       activeHike = null;
       _isEndingActiveHike = false;
     });
+    unawaited(_arrivalSafety.refresh());
 
     if (_nativeHikeStopPending) {
       _presentEndActiveHikeSessionEffect1();
@@ -5501,6 +5549,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     if (state == AppLifecycleState.resumed) {
+      _showUpcomingSyncToast();
       unawaited(_arrivalSafety.refresh());
       setState(_rebuildPlannedHike);
       unawaited(_deliverAchievementNotifications());
@@ -5510,6 +5559,11 @@ class _HikerHomePageState extends State<HikerHomePage>
         )(session: widget.session),
       );
       unawaited(_retryQueuedSosAlerts());
+      unawaited(
+        hikerCircleRepository.flushPendingCautionReports(
+          session: widget.session,
+        ),
+      );
       unawaited(_drainPendingFcmOpens());
       unawaited(_drainPendingBleUiEvents());
       unawaited(_drainPendingTeamReadiness());
@@ -6415,6 +6469,8 @@ class _HikerHomePageState extends State<HikerHomePage>
     fallStillnessMonitor.dispose();
     _myUpcomingHikesSubscription?.cancel();
     _planningChangesSubscription?.cancel();
+    _upcomingSyncSubscription?.cancel();
+    _upcomingSyncToastTimer?.cancel();
     _trailsSubscription?.cancel();
     _pendingTrailRequestsSubscription?.cancel();
     _stopActiveHikeLocationRecording();
@@ -6887,6 +6943,23 @@ class _HikerHomePageState extends State<HikerHomePage>
         initialDraft: draft,
         loadDraft: () => _loadHikeSafetyDraft(draft, upcomingHikeId),
         onSave: (value) => _saveHikeSafetyDraft(value, upcomingHikeId),
+        onDelete: upcomingHikeId == null
+            ? null
+            : myUpcomingHikes
+                  .where(
+                    (hike) =>
+                        hike.id == upcomingHikeId &&
+                        _sameTeamPhone(
+                          hike.creatorPhone,
+                          widget.session.phoneNumber,
+                        ),
+                  )
+                  .isEmpty
+            ? null
+            : () => _cancelUpcomingHike(
+                myUpcomingHikes.firstWhere((hike) => hike.id == upcomingHikeId),
+              ),
+        onRemoved: () => HikeStartNavigation.revealHome(context),
         onEditContacts: _editSafetyContacts,
         onContinue: openPreparation,
       ),

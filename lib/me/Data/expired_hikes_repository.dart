@@ -168,7 +168,9 @@ class ExpiredHikesRepository {
       for (final state in states) {
         if (state.ownerPhoneNumber != owner) continue;
         final hike = state.upcomingHike;
-        if (state.isConsumed) {
+        if (hike.isCancelledForHistory) {
+          localExpired.add(hike);
+        } else if (state.isConsumed) {
           consumedIds.add(hike.id);
         } else if (!hike.visibleUntil.isAfter(_now().toUtc()) &&
             (!hike.isDeleted ||

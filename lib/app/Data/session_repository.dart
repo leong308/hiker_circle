@@ -10,6 +10,7 @@ import '../../core/services/mobile_security_service.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
 import '../../core/models/account_role.dart';
+import '../../authentication/Data/auth_flow_diagnostics.dart';
 
 /// Represents session repository exception.
 class SessionRepositoryException implements Exception {
@@ -239,8 +240,13 @@ class SessionRepository {
       // Restoring the local session is sufficient to leave the startup screen.
       // Cloud validation continues independently with a bounded deadline.
       unawaited(_refreshSavedSession(bound, generation));
-    } catch (_) {
+    } catch (error) {
       // Never delete an active hike because local startup data could not load.
+      AuthFlowDiagnostics.event(
+        'restore-local-session',
+        'failure',
+        error: error,
+      );
       if (generation == _generation) _publishSession(null);
     }
   }

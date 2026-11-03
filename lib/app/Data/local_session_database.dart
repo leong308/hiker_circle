@@ -19,6 +19,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart'
 
 import '../../home/Model/hike_session_models.dart';
 import '../../feedback/Model/feedback_saved_draft.dart';
+import '../../trail/Model/local_caution_report.dart';
 import '../../sos/Model/nearby_sos_event.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/app_session.dart';
@@ -27,6 +28,7 @@ import 'secure_local_database.dart';
 part 'local_community_database.dart';
 part 'local_planning_database.dart';
 part 'local_achievement_database.dart';
+part 'local_caution_database.dart';
 
 /// Represents local achievement progress cache.
 @immutable
@@ -998,6 +1000,17 @@ class LocalSessionDatabase {
             existing.first['upcoming_payload_json'] as String?,
           );
           final savedDraft = saved['draft'];
+          if (saved['isDeleted'] == true &&
+              saved['deletedReason'] == 'user_cancelled') {
+            payload.addAll({
+              'isDeleted': true,
+              'deletedReason': 'user_cancelled',
+              'status': 'cancelled',
+              'expired': true,
+              'historyCategory': 'expired',
+              'deletedAtLocal': saved['deletedAtLocal'],
+            });
+          }
           // A different cloud hash does not make it newer than preparation
           // edited on this phone. Cloud membership/timing can still refresh.
           if (savedDraft is Map &&
@@ -1040,7 +1053,8 @@ class LocalSessionDatabase {
       }
       final confirmedBySchedule = <String, UpcomingHike>{
         for (final hike in hikes.values)
-          if (!hike.isLocalPendingSync) _plannedHikeScheduleKey(hike): hike,
+          if (!hike.isLocalPendingSync && !hike.isCancelledForHistory)
+            _plannedHikeScheduleKey(hike): hike,
       };
       final savedConfirmedRows = await transaction.query(
         'planned_hike_state',
@@ -1050,6 +1064,7 @@ class LocalSessionDatabase {
       for (final row in savedConfirmedRows) {
         try {
           final state = LocalPlannedHikeState.fromRow(row);
+          if (state.upcomingHike.isCancelledForHistory) continue;
           confirmedBySchedule[_plannedHikeScheduleKey(state.upcomingHike)] =
               state.upcomingHike;
         } catch (_) {
@@ -1066,6 +1081,7 @@ class LocalSessionDatabase {
           LocalPlannedHikeState pendingState;
           try {
             pendingState = LocalPlannedHikeState.fromRow(pendingRow);
+            if (pendingState.upcomingHike.isCancelledForHistory) continue;
           } catch (_) {
             continue;
           }
@@ -1140,12 +1156,31 @@ class LocalSessionDatabase {
         }
       }
       if (!pruneMissing) return;
+      final savedRows = await transaction.query(
+        'planned_hike_state',
+        columns: ['upcoming_hike_id', 'upcoming_payload_json'],
+        where: 'owner_phone_number = ?',
+        whereArgs: [owner],
+      );
+      final preserved = savedRows
+          .where(
+            (row) =>
+                _decodeJsonMap(
+                  row['upcoming_payload_json'] as String?,
+                )['deletedReason'] ==
+                'user_cancelled',
+          )
+          .map((row) => row['upcoming_hike_id'] as String)
+          .toList();
+      final preserveClause = preserved.isEmpty
+          ? ''
+          : ' AND upcoming_hike_id NOT IN (${List.filled(preserved.length, '?').join(',')})';
       if (hikes.isEmpty) {
         await transaction.delete(
           'planned_hike_state',
           where:
-              'owner_phone_number = ? AND schedule_sync_pending = 0 AND has_cloud_snapshot = 1 AND upcoming_hike_id NOT LIKE ?',
-          whereArgs: [owner, 'local_pending_%'],
+              'owner_phone_number = ? AND schedule_sync_pending = 0 AND has_cloud_snapshot = 1 AND upcoming_hike_id NOT LIKE ?$preserveClause',
+          whereArgs: [owner, 'local_pending_%', ...preserved],
         );
         return;
       }
@@ -1153,8 +1188,8 @@ class LocalSessionDatabase {
       await transaction.delete(
         'planned_hike_state',
         where:
-            'owner_phone_number = ? AND schedule_sync_pending = 0 AND has_cloud_snapshot = 1 AND upcoming_hike_id NOT LIKE ? AND upcoming_hike_id NOT IN ($placeholders)',
-        whereArgs: [owner, 'local_pending_%', ...hikes.keys],
+            'owner_phone_number = ? AND schedule_sync_pending = 0 AND has_cloud_snapshot = 1 AND upcoming_hike_id NOT LIKE ? AND upcoming_hike_id NOT IN ($placeholders)$preserveClause',
+        whereArgs: [owner, 'local_pending_%', ...hikes.keys, ...preserved],
       );
     });
   }
@@ -2046,6 +2081,25 @@ class LocalSessionDatabase {
   }
 
   /// Loads dirty local preferences.
+  Future<Map<String, Map<String, dynamic>>> loadPendingArrivalResponses({
+    required String owner,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'local_preferences',
+      columns: ['preference_key', 'value_json'],
+      where: 'owner_phone_number = ? AND preference_key GLOB ?',
+      whereArgs: [owner, 'pending_arrival_response:*'],
+    );
+    return {
+      for (final row in rows)
+        row['preference_key'] as String: Map<String, dynamic>.from(
+          jsonDecode(row['value_json'] as String) as Map,
+        ),
+    };
+  }
+
+  /// Loads dirty local preferences.
   Future<Map<String, Object?>> loadDirtyLocalPreferences({
     required String ownerPhoneNumber,
   }) async {
@@ -2902,7 +2956,7 @@ class LocalSessionDatabase {
 
     final opening = SecureLocalDatabase.open(
       databasePath,
-      version: 38,
+      version: 39,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2941,8 +2995,12 @@ class LocalSessionDatabase {
         await _createButtonDebugTables(database);
         await _createCommunityTables(database);
         await _createFeedbackDraftTable(database);
+        await _createCautionOutboxTables(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 39) {
+          await _createCautionOutboxTables(database);
+        }
         if (oldVersion < 36) {
           await _createFeedbackDraftTable(database);
         }
@@ -3752,6 +3810,27 @@ class LocalSessionDatabase {
         created_at TEXT NOT NULL
       )
     ''');
+  }
+
+  /// Preserve report payloads and attachment bytes atomically until confirmed.
+  Future<void> _createCautionOutboxTables(Database database) async {
+    await database.execute('''CREATE TABLE IF NOT EXISTS caution_report_outbox (
+      owner TEXT NOT NULL, report_id TEXT NOT NULL, payload TEXT NOT NULL,
+      content_hash TEXT NOT NULL, created_at TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending','sent','failed')),
+      media_count INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT NOT NULL DEFAULT '', last_attempt_at TEXT,
+      next_retry_at TEXT, sent_at TEXT, PRIMARY KEY(owner, report_id)
+    )''');
+    await database.execute('''CREATE TABLE IF NOT EXISTS caution_report_media (
+      owner TEXT NOT NULL, report_id TEXT NOT NULL, media_key TEXT NOT NULL,
+      name TEXT NOT NULL, content_type TEXT NOT NULL, bytes BLOB NOT NULL,
+      PRIMARY KEY(owner, report_id, media_key)
+    )''');
+    await database.execute(
+      '''CREATE INDEX IF NOT EXISTS idx_caution_outbox_pending
+      ON caution_report_outbox(owner, status, created_at)''',
+    );
   }
 
   /// Keeps unsent feedback independent of downloaded caches and upload queues.

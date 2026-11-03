@@ -8,6 +8,7 @@ import '../../achievements/Data/achievement_notification_events.dart';
 export '../../achievements/Model/achievement_progress.dart'
     show achievementProgressContentHash;
 import '../../core/services/content_hash.dart';
+import '../../core/services/network_reachability_service.dart';
 import '../../circle/Model/community_post_limits.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -20,12 +21,14 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../core/models/hiker_level.dart';
 import '../../core/services/open_meteo_service.dart';
 import '../../core/services/trail_geometry_storage.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../home/Model/hike_session_models.dart';
+import '../../home/Model/upcoming_hike_sync_notice.dart';
 import '../../home/Model/upcoming_hike_request_inbox.dart';
 import '../../home/Data/active_hike_live_status_service.dart';
 import '../../home/Data/planned_hike_state_service.dart';
@@ -36,6 +39,8 @@ import '../../trail/Model/trail_models.dart';
 import '../../trail/Model/trail_hazard_alert.dart';
 import '../../trail/Model/trail_hazard_assessment.dart';
 import '../../trail/Data/trail_caution_service.dart';
+import '../../trail/Data/caution_report_queue.dart';
+import '../../trail/Model/local_caution_report.dart';
 import '../../trail/Data/trail_checkpoint_weather_repository.dart';
 import '../../trail/Model/trail_weather_location.dart';
 import '../Model/app_session.dart';
@@ -51,6 +56,7 @@ part 'community_post_repository.dart';
 part 'mobile_read_repository.dart';
 part 'cloud_read_repository.dart';
 part 'offline_sync_repository.dart';
+part 'caution_report_repository.dart';
 
 const Set<String> _upcomingHikePreviewFields = {
   'sessionId',
@@ -619,9 +625,26 @@ class HikerCircleFirebaseRepository {
 
   /// Returns planning changes.
   static Stream<String> get planningChanges => _planningChanges.stream;
+  static final _upcomingHikeSyncs =
+      StreamController<UpcomingHikeSyncNotice>.broadcast();
+  static Stream<UpcomingHikeSyncNotice> get upcomingHikeSyncs =>
+      _upcomingHikeSyncs.stream;
+
+  void _publishUpcomingHikeSync(AppSession session, Set<String> ids) {
+    if (ids.isNotEmpty && _captureAccountUid(session) != null) {
+      _upcomingHikeSyncs.add(
+        UpcomingHikeSyncNotice(
+          ownerPhoneNumber: session.phoneNumber,
+          hikeIds: ids,
+        ),
+      );
+    }
+  }
+
   static final Map<String, Future<void>> _planningSyncs = {};
   final Map<String, String> _teamHikeCreationRetryKeys = {};
   final LocalSessionDatabase _localDatabase;
+  final Map<String, CautionReportQueue> _cautionQueues = {};
   late final _conditionalCache =
       _providedReadCache ??
       ConditionalCloudCache(_localDatabase, () => _resolvedFunctions);
@@ -2717,7 +2740,8 @@ class HikerCircleFirebaseRepository {
     required String hikeId,
     bool withdrawSelf = false,
     String? hazardId,
-  }) => _queuePlanCancellation(hikeId, withdrawSelf, hazardId);
+    UpcomingHike? snapshot,
+  }) => _queuePlanCancellation(hikeId, withdrawSelf, hazardId, snapshot);
 
   /// Commit the full plan and its retry metadata before attempting any network work.
   Future<String> scheduleUpcomingHike({
@@ -2726,7 +2750,7 @@ class HikerCircleFirebaseRepository {
     String joinPolicy = 'approval',
     HikeReminderPreference reminderPreference = const HikeReminderPreference(),
   }) async {
-    final creationKey = upcomingHikeCreationKeyFor(
+    var creationKey = upcomingHikeCreationKeyFor(
       appInstanceId: session.appInstanceId,
       trailId: draft.trail.trailId,
       departureTime: draft.departureTime,
@@ -2736,6 +2760,25 @@ class HikerCircleFirebaseRepository {
       destinationName: draft.destinationName,
       inviteePhoneNumbers: draft.teamBuddies.map((buddy) => buddy.phoneNumber),
     );
+    final baseKey = creationKey;
+    final cancelled =
+        (await _localDatabase.loadPlannedHikeStates(
+              ownerPhoneNumber: session.phoneNumber,
+            ))
+            .where(
+              (state) =>
+                  state.upcomingHike.isCancelledForHistory &&
+                  (state.creationKey == baseKey ||
+                      state.creationKey.startsWith('${baseKey}_after_')),
+            )
+            .toList()
+          ..sort((a, b) => a.creationKey.compareTo(b.creationKey));
+    if (cancelled.isNotEmpty) {
+      // A deliberate reschedule gets a new stable identity; retries of that
+      // reschedule still reuse it instead of reviving the cancelled document.
+      creationKey =
+          '${baseKey}_after_${stableContentHash(cancelled.map((state) => [state.creationKey, state.upcomingHike.deletedAt?.toUtc().toIso8601String()]).toList()).substring(0, 16)}';
+    }
     final hike = PlannedHikeStateResolver.provisionalFromConfirmedDraft(
       draft: draft,
       creatorPhone: session.phoneNumber,
@@ -2776,97 +2819,106 @@ class HikerCircleFirebaseRepository {
   Future<void> _flushPendingUpcomingHikes(AppSession session) async {
     final uid = _captureAccountUid(session);
     if (uid == null) return;
-    await _flushPlanCancellations(session);
-    final states = await _localDatabase.loadPlannedHikeStates(
-      ownerPhoneNumber: session.phoneNumber,
-    );
-    for (final state in states) {
-      if (state.isConsumed) continue;
-      if (!_accountStillMatches(session, uid)) return;
-      var hikeId = state.upcomingHike.id;
-      try {
-        if (state.scheduleSyncPending) {
-          final draft = state.upcomingHike.draft;
-          if (draft == null || state.creationKey.isEmpty) continue;
-          final payload = <String, dynamic>{
-            'creationKey': state.creationKey,
-            'offlineRecovery': {
-              'createdAtLocal': state.upcomingHike.createdAt
-                  .toUtc()
-                  .toIso8601String(),
-            },
-            'draft': draft.toPersistence(),
-            'joinPolicy': state.joinPolicy,
-          };
-          final request = _scheduleHikeRequest;
-          hikeId =
-              await (request != null
-                      ? request(payload)
-                      : _resolvedFunctions
-                            .httpsCallable('scheduleUpcomingHike')
-                            .call<Map<String, dynamic>>(payload)
-                            .then(
-                              (result) => _stringFrom(result.data['hikeId']),
-                            ))
-                  .timeout(_firebaseReadTimeout);
-          _requireSameAccount(session, uid);
-          if (!_isValidCloudDocumentId(hikeId) ||
-              hikeId.startsWith('local_pending_')) {
-            throw const HikerCircleFirebaseRepositoryException(
-              'The hike server returned an invalid schedule.',
+    final confirmedHikes = <String>{};
+    try {
+      await _flushPlanCancellations(session, confirmedHikes: confirmedHikes);
+      final states = await _localDatabase.loadPlannedHikeStates(
+        ownerPhoneNumber: session.phoneNumber,
+      );
+      for (final state in states) {
+        if (state.isConsumed) continue;
+        if (!_accountStillMatches(session, uid)) return;
+        var hikeId = state.upcomingHike.id;
+        try {
+          if (state.scheduleSyncPending) {
+            final draft = state.upcomingHike.draft;
+            if (draft == null || state.creationKey.isEmpty) continue;
+            final payload = <String, dynamic>{
+              'creationKey': state.creationKey,
+              'offlineRecovery': {
+                'createdAtLocal': state.upcomingHike.createdAt
+                    .toUtc()
+                    .toIso8601String(),
+              },
+              'draft': draft.toPersistence(),
+              'joinPolicy': state.joinPolicy,
+            };
+            final request = _scheduleHikeRequest;
+            hikeId =
+                await (request != null
+                        ? request(payload)
+                        : _resolvedFunctions
+                              .httpsCallable('scheduleUpcomingHike')
+                              .call<Map<String, dynamic>>(payload)
+                              .then(
+                                (result) => _stringFrom(result.data['hikeId']),
+                              ))
+                    .timeout(_firebaseReadTimeout);
+            _requireSameAccount(session, uid);
+            if (!_isValidCloudDocumentId(hikeId) ||
+                hikeId.startsWith('local_pending_')) {
+              throw const HikerCircleFirebaseRepositoryException(
+                'The hike server returned an invalid schedule.',
+              );
+            }
+            await _localDatabase.confirmScheduledHike(
+              ownerPhoneNumber: session.phoneNumber,
+              creationKey: state.creationKey,
+              cloudHikeId: hikeId,
             );
+            _planningChanges.add(session.phoneNumber);
+            confirmedHikes.add(hikeId);
           }
-          await _localDatabase.confirmScheduledHike(
+          if (hikeId.startsWith('local_pending_')) continue;
+          if (!state.upcomingHike.visibleUntil.isAfter(
+            DateTime.now().toUtc(),
+          )) {
+            continue;
+          }
+          // Read again: a preference may have changed while creation was in flight.
+          final current = await _localPlanningState(session, hikeId);
+          final preference = current?.reminderPreference;
+          if (current?.reminderSyncPending != true || preference == null) {
+            continue;
+          }
+          _requireSameAccount(session, uid);
+          final request = _reminderPreferenceRequest;
+          await (request != null
+                  ? request(hikeId, preference)
+                  : _upcomingHikes
+                        .doc(hikeId)
+                        .collection('reminderPreferences')
+                        .doc(_userIdFor(session))
+                        .set({
+                          ...preference.normalized().toFirestore(),
+                          // Remove retired choices while preserving delivery receipts.
+                          'finalReminderMinutesBefore': FieldValue.delete(),
+                          'maximumReminders': FieldValue.delete(),
+                          'hikeId': hikeId,
+                          'ownerUserId': _userIdFor(session),
+                          'ownerPhoneNumber': session.phoneNumber,
+                          'updatedAt': FieldValue.serverTimestamp(),
+                          'updatedAtLocal': DateTime.now()
+                              .toUtc()
+                              .toIso8601String(),
+                        }, SetOptions(merge: true)))
+              .timeout(_firebaseWriteTimeout);
+          _requireSameAccount(session, uid);
+          await _localDatabase.acknowledgePlannedReminderPreference(
             ownerPhoneNumber: session.phoneNumber,
-            creationKey: state.creationKey,
-            cloudHikeId: hikeId,
+            hikeId: hikeId,
+            preference: preference,
           );
-          _planningChanges.add(session.phoneNumber);
+          confirmedHikes.add(hikeId);
+        } catch (error) {
+          // The transactionally saved local plan remains usable after a failure or timeout.
+          debugPrint(
+            'Saved hike ${state.upcomingHike.id} is waiting to sync: $error',
+          );
         }
-        if (hikeId.startsWith('local_pending_')) continue;
-        if (!state.upcomingHike.visibleUntil.isAfter(DateTime.now().toUtc())) {
-          continue;
-        }
-        // Read again: a preference may have changed while creation was in flight.
-        final current = await _localPlanningState(session, hikeId);
-        final preference = current?.reminderPreference;
-        if (current?.reminderSyncPending != true || preference == null) {
-          continue;
-        }
-        _requireSameAccount(session, uid);
-        final request = _reminderPreferenceRequest;
-        await (request != null
-                ? request(hikeId, preference)
-                : _upcomingHikes
-                      .doc(hikeId)
-                      .collection('reminderPreferences')
-                      .doc(_userIdFor(session))
-                      .set({
-                        ...preference.normalized().toFirestore(),
-                        // Remove retired choices while preserving delivery receipts.
-                        'finalReminderMinutesBefore': FieldValue.delete(),
-                        'maximumReminders': FieldValue.delete(),
-                        'hikeId': hikeId,
-                        'ownerUserId': _userIdFor(session),
-                        'ownerPhoneNumber': session.phoneNumber,
-                        'updatedAt': FieldValue.serverTimestamp(),
-                        'updatedAtLocal': DateTime.now()
-                            .toUtc()
-                            .toIso8601String(),
-                      }, SetOptions(merge: true)))
-            .timeout(_firebaseWriteTimeout);
-        _requireSameAccount(session, uid);
-        await _localDatabase.acknowledgePlannedReminderPreference(
-          ownerPhoneNumber: session.phoneNumber,
-          hikeId: hikeId,
-          preference: preference,
-        );
-      } catch (error) {
-        // The transactionally saved local plan remains usable after a failure or timeout.
-        debugPrint(
-          'Saved hike ${state.upcomingHike.id} is waiting to sync: $error',
-        );
       }
+    } finally {
+      _publishUpcomingHikeSync(session, confirmedHikes);
     }
   }
 
@@ -4149,7 +4201,7 @@ class HikerCircleFirebaseRepository {
   }
 
   /// Computes submit hazard report.
-  Future<void> submitHazardReport({
+  Future<LocalCautionReport> submitHazardReport({
     required AppSession session,
     required Trail trail,
     required String hazardType,
@@ -4159,7 +4211,6 @@ class HikerCircleFirebaseRepository {
     String? reportId,
     List<PendingCautionMedia> media = const [],
   }) async {
-    _throwIfFirebaseUnavailable();
     if (location?.hasValidPosition != true) {
       throw const HikerCircleFirebaseRepositoryException(
         'A current GPS location is needed.',
@@ -4167,9 +4218,8 @@ class HikerCircleFirebaseRepository {
     }
     final hazardId =
         reportId ?? 'report_${DateTime.now().microsecondsSinceEpoch}';
-    try {
-      final uploaded = await TrailCautionService().upload(hazardId, media);
-      await _resolvedFunctions.httpsCallable('submitTrailCaution').call({
+    return _cautionQueue(session).enqueue(
+      payload: {
         'hazardId': hazardId,
         'trailId': trail.trailId,
         'trailName': trail.name,
@@ -4177,13 +4227,13 @@ class HikerCircleFirebaseRepository {
         'description': description.trim(),
         'latitude': location!.latitude,
         'longitude': location.longitude,
-        'media': uploaded,
-      });
-    } on FirebaseFunctionsException catch (error) {
-      throw HikerCircleFirebaseRepositoryException(
-        error.message ?? 'Unable to submit this caution.',
-      );
-    }
+        'observedAtMillis': DateTime.now().toUtc().millisecondsSinceEpoch,
+        'locationCapturedAtMillis': location.capturedAt
+            ?.toUtc()
+            .millisecondsSinceEpoch,
+      },
+      media: media,
+    );
   }
 
   /// A locally ended hike remains shareable while completion is queued. Retry

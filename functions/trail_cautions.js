@@ -24,7 +24,10 @@ async function mediaFor({bucket, uid, hazardId, media = []}) {
     }
     paths.add(path);
     const file = bucket.file(path); let metadata;
-    try { [metadata] = await file.getMetadata(); } catch (_) { fail('invalid-argument','Media upload is incomplete. Please retry.'); }
+    try { [metadata] = await file.getMetadata(); } catch (error) {
+      if (Number(error.code) === 404) fail('invalid-argument','Media upload is incomplete. Please retry.');
+      fail('unavailable','Evidence could not be verified yet. Please retry.');
+    }
     const size = Number(metadata.size), contentType = MIME[path.split('.').at(-1).toLowerCase()];
     if (!contentType || metadata.contentType !== contentType || !Number.isSafeInteger(size) || size <= 0
         || metadata.metadata?.ownerUid !== uid || metadata.metadata?.hazardId !== hazardId) {
@@ -44,6 +47,9 @@ async function mediaFor({bucket, uid, hazardId, media = []}) {
 // submit: Create the caution and its initial confirmation vote under one stable report ID.
 async function submit({db, bucket, uid, phone, data, now = Date.now(), timestamp}) {
   const hazardId = id(data?.hazardId), trailId = id(data?.trailId);
+  if (data.expectedOwnerUid != null && data.expectedOwnerUid !== uid) {
+    fail('permission-denied', 'This caution belongs to another reporting account.');
+  }
   const description = note(data.description);
   if (!TYPES.has(data.hazardType) || typeof data.trailName !== 'string' || data.trailName.length > 180
       || !Number.isFinite(data.latitude) || Math.abs(data.latitude) > 90 || !Number.isFinite(data.longitude) || Math.abs(data.longitude) > 180) {
@@ -57,11 +63,24 @@ async function submit({db, bucket, uid, phone, data, now = Date.now(), timestamp
       if (existing.data().reportedBy !== uid) fail('permission-denied','This report belongs to another hiker.');
       return {hazardId};
     }
-    const reportedAt = timestamp(now);
+    // Offline retries preserve when the hiker observed the caution. Do not
+    // restart an old weather warning's lifetime at the time it finally uploads.
+    const suppliedObservedAt = data.observedAtMillis;
+    if (suppliedObservedAt != null && (!Number.isSafeInteger(suppliedObservedAt)
+        || suppliedObservedAt <= 0 || suppliedObservedAt > now + 5 * 60000)) {
+      fail('invalid-argument', 'The caution observation time is invalid. Check your device clock.');
+    }
+    const observedAt = Math.min(now, suppliedObservedAt ?? now);
+    if (observedAt + hazardLifetimeMs(data.hazardType) <= now) {
+      fail('failed-precondition', 'This saved caution is too old to publish. Submit a new report if it is still present.');
+    }
+    const reportedAt = timestamp(observedAt);
     tx.create(reference, {hazardId, trailId, trailName:data.trailName.trim(), hazardType:data.hazardType,
       description, latitude:data.latitude, longitude:data.longitude, media, ...classifyHazard(data.hazardType),
       reportedBy:uid, reportedByPhoneNumber:phone, status:'unverified', reportLabel:'Community report',
-      reportedAt, reportedAtLocal:new Date(now).toISOString(), expiresAt:timestamp(now + hazardLifetimeMs(data.hazardType)),
+      reportedAt, reportedAtLocal:new Date(observedAt).toISOString(),
+      receivedAt:timestamp(now), receivedAtLocal:new Date(now).toISOString(),
+      expiresAt:timestamp(observedAt + hazardLifetimeMs(data.hazardType)),
       reportCount:1, resolutionCount:0, cycle:0, resolutionId:null});
     tx.create(reference.collection('votes').doc(`0_confirm_${uid}`), {uid, kind:'confirm', cycle:0, createdAt:reportedAt});
     return {hazardId};

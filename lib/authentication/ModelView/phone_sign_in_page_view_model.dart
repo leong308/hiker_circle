@@ -24,12 +24,8 @@ class _PhoneSignInPageStateViewModel extends ChangeNotifier {
   }
 
   /// Computes friendly sign in error.
-  String commandFriendlySignInError(Object error) {
-    if (error is SessionRepositoryException) {
-      return error.message;
-    }
-    return 'Unable to finish login. Please check your connection and try again.';
-  }
+  String commandFriendlySignInError(Object error) =>
+      signInCompletionErrorMessage(error);
 
   /// Releases resources owned by this instance.
   @override
@@ -104,6 +100,9 @@ class _PhoneSignInPageStateViewModel extends ChangeNotifier {
       if (!mounted) {
         return;
       }
+      // WhatsApp verification has already consumed this challenge. Release the
+      // form for a fresh login instead of leaving its fields/button disabled.
+      effectResetOtpEntry();
       _publish(() {
         stateSignInError = commandFriendlySignInError(error);
       });

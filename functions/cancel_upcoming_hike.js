@@ -3,6 +3,7 @@
 'use strict';
 const {createHash} = require('node:crypto');
 const {classifyHazard, dateMillis, isActiveHazard} = require('./trail_hazard_policy');
+const {cancelledHikeHistoryFields} = require('./cancelled_hike_history');
 
 const PHONE = /^\+[1-9]\d{7,14}$/;
 const UNSTARTED_PHASES = new Set(['inviting', 'readyCheck', 'countdown']);
@@ -12,7 +13,8 @@ const validId = value => typeof value === 'string' && value.length > 0 && value.
   && !value.includes('/') && !/[\u0000-\u001f]/.test(value);
 
 async function cancelUpcomingHike(
-  db, {hikeId, uid, phoneNumber, withdrawSelf = false, hazardId = '', creationKey = '', now = Date.now()},
+  db, {hikeId, uid, phoneNumber, withdrawSelf = false, hazardId = '', creationKey = '',
+    archiveAsExpired = false, cancelledAtLocal, now = Date.now()},
   HttpsError, timestamp,
 ) {
   const reference = db.collection('upcomingHikes').doc(hikeId);
@@ -24,7 +26,8 @@ async function cancelUpcomingHike(
   return db.runTransaction(async transaction => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) {
-      if (intent) { transaction.set(intent, {cancelled: true, owner: uid, cancelledAt: timestamp()}); return {cancelled: true}; }
+      if (intent) { transaction.set(intent, {cancelled: true, owner: uid, cancelledAt: timestamp(),
+        cancelledAtLocal:cancelledHikeHistoryFields({uid,timestamp:null,now,cancelledAtLocal}).cancelledAtLocal}); return {cancelled: true, needsHistoryUpload: true}; }
       throw new HttpsError('not-found', 'This hike is no longer available.');
     }
     const hike = snapshot.data();
@@ -39,7 +42,14 @@ async function cancelUpcomingHike(
     if (personal && (hike.creatorPhone === phoneNumber || hike.creatorUserId === uid)) {
       throw new HttpsError('failed-precondition', 'The host must cancel the hike for the group.');
     }
-    if (!personal && hike.isDeleted === true) return {cancelled: true};
+    if (!personal && hike.isDeleted === true) {
+      if (hike.teamLaunchConsumed || hike.startedAt || hike.startedAtLocal
+          || ['active','started','ended','completed','abandoned'].includes(String(hike.status || '').toLowerCase())) throw launchError(HttpsError);
+      if (archiveAsExpired && !(hike.status === 'cancelled' && hike.historyCategory === 'expired' && hike.expired === true)) {
+        transaction.update(reference, cancelledHikeHistoryFields({uid,timestamp:timestamp(),now,cancelledAtLocal}));
+      }
+      return {cancelled: true};
+    }
 
     const participants = Array.isArray(hike.participantPhones) ? hike.participantPhones : [];
     let receiptReference;
@@ -66,9 +76,10 @@ async function cancelUpcomingHike(
         throw new HttpsError('failed-precondition', 'This serious trail caution is no longer active. Refresh the hike details.');
       }
     }
-    if (personal || hazardAction) {
+    if (personal || hazardAction || archiveAsExpired) {
       const departure = dateMillis(hike.departureTimeLocal || hike.departureTime || hike.draft?.departureTime);
-      if (hike.isDeleted === true || !Number.isFinite(departure) || departure + 15 * 60 * 1000 <= now) {
+      if (hike.isDeleted === true || !Number.isFinite(departure) ||
+          !archiveAsExpired && departure + 15 * 60 * 1000 <= now) {
         throw new HttpsError('failed-precondition', 'This upcoming hike is no longer available.');
       }
       if (hike.startedAt || hike.startedAtLocal || TERMINAL_STATUSES.has(String(hike.status || '').toLowerCase())) {
@@ -76,10 +87,10 @@ async function cancelUpcomingHike(
       }
     }
     const startedPhones = Array.isArray(hike.startedParticipantPhones) ? hike.startedParticipantPhones : [];
-    if (startedPhones.some(phone => Boolean(String(phone || '').trim()))) throw launchError(HttpsError);
+    if (hike.teamLaunchConsumed || startedPhones.some(phone => Boolean(String(phone || '').trim()))) throw launchError(HttpsError);
     const teamId = String(hike.teamHikeSessionId || '').trim();
     const launchLinked = teamId || hike.teamLaunchLinkedAt || hike.teamLaunchLinkedAtLocal;
-    if (launchLinked && !hazardAction) throw launchError(HttpsError);
+    if (launchLinked && !hazardAction && !archiveAsExpired) throw launchError(HttpsError);
 
     let teamReference;
     let team;
@@ -103,7 +114,7 @@ async function cancelUpcomingHike(
       }
     }
 
-    const chatReferences = (personal || hazardAction)
+    const chatReferences = (personal || hazardAction || archiveAsExpired)
       ? [db.collection('groupChats').doc(`hike_${hikeId}`),
         ...(teamReference ? [db.collection('groupChats').doc(`team_${teamId}`)] : [])]
       : [];
@@ -123,8 +134,9 @@ async function cancelUpcomingHike(
     const nowIso = new Date(now).toISOString();
     const updatedAt = timestamp();
     if (!personal) {
-      if (intent) transaction.set(intent, {cancelled: true, owner: uid, cancelledAt: timestamp()});
-      transaction.update(reference, {isDeleted: true, cancelledByUserId: uid, cancelledAt: updatedAt,
+      if (intent) transaction.set(intent, {cancelled: true, owner: uid, cancelledAt: timestamp(),
+        cancelledAtLocal:cancelledHikeHistoryFields({uid,timestamp:null,now,cancelledAtLocal}).cancelledAtLocal});
+      transaction.update(reference, {...cancelledHikeHistoryFields({uid,timestamp:updatedAt,now,cancelledAtLocal}),
         ...(hazardAction ? {cancelledForHazardId: hazardId, updatedAt, updatedAtLocal: nowIso} : {})});
       if (teamReference) {
         transaction.update(teamReference, endedTeamPatch(teamParticipants, updatedAt, nowIso));
@@ -203,7 +215,7 @@ function endedTeamPatch(participants, updatedAt, nowIso) {
 }
 
 function archivedChatPatch(updatedAt, nowIso) {
-  return {hikeEndedAtLocal: nowIso, closureReason: 'hazard_hike_cancelled', requiresHostNaming: false,
+  return {hikeEndedAtLocal: nowIso, closureReason: 'hike_cancelled', requiresHostNaming: false,
     namingPromptShown: true, namingPromptActive: false, updatedAt, updatedAtLocal: nowIso};
 }
 

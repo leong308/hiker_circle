@@ -14,12 +14,26 @@ abstract final class MobileSecurityService {
   /// Computes device.
   static Future<Map<String, dynamic>> device() async {
     AuthFlowDiagnostics.event('local-installation-id', 'start');
-    final id = await LocalSessionDatabase().loadOrCreateAppInstanceId();
+    final String id;
+    try {
+      id = await LocalSessionDatabase().loadOrCreateAppInstanceId();
+    } catch (error) {
+      AuthFlowDiagnostics.event(
+        'local-installation-id',
+        'failure',
+        error: error,
+      );
+      rethrow;
+    }
     AuthFlowDiagnostics.event('local-installation-id', 'success');
     AuthFlowDiagnostics.event('native-device-info', 'start');
-    final details = await channel.invokeMapMethod<String, dynamic>(
-      'deviceInfo',
-    );
+    final Map<String, dynamic>? details;
+    try {
+      details = await channel.invokeMapMethod<String, dynamic>('deviceInfo');
+    } catch (error) {
+      AuthFlowDiagnostics.event('native-device-info', 'failure', error: error);
+      rethrow;
+    }
     AuthFlowDiagnostics.event('native-device-info', 'success');
     return <String, dynamic>{
       ...?details,

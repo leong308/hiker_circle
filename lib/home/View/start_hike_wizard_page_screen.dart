@@ -458,6 +458,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     }
     setState(() => _isScheduling = true);
     try {
+      final reminderAccess = await requestHikeReminderPermissions(
+        enabled: _reminderPreference.enabled,
+      );
+      if (!mounted) return;
       final safeDraft = _withPlatformSafetyPolicy(
         _withSafeRecordingInterval(_draft),
       );
@@ -480,7 +484,8 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
         ..showSnackBar(
           SnackBar(
             content: Text(
-              'Hike saved for ${_formatDate(_draft.departureTime)} at ${_formatTime(_draft.departureTime)}. It will sync when connected.',
+              'Hike saved for ${_formatDate(_draft.departureTime)} at ${_formatTime(_draft.departureTime)}. It will sync when connected.'
+              '${reminderAccess.warning == null ? '' : ' ${reminderAccess.warning}'}',
             ),
             behavior: SnackBarBehavior.floating,
           ),

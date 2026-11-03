@@ -4,6 +4,7 @@ import '../core/widgets/section_label.dart';
 import '../core/services/sos_button_notification_history.dart';
 import 'View/hike_safety_settings_page.dart';
 import 'Model/hike_safety_preferences.dart';
+import 'Model/upcoming_hike_sync_notice.dart';
 import 'View/fall_sensitivity_setting.dart';
 import 'View/footprint_interval_setting.dart';
 import '../sos/View/fall_detection_test_dialog.dart';

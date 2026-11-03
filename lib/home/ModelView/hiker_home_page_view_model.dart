@@ -780,6 +780,13 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
         synchronizePending: () async {
           await Future.wait<void>([
             commandRunReconnectStep(
+              'caution reports',
+              () => stateHikerCircleRepository.flushPendingCautionReports(
+                session: requestedSession,
+                forceRetry: true,
+              ),
+            ),
+            commandRunReconnectStep(
               'submitted feedback',
               () => FeedbackRepository().flushPendingSubmission(),
             ),

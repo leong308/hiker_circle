@@ -43,11 +43,10 @@ abstract final class FirebaseBootstrap {
           (defaultTargetPlatform == TargetPlatform.android ||
               defaultTargetPlatform == TargetPlatform.iOS)) {
         await FirebaseAppCheck.instance.activate(
-          providerAndroid: kDebugMode
-              ? const AndroidDebugProvider()
-              : const AndroidPlayIntegrityProvider(),
+          providerAndroid: await androidAppCheckProviderForBuild(),
           providerApple: await appleAppCheckProviderForBuild(),
         );
+        await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
       }
       return const FirebaseBootstrapResult.available();
     } on FirebaseException catch (error) {

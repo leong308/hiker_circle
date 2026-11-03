@@ -34,6 +34,94 @@ Future<String> _resolvePlannedHikeId(
 
 /// Provides helpers for `LocalSessionDatabase`.
 extension LocalPlanningDatabase on LocalSessionDatabase {
+  /// Commit hiding, history classification and replay intent as one local write.
+  Future<void> queuePlannedHikeCancellation({
+    required String owner,
+    required String hikeId,
+    required Map<String, Object?> intent,
+    required bool archiveAsExpired,
+  }) async {
+    final database = await _openDatabase();
+    await database.transaction((tx) async {
+      final id = await _resolvePlannedHikeId(tx, owner, hikeId);
+      final rows = await tx.query(
+        'planned_hike_state',
+        where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+        whereArgs: [owner, id],
+      );
+      final row = rows.firstOrNull;
+      final previous = _decodeJsonMap(row?['upcoming_payload_json'] as String?);
+      if (archiveAsExpired &&
+          previous['isDeleted'] == true &&
+          previous['deletedReason'] == 'user_cancelled') {
+        return;
+      }
+      final at = DateTime.now().toUtc().toIso8601String();
+      final savedIntent = {
+        ...intent,
+        'hikeId': id,
+        'cancelledAtLocal': at,
+        'wasConsumed': row?['is_consumed'] == 1,
+        'previousReminderSyncPending': row?['reminder_sync_pending'],
+        if (archiveAsExpired && previous.isNotEmpty)
+          'previousPayload': previous,
+      };
+      await tx.insert('local_preferences', {
+        'owner_phone_number': owner,
+        'preference_key': 'pending_hike_cancellation:$id',
+        'value_json': jsonEncode(savedIntent),
+        'is_dirty': 1,
+        'updated_at': at,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      if (row == null) return;
+      await tx.update(
+        'planned_hike_state',
+        {
+          'is_consumed': 1,
+          'updated_at': at,
+          if (archiveAsExpired) ...{
+            'upcoming_payload_json': jsonEncode({
+              ...previous,
+              'isDeleted': true,
+              'status': 'cancelled',
+              'expired': true,
+              'historyCategory': 'expired',
+              'deletedReason': 'user_cancelled',
+              'deletedAtLocal': at,
+            }),
+            'reminder_sync_pending': 0,
+          },
+        },
+        where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+        whereArgs: [owner, id],
+      );
+    });
+  }
+
+  Future<void> restoreRejectedPlannedCancellation({
+    required String owner,
+    required String hikeId,
+    required Map<String, dynamic> intent,
+  }) async {
+    final database = await _openDatabase();
+    final id = await _resolvePlannedHikeId(database, owner, hikeId);
+    await database.update(
+      'planned_hike_state',
+      {
+        'is_consumed': intent['wasConsumed'] == true ? 1 : 0,
+        if (intent['previousReminderSyncPending'] is int)
+          'reminder_sync_pending': intent['previousReminderSyncPending'],
+        if (intent['previousPayload'] is Map)
+          'upcoming_payload_json': jsonEncode({
+            ...Map<String, dynamic>.from(intent['previousPayload'] as Map),
+            'sessionId': id,
+          }),
+      },
+      where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+      whereArgs: [owner, id],
+    );
+  }
+
   /// Loads preparation safety preference.
   Future<Object?> loadPreparationSafetyPreference({
     required String ownerPhoneNumber,

@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../core/services/mobile_security_service.dart';
 
-import '../app/Data/session_repository.dart';
+import 'Data/sign_in_completion_errors.dart';
 import '../app/Model/app_session.dart';
 import '../core/widgets/loading_toast.dart';
 import '../core/widgets/verification_code_input.dart';

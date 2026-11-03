@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/services.dart';
 import 'package:timezone/timezone.dart' as tz;
@@ -30,11 +32,59 @@ abstract interface class HikeReminderNotifications {
   Future<void> cancel(int id);
 }
 
+/// A permission change must upgrade existing inexact alarms as well as new ones.
+abstract interface class HikeReminderSchedulingPolicy {
+  Future<String> schedulingPolicyKey();
+}
+
+/// Cloud departure pushes are fallbacks for slots not owned by this phone's OS.
+abstract interface class HikeReminderScheduleAcknowledgements {
+  Future<void> reportLocalSchedules(Map<String, Object?> report);
+}
+
 /// Represents device hike reminder notifications.
-class DeviceHikeReminderNotifications implements HikeReminderNotifications {
+class DeviceHikeReminderNotifications
+    implements
+        HikeReminderNotifications,
+        HikeReminderSchedulingPolicy,
+        HikeReminderScheduleAcknowledgements {
   /// Creates device hike reminder notifications.
-  DeviceHikeReminderNotifications(this.plugin);
+  DeviceHikeReminderNotifications(this.plugin, {FirebaseFunctions? functions})
+    : _functions = functions;
   final FlutterLocalNotificationsPlugin plugin;
+  final FirebaseFunctions? _functions;
+
+  @override
+  Future<void> reportLocalSchedules(Map<String, Object?> report) async {
+    final response = await (_functions ?? FirebaseFunctions.instance)
+        .httpsCallable(
+          'acknowledgeLocalHikeReminderSlots',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 20)),
+        )
+        .call(report);
+    final data = response.data;
+    if (data is! Map ||
+        data['retryNeeded'] is! bool ||
+        data['retryNeeded'] == true) {
+      throw FirebaseFunctionsException(
+        code: 'unavailable',
+        message:
+            'Local reminder ownership is waiting for cloud reconciliation.',
+      );
+    }
+  }
+
+  @override
+  Future<String> schedulingPolicyKey() async {
+    final android = plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (android == null) return 'platform-scheduled';
+    return await android.canScheduleExactNotifications() == true
+        ? 'android-exact'
+        : 'android-inexact';
+  }
 
   static const details = NotificationDetails(
     android: AndroidNotificationDetails(
@@ -139,12 +189,13 @@ class UpcomingHikeReminderService {
   final DateTime Function() _now;
   Future<void> _work = Future.value();
   bool _active = true;
+  String? _lastAcknowledgedHash;
+  ({String hash, Map<String, Object?> report})? _nextAcknowledgement;
+  Future<void>? _acknowledgementWork;
 
-  /// Computes reminder time.
-  static DateTime reminderTime(DateTime departure, DateTime now) {
-    final oneHourBefore = departure.toUtc().subtract(const Duration(hours: 1));
-    return oneHourBefore.isAfter(now.toUtc()) ? oneHourBefore : now.toUtc();
-  }
+  @visibleForTesting
+  Future<void> get acknowledgementWork =>
+      _acknowledgementWork ?? Future<void>.value();
 
   // Keep the key independent of the temporary/cloud ID and preparation edits.
   /// Computes reminder key.
@@ -153,6 +204,14 @@ class UpcomingHikeReminderService {
     hike.trailId,
     hike.departureTime.toUtc().toIso8601String(),
   ]);
+
+  /// One durable notification per fixed slot, unaffected by local/cloud ID remaps.
+  static String occurrenceKey(UpcomingHike hike, DateTime at) =>
+      stableContentHash([
+        'departure-reminder-v2',
+        reminderKey(hike),
+        at.toUtc().toIso8601String(),
+      ]);
 
   /// Synchronizes.
   Future<void> synchronize() {
@@ -168,46 +227,98 @@ class UpcomingHikeReminderService {
     final now = _now().toUtc();
     final states =
         (await database.loadPlannedHikeStates(
-              ownerPhoneNumber: ownerPhoneNumber,
-            ))
-            .where(
-              (state) =>
-                  !state.isConsumed &&
-                  !state.upcomingHike.isDeleted &&
-                  state.upcomingHike.departureTime.isAfter(now) &&
-                  state.reminderPreference?.enabled != false,
-            )
-            .toList()
-          ..sort(
-            (a, b) => a.upcomingHike.departureTime.compareTo(
-              b.upcomingHike.departureTime,
-            ),
-          );
+          ownerPhoneNumber: ownerPhoneNumber,
+        )).where(
+          (state) =>
+              !state.isConsumed &&
+              !state.upcomingHike.isDeleted &&
+              !state.upcomingHike.teamLaunchConsumed &&
+              state.upcomingHike.departureTime.isAfter(now) &&
+              state.reminderPreference?.enabled != false,
+        );
     final pending = await notifications.pending();
+    final transport = notifications;
+    final schedulingPolicy = transport is HikeReminderSchedulingPolicy
+        ? await (transport as HikeReminderSchedulingPolicy)
+              .schedulingPolicyKey()
+        : 'platform-scheduled';
     final rows = await database.loadHikeReminders();
-    // Leave capacity for native safety/check-in notifications on iOS (64 total).
+    final occurrences =
+        <String, ({LocalPlannedHikeState state, DateTime at})>{};
+    for (final state in states) {
+      final hike = state.upcomingHike;
+      final preference =
+          state.reminderPreference ??
+          const HikeReminderPreference(
+            firstReminderMinutesBefore: 60,
+            repeatIntervalMinutes: 0,
+          );
+      for (final at in preference.scheduledTimes(hike.departureTime)) {
+        final key = occurrenceKey(hike, at);
+        final previous = occurrences[key];
+        // A remap can briefly expose both snapshots. Prefer a real cloud link
+        // without creating another notification for the same occurrence.
+        if (previous == null ||
+            (previous.state.upcomingHike.id.startsWith('local_pending_') &&
+                !hike.id.startsWith('local_pending_'))) {
+          occurrences[key] = (state: state, at: at.toUtc());
+        }
+      }
+    }
+
+    // Keep an already queued, still-valid elapsed slot for OS delivery. It may
+    // be inexact/late; never replay it with show() when the app next opens.
+    final elapsedPending = rows
+        .where(
+          (row) =>
+              row.ownerPhoneNumber == ownerPhoneNumber &&
+              occurrences.containsKey(row.reminderKey) &&
+              !row.remindAt.isAfter(now) &&
+              pending.containsKey(row.notificationId),
+        )
+        .map((row) => row.notificationId)
+        .toSet();
+    // Reserve native safety/check-in capacity on iOS (64 total), and count
+    // occurrences rather than hikes when allocating the next 48 reminders.
     final ownIds = rows.map((row) => row.notificationId).toSet();
     final capacity =
-        (48 - pending.keys.where((id) => !ownIds.contains(id)).length).clamp(
-          0,
-          48,
-        );
-    final desired = <String, LocalPlannedHikeState>{};
-    for (final state in states) {
-      if (desired.length >= capacity) break;
-      desired.putIfAbsent(reminderKey(state.upcomingHike), () => state);
-    }
+        (48 -
+                pending.keys.where((id) => !ownIds.contains(id)).length -
+                elapsedPending.length)
+            .clamp(0, 48);
+    final future =
+        occurrences.entries
+            .where((entry) => entry.value.at.isAfter(now))
+            .toList()
+          ..sort((a, b) {
+            final byTime = a.value.at.compareTo(b.value.at);
+            return byTime != 0 ? byTime : a.key.compareTo(b.key);
+          });
+    final desired = Map.fromEntries(future.take(capacity));
     for (final row in rows) {
       if (!_active) return;
       if (row.ownerPhoneNumber == ownerPhoneNumber &&
           desired.containsKey(row.reminderKey)) {
         continue;
       }
+      if (row.ownerPhoneNumber == ownerPhoneNumber &&
+          occurrences.containsKey(row.reminderKey) &&
+          !row.remindAt.isAfter(now)) {
+        if (!pending.containsKey(row.notificationId) &&
+            row.status == 'scheduled') {
+          // Pending-list removal establishes expiry, not confirmed display.
+          await database.setHikeReminderStatus(row.notificationId, 'elapsed');
+        } else if (!pending.containsKey(row.notificationId) &&
+            row.status == 'pending') {
+          await database.setHikeReminderStatus(row.notificationId, 'missed');
+        }
+        continue;
+      }
       if (row.status == 'scheduled' ||
           pending.containsKey(row.notificationId)) {
         await notifications.cancel(row.notificationId);
       }
-      if (row.status != 'delivered') {
+      if (row.status != 'delivered' && row.status != 'elapsed') {
         await database.setHikeReminderStatus(row.notificationId, 'cancelled');
       }
       await database.deleteScheduledDeviceNotification(
@@ -217,7 +328,8 @@ class UpcomingHikeReminderService {
     }
     for (final entry in desired.entries) {
       if (!_active) return;
-      final hike = entry.value.upcomingHike;
+      final hike = entry.value.state.upcomingHike;
+      final at = entry.value.at;
       final title = 'Your hike is coming up';
       final start = hike.departureTime.toLocal();
       final time =
@@ -239,7 +351,7 @@ class UpcomingHikeReminderService {
         ).toString(),
       };
       final payload = jsonEncode(data);
-      final hash = stableContentHash([title, body, payload]);
+      final hash = stableContentHash([title, body, payload, schedulingPolicy]);
       final previous = rows
           .where(
             (row) =>
@@ -252,7 +364,7 @@ class UpcomingHikeReminderService {
         reminderKey: entry.key,
         hikeId: hike.id,
         departureAt: hike.departureTime,
-        remindAt: reminderTime(hike.departureTime, now),
+        remindAt: at,
         contentHash: hash,
       );
 
@@ -268,38 +380,139 @@ class UpcomingHikeReminderService {
         receivedAt: row.remindAt,
         source: 'local_reminder',
       );
-      if (!_active || row.status == 'delivered') continue;
-      if (row.status == 'scheduled' &&
-          !row.remindAt.isAfter(now) &&
-          !pending.containsKey(row.notificationId)) {
-        await recordHistory();
-        await database.setHikeReminderStatus(row.notificationId, 'delivered');
+      if (!_active || row.status == 'delivered' || row.status == 'elapsed') {
+        continue;
+      }
+      if (!row.remindAt.isAfter(_now().toUtc())) {
+        // The slot may pass while SQLite/OS work is in flight. Do not turn a
+        // missed departure reminder into an immediate notification/backlog.
+        await database.setHikeReminderStatus(row.notificationId, 'missed');
         continue;
       }
       if (row.status == 'scheduled' &&
           pending[row.notificationId] == payload &&
           previous?.contentHash == hash) {
-        if (row.remindAt.isAfter(now)) await recordHistory();
+        await recordHistory();
         continue;
       }
-      // Local creation, identity reconciliation and repeated refreshes share an ID.
-      if (row.remindAt.isAfter(now)) {
-        await notifications.schedule(
-          row.notificationId,
-          row.remindAt,
-          title,
-          body,
-          payload,
-        );
-        await recordHistory();
-        await database.setHikeReminderStatus(row.notificationId, 'scheduled');
-      } else {
-        if (pending.containsKey(row.notificationId)) {
-          await notifications.cancel(row.notificationId);
+      // The OS owns delivery after this call, including when Flutter is closed.
+      await notifications.schedule(
+        row.notificationId,
+        row.remindAt,
+        title,
+        body,
+        payload,
+      );
+      await recordHistory();
+      await database.setHikeReminderStatus(row.notificationId, 'scheduled');
+    }
+    await _queueAcknowledgement(occurrences, now);
+  }
+
+  /// Report only actual OS-owned jobs; never hold the local scheduler on cloud IO.
+  Future<void> _queueAcknowledgement(
+    Map<String, ({LocalPlannedHikeState state, DateTime at})> occurrences,
+    DateTime now,
+  ) async {
+    if (!_active || notifications is! HikeReminderScheduleAcknowledgements) {
+      return;
+    }
+    try {
+      final pending = await notifications.pending();
+      final rows = await database.loadHikeReminders();
+      final grouped = <String, Map<String, Object?>>{};
+      final groupedSlots = <String, Set<int>>{};
+      for (final row in rows) {
+        final occurrence = occurrences[row.reminderKey];
+        if (row.ownerPhoneNumber != ownerPhoneNumber || occurrence == null) {
+          continue;
         }
-        await notifications.show(row.notificationId, title, body, payload);
-        await recordHistory();
-        await database.setHikeReminderStatus(row.notificationId, 'delivered');
+        final future = row.remindAt.isAfter(now);
+        final queued =
+            row.status == 'scheduled' &&
+            pending.containsKey(row.notificationId);
+        final elapsed =
+            !future &&
+            const {'scheduled', 'elapsed', 'delivered'}.contains(row.status);
+        if (!(future ? queued : elapsed)) continue;
+        final hike = occurrence.state.upcomingHike;
+        if (hike.id.startsWith('local_pending_') ||
+            occurrence.state.scheduleSyncPending ||
+            occurrence.state.reminderSyncPending ||
+            occurrence.state.reminderPreference == null) {
+          continue;
+        }
+        final preference = occurrence.state.reminderPreference!.normalized();
+        grouped.putIfAbsent(
+          hike.id,
+          () => {
+            'hikeId': hike.id,
+            'departureAtMillis': hike.departureTime
+                .toUtc()
+                .millisecondsSinceEpoch,
+            'firstReminderMinutesBefore': preference.firstReminderMinutesBefore,
+            'repeatIntervalMinutes': preference.repeatIntervalMinutes,
+          },
+        );
+        groupedSlots
+            .putIfAbsent(hike.id, () => <int>{})
+            .add(row.remindAt.toUtc().millisecondsSinceEpoch);
+      }
+      final totalSlots = groupedSlots.values.fold<int>(
+        0,
+        (total, slots) => total + slots.length,
+      );
+      // A truncated replacement could release ownership of an already due slot.
+      // Leave the prior acknowledgement intact and retry on the next sync.
+      if (grouped.length > 96 ||
+          totalSlots > 512 ||
+          groupedSlots.values.any((slots) => slots.length > 128)) {
+        return;
+      }
+      final schedules = <Map<String, Object?>>[];
+      final hikeIds = grouped.keys.toList()..sort();
+      for (final id in hikeIds) {
+        final slots = groupedSlots[id]!.toList()..sort();
+        schedules.add({...grouped[id]!, 'slots': slots});
+      }
+      final installationId = await database.loadOrCreateAppInstanceId();
+      if (!_active) return;
+      final report = <String, Object?>{
+        'expectedOwner': ownerPhoneNumber,
+        'installationId': installationId,
+        'schedules': schedules,
+      };
+      final hash = stableContentHash(report);
+      if (_acknowledgementWork == null && hash == _lastAcknowledgedHash) return;
+      _nextAcknowledgement = (hash: hash, report: report);
+      if (_acknowledgementWork != null) return;
+      final work = _flushAcknowledgements();
+      _acknowledgementWork = work;
+      unawaited(
+        work.whenComplete(() {
+          if (identical(_acknowledgementWork, work)) {
+            _acknowledgementWork = null;
+          }
+        }),
+      );
+    } catch (_) {
+      // Offline/local reporting failures must never undo OS scheduling.
+    }
+  }
+
+  Future<void> _flushAcknowledgements() async {
+    while (_active && _nextAcknowledgement != null) {
+      final next = _nextAcknowledgement!;
+      _nextAcknowledgement = null;
+      if (next.hash == _lastAcknowledgedHash) continue;
+      try {
+        await (notifications as HikeReminderScheduleAcknowledgements)
+            .reportLocalSchedules(next.report);
+        if (_active) _lastAcknowledgedHash = next.hash;
+      } catch (_) {
+        // Do not cache a failed/uncertain acknowledgement. A later local sync
+        // supplies the newest complete snapshot and retries it.
+        return;
       }
     }
   }

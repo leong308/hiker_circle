@@ -6,6 +6,26 @@ bool isExpiredScheduledHikeData(
   required String ownerPhoneNumber,
   required DateTime now,
 }) {
+  if (data['teamLaunchConsumed'] == true) return false;
+  final status = '${data['status'] ?? ''}'.toLowerCase();
+  final removed =
+      data['isDeleted'] == true &&
+      data['expired'] == true &&
+      data['historyCategory'] == 'expired' &&
+      status == 'cancelled';
+  if (removed &&
+      ![
+        'startedAt',
+        'startedAtLocal',
+        'endedAt',
+        'endedAtLocal',
+      ].any((key) => data[key] != null && '${data[key]}'.isNotEmpty) &&
+      !(data['startedParticipantPhones'] is List &&
+          (data['startedParticipantPhones'] as List).contains(
+            ownerPhoneNumber,
+          ))) {
+    return true;
+  }
   final departure = DateTime.tryParse(
     '${data['departureTimeLocal'] ?? data['departureTime'] ?? ''}',
   );
@@ -16,7 +36,6 @@ bool isExpiredScheduledHikeData(
           .isAfter(now.toUtc())) {
     return false;
   }
-  final status = '${data['status'] ?? ''}'.toLowerCase();
   if (const {
     'active',
     'started',

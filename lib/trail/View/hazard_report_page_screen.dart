@@ -39,7 +39,7 @@ class _HazardReportPageState extends State<HazardReportPage> {
     }
   }
 
-  /// Validate the report and upload its selected evidence before creating the trail caution.
+  /// Save the report and evidence locally; the retry queue publishes it later.
   Future<void> submit() async {
     if (busy || selected == null || evidence.currentState?.picking == true) {
       return;
@@ -80,7 +80,7 @@ class _HazardReportPageState extends State<HazardReportPage> {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
-            'Caution reported. Other hikers can see it on the map.',
+            'Caution saved on this phone. It will send automatically when connected. Check history for its status.',
           ),
         ),
       );
@@ -138,6 +138,22 @@ class _HazardReportPageState extends State<HazardReportPage> {
                             ),
                           ],
                         ),
+                      ),
+                      PageHeaderAction(
+                        tooltip: 'Caution report history',
+                        icon: Icons.history_rounded,
+                        onPressed: busy
+                            ? null
+                            : () => Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => CautionReportHistoryPage(
+                                    session: widget.session,
+                                    repository: widget.hikerCircleRepository,
+                                  ),
+                                ),
+                              ),
+                        color: colors.onSurface,
+                        surface: colors.surfaceContainerLow,
                       ),
                     ],
                   ),

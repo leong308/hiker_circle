@@ -7,7 +7,7 @@ class HikeArrivalSafetyDialog extends StatefulWidget {
   const HikeArrivalSafetyDialog({super.key, required this.coordinator});
   final HikeArrivalSafetyCoordinator coordinator;
 
-  /// Owns closure of this dialog route when cancellation is acknowledged.
+  /// Closes the owned route once the response is saved on the phone.
   @override
   State<HikeArrivalSafetyDialog> createState() =>
       _HikeArrivalSafetyDialogState();
@@ -50,11 +50,7 @@ class _HikeArrivalSafetyDialogState extends State<HikeArrivalSafetyDialog> {
             color: colors.primary,
             size: 34,
           ),
-          title: Text(
-            state.receiptNeedsAcknowledgement
-                ? 'Safety response saved'
-                : 'Is everything okay?',
-          ),
+          title: const Text('Is everything okay?'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -67,9 +63,7 @@ class _HikeArrivalSafetyDialogState extends State<HikeArrivalSafetyDialog> {
               ),
               const SizedBox(height: 12),
               Text(state.detail),
-              if (!state.cancellationPending &&
-                  !state.dispatchStarted &&
-                  !state.receiptNeedsAcknowledgement) ...[
+              if (!state.cancellationPending && !state.dispatchStarted) ...[
                 const SizedBox(height: 18),
                 Text(
                   seconds > 0
@@ -94,18 +88,8 @@ class _HikeArrivalSafetyDialogState extends State<HikeArrivalSafetyDialog> {
           ),
           actions: [
             FilledButton(
-              onPressed: state.busy
-                  ? null
-                  : state.receiptNeedsAcknowledgement
-                  ? state.dismissReceipt
-                  : state.confirmEverythingOkay,
-              child: Text(
-                state.busy
-                    ? 'Confirming…'
-                    : state.receiptNeedsAcknowledgement
-                    ? 'Close'
-                    : 'Everything is okay!',
-              ),
+              onPressed: state.busy ? null : state.confirmEverythingOkay,
+              child: Text(state.busy ? 'Confirming…' : 'Everything is okay!'),
             ),
           ],
         ),

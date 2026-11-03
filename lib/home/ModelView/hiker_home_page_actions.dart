@@ -213,6 +213,7 @@ abstract final class _HikerHomePageDataActions {
     String? hazardId,
     required String hikeId,
     bool withdrawSelf,
+    UpcomingHike? snapshot,
   })
   cancelUpcomingHike(HikerCircleFirebaseRepository receiver) =>
       receiver.cancelUpcomingHike;

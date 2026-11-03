@@ -27,7 +27,9 @@ class PendingCautionMedia {
     required this.file,
     required this.sizeBytes,
     required this.contentType,
+    String? key,
   }) : key =
+           key ??
            'media_${DateTime.now().microsecondsSinceEpoch}_${_sequence++}_${math.Random.secure().nextInt(0x7fffffff).toRadixString(16)}';
   static int _sequence = 0;
   final XFile file;
@@ -45,8 +47,9 @@ class TrailCautionService {
   /// Upload selected evidence and return the metadata consumed by the caution backend.
   Future<List<Map<String, dynamic>>> upload(
     String hazardId,
-    List<PendingCautionMedia> files,
-  ) async {
+    List<PendingCautionMedia> files, {
+    String? expectedUid,
+  }) async {
     if (files.length > 6 ||
         files.fold<int>(0, (a, b) => a + b.sizeBytes) > cautionMediaLimit) {
       throw StateError(
@@ -55,8 +58,14 @@ class TrailCautionService {
     }
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) throw StateError('Sign in to report a caution.');
+    if (expectedUid != null && uid != expectedUid) {
+      throw StateError('The reporting account changed.');
+    }
     final result = <Map<String, dynamic>>[];
     for (final item in files) {
+      if (FirebaseAuth.instance.currentUser?.uid != uid) {
+        throw StateError('The reporting account changed.');
+      }
       var path = item.storagePath;
       if (path == null) {
         final extension = cautionMediaTypes.entries

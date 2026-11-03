@@ -2203,6 +2203,10 @@ class UpcomingHike {
   /// Returns is local pending sync.
   bool get isLocalPendingSync => id.startsWith('local_pending_');
 
+  /// Removed plans remain visible in Expired history, including future plans.
+  bool get isCancelledForHistory =>
+      isDeleted && deletedReason == 'user_cancelled';
+
   /// Returns visible until.
   DateTime get visibleUntil =>
       departureTime.toUtc().add(visibleAfterDepartureGrace);
@@ -2237,6 +2241,11 @@ class UpcomingHike {
     if (isDeleted) 'isDeleted': true,
     if (teamLaunchConsumed) 'teamLaunchConsumed': true,
     if (deletedReason.isNotEmpty) 'deletedReason': deletedReason,
+    if (isCancelledForHistory) ...{
+      'status': 'cancelled',
+      'expired': true,
+      'historyCategory': 'expired',
+    },
     if (deletedAt != null)
       'deletedAtLocal': deletedAt!.toUtc().toIso8601String(),
     if (joinRequestStatus.isNotEmpty) 'joinRequestStatus': joinRequestStatus,

@@ -240,8 +240,14 @@ class _ExpiredHikeDetailPageState extends State<ExpiredHikeDetailPage> {
                         value: expiredHikeDate(hike.departureTime),
                       ),
                       _PlanRow(
-                        label: 'Start window closed',
-                        value: expiredHikeDate(hike.visibleUntil),
+                        label: hike.isCancelledForHistory
+                            ? 'Removed on'
+                            : 'Start window closed',
+                        value: expiredHikeDate(
+                          hike.isCancelledForHistory
+                              ? hike.deletedAt ?? hike.createdAt
+                              : hike.visibleUntil,
+                        ),
                         emphasized: true,
                       ),
                       _PlanRow(

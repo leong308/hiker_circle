@@ -8,6 +8,10 @@ const NON_EXPIRED_STATUSES = new Set(['active', 'started', 'ended', 'completed',
 function isExpiredScheduledHike(hike, ownerPhoneNumber, now = Date.now()) {
   const departure = dateMillis(hike?.departureTimeLocal || hike?.departureTime);
   if (hike?.teamLaunchConsumed === true) return false;
+  const removed = hike?.isDeleted === true && hike.expired === true
+    && hike.historyCategory === 'expired' && hike.status === 'cancelled';
+  if (removed && !hike.startedAt && !hike.startedAtLocal && !hike.endedAt && !hike.endedAtLocal
+    && !(Array.isArray(hike.startedParticipantPhones) && hike.startedParticipantPhones.includes(ownerPhoneNumber))) return true;
   if (!Number.isFinite(departure) || departure + START_WINDOW_MS > now) return false;
   if (NON_EXPIRED_STATUSES.has(String(hike.status || '').toLowerCase())
       || hike.startedAt || hike.startedAtLocal || hike.endedAt || hike.endedAtLocal) return false;

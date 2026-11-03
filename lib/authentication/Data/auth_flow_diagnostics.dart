@@ -2,7 +2,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// Debug-only stage markers. Never include request bodies, identifiers or tokens.
+/// Local stage markers. Release builds retain failures only. Never include
+/// request bodies, exception messages, identifiers or tokens.
 abstract final class AuthFlowDiagnostics {
   /// Computes event.
   static void event(
@@ -11,7 +12,7 @@ abstract final class AuthFlowDiagnostics {
     Object? error,
     int? elapsedMilliseconds,
   }) {
-    if (!kDebugMode) return;
+    if (!kDebugMode && event != 'failure') return;
     final code = switch (error) {
       FirebaseException value => value.code,
       PlatformException value => value.code,

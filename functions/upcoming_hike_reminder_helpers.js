@@ -106,6 +106,9 @@ function upcomingHikeReminderDue({
   const lastSentMillis = sameDeparture
     ? dateMillis(rawPreference?.lastSentAtLocal || rawPreference?.lastSentAt)
     : Number.NaN;
+  const lastLocalSlotMillis = sameDeparture
+    ? dateMillis(rawPreference?.lastLocalReminderSlotAtLocal)
+    : Number.NaN;
   const minutesUntil = Math.ceil((departureMillis - nowMillis) / 60000);
 
   // Fixed slots prevent replay. A lifetime count would incorrectly block
@@ -117,7 +120,8 @@ function upcomingHikeReminderDue({
   const slot = times.findLast(time => time <= nowMillis);
   const due = Number.isFinite(slot)
     && nowMillis - slot < 5 * 60000
-    && (!Number.isFinite(lastSentMillis) || lastSentMillis < slot);
+    && (!Number.isFinite(lastSentMillis) || lastSentMillis < slot)
+    && (!Number.isFinite(lastLocalSlotMillis) || lastLocalSlotMillis < slot);
   return { due, preference, sentCount, minutesUntil, slotMillis: slot };
 }
 

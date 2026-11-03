@@ -15,11 +15,15 @@ class HikeSafetySettingsPage extends StatefulWidget {
     this.loadDraft,
     this.onSave,
     this.onEditContacts,
+    this.onDelete,
+    this.onRemoved,
   });
   final HikeSessionDraft initialDraft;
   final Future<HikeSessionDraft> Function()? loadDraft;
   final Future<void> Function(HikeSessionDraft)? onSave;
   final Future<List<String>> Function()? onEditContacts;
+  final Future<void> Function()? onDelete;
+  final VoidCallback? onRemoved;
   final Future<String?> Function(HikeSessionDraft) onContinue;
 
   /// Creates the presentation state for this widget.
@@ -37,10 +41,11 @@ class _HikeSafetySettingsPageState extends State<HikeSafetySettingsPage> {
       _editingContacts = false,
       _complete = false,
       _loadFailed = false;
+  bool _deleting = false;
   String? _error;
 
   /// Returns busy.
-  bool get _busy => _loading || _continuing || _editingContacts;
+  bool get _busy => _loading || _continuing || _editingContacts || _deleting;
 
   /// Initializes bindings and starts the screen lifecycle.
   @override
@@ -129,6 +134,54 @@ class _HikeSafetySettingsPageState extends State<HikeSafetySettingsPage> {
   }
 
   /// Builds this widget from its current presentation state.
+  Future<void> _delete() async {
+    if (_busy || widget.onDelete == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove this hike?'),
+        content: Text(
+          _draft.hikeType == HikeType.team
+              ? 'This cancels the upcoming hike for everyone and moves it to Expired history. It will sync when connected.'
+              : 'This removes the upcoming hike and moves it to Expired history. It will sync when connected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep hike'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove hike'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    final route = ModalRoute.of<String>(context);
+    setState(() {
+      _deleting = true;
+      _error = null;
+    });
+    try {
+      await widget.onDelete!();
+      if (!mounted) return;
+      setState(() => _complete = true);
+      HikeStartNavigation.closeOwnedRoute(route, 'removed');
+      widget.onRemoved?.call();
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error =
+              'Could not save the removal on this phone. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -136,7 +189,18 @@ class _HikeSafetySettingsPageState extends State<HikeSafetySettingsPage> {
       canPop: _complete || !_busy,
       child: Scaffold(
         backgroundColor: scheme.surfaceContainerLow,
-        appBar: const PageHeaderAppBar(title: Text('Safety Settings')),
+        appBar: PageHeaderAppBar(
+          title: const Text('Safety Settings'),
+          actions: [
+            if (widget.onDelete != null)
+              IconButton(
+                key: const ValueKey('delete-upcoming-hike'),
+                tooltip: 'Remove upcoming hike',
+                onPressed: _busy ? null : _delete,
+                icon: Icon(Icons.delete_outline_rounded, color: scheme.error),
+              ),
+          ],
+        ),
         body: SafeArea(
           top: false,
           child: Column(

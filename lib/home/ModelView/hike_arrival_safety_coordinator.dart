@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import '../../core/services/network_reachability_service.dart';
+import '../Data/hike_arrival_response_queue.dart';
 
 import '../Data/hike_arrival_safety_service.dart';
 import '../Model/hike_arrival_safety.dart';
@@ -20,8 +22,16 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
     required this.speak,
     this.native = const HikeArrivalSafetyService(),
     this.repository = const HikeArrivalSafetyRepository(),
+    HikeArrivalResponseQueue? responses,
     DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now;
+  }) : _clock = clock ?? DateTime.now,
+       _responses =
+           responses ??
+           HikeArrivalResponseQueue(
+             owner: owner,
+             repository: repository,
+             clock: clock,
+           );
   final String owner;
   final ActiveHikeSession? Function() readHike;
   final bool Function() isReady, canPresent;
@@ -31,14 +41,16 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
   final HikeArrivalSafetyService native;
   final HikeArrivalSafetyRepository repository;
   final DateTime Function() _clock;
+  final HikeArrivalResponseQueue _responses;
+  StreamSubscription<void>? _connection;
+  final _closedLocally = <String>{};
+  final _retainedResponses = <String>{};
   Timer? _timer;
   bool _disposed = false,
       _refreshing = false,
       _presenting = false,
       _syncing = false;
-  bool _sawActiveHike = false;
   bool busy = false;
-  bool receiptNeedsAcknowledgement = false;
   String? error;
   Map<String, dynamic>? _local, _cloud;
   Map<String, dynamic> _proof = {};
@@ -55,13 +67,22 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
   bool get cancellationPending =>
       _local?['safe'] == true && _local?['cloudAcknowledged'] != true;
 
-  /// Preserves the popup until confirmation or actual recorded arrival.
-  bool get needsPrompt =>
-      busy ||
-      receiptNeedsAcknowledgement ||
-      _local != null &&
-          _local?['arrived'] != true &&
-          (_local?['overdue'] == true || cancellationPending);
+  /// Pending cloud work never reopens a locally answered or ended hike.
+  bool get needsPrompt {
+    final hike = readHike();
+    if (hike == null ||
+        _local == null ||
+        _local?['safe'] == true ||
+        _local?['arrived'] == true ||
+        _closedLocally.contains(_trackingKey) ||
+        const {'safe', 'arrived', 'completed'}.contains(_cloud?['status'])) {
+      return false;
+    }
+    final plan = HikeArrivalPlan.fromHike(hike);
+    return plan != null &&
+        plan.trackingKey(owner) == _local?['trackingKey'] &&
+        _local?['overdue'] == true;
+  }
 
   /// Uses the authoritative deadline once cloud arming has completed.
   int get remainingSeconds {
@@ -82,9 +103,6 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
 
   /// Gives an accurate explanation during local-first cancellation or delivery failure.
   String get detail {
-    if (cancellationPending) {
-      return 'Your safe response is saved on this phone. Connecting to cancel the pending contact alert.';
-    }
     if (dispatchStarted) {
       return 'A contact alert has already been submitted or may be sending. Confirming now stops any remaining messages; it cannot recall one already sent.';
     }
@@ -94,12 +112,16 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
     if (_cloud?['status'] == 'no_contacts') {
       return 'No emergency contacts are saved in your cloud account. Go to SOS page and add now!';
     }
-    return 'Your recorded footprints have not confirmed arrival at a saved peak or the trail end. Confirm that you are okay to cancel the pending alert to your emergency contacts.';
+    return 'Your latest planned arrival time has passed and your recorded location has not confirmed arrival at a saved peak or the trail end. Please confirm that you are okay.';
   }
 
   /// Starts after the home shell can restore its active session.
   void start() {
     native.onChanged(refresh);
+    _connection ??= NetworkReachabilityService.instance.connectionAvailable
+        .listen((_) {
+          unawaited(_responses.flush(force: true));
+        });
     _timer ??= Timer.periodic(
       const Duration(seconds: 1),
       (_) => unawaited(refresh()),
@@ -114,17 +136,20 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
     try {
       final hike = readHike();
       if (hike != null) {
-        _sawActiveHike = true;
         final plan = HikeArrivalPlan.fromHike(hike);
         if (plan == null) {
-          await native.stop(owner);
+          await _retire(await native.read(owner));
           _local = null;
+          unawaited(_responses.flush());
           return;
         }
         final key = plan.trackingKey(owner);
         if (_trackingKey != key || _sessionId != hike.sessionId) {
           final restored = await native.read(owner);
           if (_disposed) return;
+          if (restored != null && restored['trackingKey'] != key) {
+            await _retainResponse(restored, reason: 'hike_ended');
+          }
           _proof = restored?['trackingKey'] == key
               ? Map<String, dynamic>.from(
                   restored?['proof'] as Map? ?? const {},
@@ -157,27 +182,31 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
         });
         if (_disposed) return;
       } else {
-        // Retain an offline safe response until the server acknowledges it, including after app termination.
+        // A legacy native record must not become a modal on an ended hike.
+        // Transfer cancellation to SQLite before clearing its warning state.
         final restored = await native.read(owner);
         if (_disposed) return;
-        if (_sawActiveHike && restored != null && restored['safe'] != true) {
-          _local = await native.confirmSafe(
-            owner,
-            restored['trackingKey'] as String,
-          );
-        } else {
-          _local = restored;
-        }
-        _sawActiveHike = false;
-        _sessionId ??= _local?['sessionId'] as String?;
-        _trackingKey ??= _local?['trackingKey'] as String?;
+        _local = null;
+        _cloud = null;
+        _sessionId = null;
+        _trackingKey = null;
+        _cloudGeneration++;
+        _publish();
+        await _retire(restored);
+        unawaited(_responses.flush());
+        return;
       }
       if (_local == null) return;
+      if (_local?['safe'] == true || _local?['arrived'] == true) {
+        _closedLocally.add(_trackingKey!);
+        await _retainResponse(_local!);
+      }
+      unawaited(_responses.flush());
       unawaited(
         _synchronize().whenComplete(_publish).catchError((Object _) {}),
       );
       if (_disposed) return;
-      if (_local?['overdue'] == true || _local?['notifiedAtMillis'] is num) {
+      if (needsPrompt) {
         final key = _trackingKey!;
         if (_logged.add(key)) {
           unawaited(
@@ -216,17 +245,41 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
     } on MissingPluginException {
       // Unsupported platforms cannot arm a cloud escalation without the local warning surface.
     } catch (failure) {
-      error =
-          'Unable to refresh the arrival check. Your saved response will retry when connected.';
-      _publish();
+      debugPrint('Arrival safety recovery will retry: ${failure.runtimeType}');
     } finally {
       _refreshing = false;
+      _publish();
     }
+  }
+
+  Future<void> _retainResponse(
+    Map<String, dynamic> state, {
+    String? reason,
+  }) async {
+    final identity = '${state['trackingKey']}:${state['sessionId']}';
+    if (_retainedResponses.contains(identity)) return;
+    await _responses.enqueue(state, reason: reason);
+    _retainedResponses.add(identity);
+  }
+
+  Future<void> _retire(Map<String, dynamic>? state) async {
+    if (state != null) await _retainResponse(state, reason: 'hike_ended');
+    await native.stop(owner);
   }
 
   /// Serializes routine cloud refreshes while allowing an explicit safe response to interrupt sending work.
   Future<void> _synchronize() async {
-    if (_disposed || _syncing || _sessionId == null || _local == null) return;
+    if (_disposed ||
+        _syncing ||
+        _sessionId == null ||
+        _local == null ||
+        readHike() == null ||
+        _local?['safe'] == true ||
+        _local?['arrived'] == true ||
+        _closedLocally.contains(_trackingKey) ||
+        !NetworkReachabilityService.instance.latest.isOnline) {
+      return;
+    }
     if (_lastCloudAttempt != null &&
         _clock().difference(_lastCloudAttempt!) < const Duration(seconds: 15)) {
       return;
@@ -243,19 +296,13 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
           });
       if (_disposed || generation != _cloudGeneration) return;
       if (result == null) return;
-      final plan = _local!['plan'] as Map;
-      final event = HikeArrivalPlan.eventForSession(
-        session,
-        (plan['latestArrivalAtMillis'] as num).toInt(),
-      );
-      if ((_local?['safe'] == true || _local?['arrived'] == true) &&
-          !const {'safe', 'arrived', 'completed'}.contains(result['status'])) {
-        result = await repository.call('confirmHikeArrivalSafety', {
-          'sessionId': session,
-          'eventId': event,
-          if (_local?['arrived'] == true) 'reason': 'recorded_arrival',
-        });
-      } else if (_local?['overdue'] == true && result['enabled'] == true) {
+      if (_local?['safe'] == true ||
+          _local?['arrived'] == true ||
+          _closedLocally.contains(_trackingKey) ||
+          readHike() == null) {
+        return;
+      }
+      if (_local?['overdue'] == true && result['enabled'] == true) {
         result = await repository.call('checkHikeArrivalSafety', {
           'sessionId': session,
         });
@@ -281,58 +328,48 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
         await native.stop(owner);
         _local = null;
       } else {
-        error = 'The cloud check will retry when connected.';
+        debugPrint('Arrival watchdog synchronization will retry.');
       }
     } catch (_) {
       if (!_disposed && generation == _cloudGeneration) {
-        error = 'The cloud check will retry when connected.';
+        debugPrint('Arrival watchdog synchronization will retry.');
       }
     } finally {
       _syncing = false;
     }
   }
 
-  /// A button press first commits the native safe flag, then cancels authenticated cloud work.
+  /// The native commit settles the question; cloud cancellation is background work.
   Future<void> confirmEverythingOkay() async {
-    if (_disposed || busy || _local == null || _trackingKey == null) return;
+    if (_disposed || busy || !needsPrompt || _trackingKey == null) return;
     busy = true;
     error = null;
     _cloudGeneration++;
-    final generation = _cloudGeneration;
     final tracking = _trackingKey!;
-    final session = _sessionId;
     _publish();
     try {
       final saved = await native.confirmSafe(owner, tracking);
-      if (_disposed || generation != _cloudGeneration) return;
-      _local = saved;
-      _publish();
-      if (_local == null || session == null) return;
-      final armed =
-          _cloud ??
-          await repository.call('armHikeArrivalSafety', {
-            'sessionId': session,
-            'warningAtMillis': _local!['warningAtMillis'],
-          });
-      if (_disposed || generation != _cloudGeneration) return;
-      if (armed == null) {
-        error = 'Saved on this phone. Cloud cancellation is unavailable.';
-        return;
+      if (_disposed) return;
+      if (saved == null || saved['safe'] != true) {
+        throw StateError('Local response was not saved.');
       }
-      final confirmed = await repository.call('confirmHikeArrivalSafety', {
-        'sessionId': session,
-        'eventId': armed['eventId'],
-      });
-      if (_disposed || generation != _cloudGeneration) return;
-      _cloud = confirmed;
-      receiptNeedsAcknowledgement = dispatchStarted;
-      _local = await native.configure({..._local!, 'cloud': _cloud});
-      _lastCloudAttempt = _clock();
+      if (_trackingKey == tracking) _local = saved;
+      _closedLocally.add(tracking);
+      // The native safe flag survives termination even if SQLite transfer has
+      // not finished. Recovery migrates it without showing another question.
+      unawaited(
+        _retainResponse(saved)
+            .then(
+              (_) => _responses.flush(
+                force: NetworkReachabilityService.instance.latest.isOnline,
+              ),
+            )
+            .catchError((Object _) {
+              debugPrint('Saved arrival response will reconcile on recovery.');
+            }),
+      );
     } catch (_) {
-      if (_disposed || generation != _cloudGeneration) return;
-      error =
-          'Your response is saved on this phone. Connecting to cancel the contact alert.';
-      _lastCloudAttempt = null;
+      error = 'Unable to save your response on this phone. Please try again.';
     } finally {
       busy = false;
       _publish();
@@ -344,17 +381,12 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  /// Closes a late confirmation receipt after explaining that an already-started message cannot be recalled.
-  void dismissReceipt() {
-    receiptNeedsAcknowledgement = false;
-    _publish();
-  }
-
   /// Releases only this feature's listeners; the persisted native warning survives process/UI disposal.
   @override
   void dispose() {
     _disposed = true;
     _timer?.cancel();
+    _connection?.cancel();
     native.onChanged(null);
     super.dispose();
   }

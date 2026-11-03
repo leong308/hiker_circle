@@ -70,7 +70,10 @@ class FirebaseUserRepository {
         .collection('mobileSessions')
         .doc(documentIdForPhoneNumber(phoneNumber))
         .snapshots(includeMetadataChanges: true)
-        .where((event) => !event.metadata.isFromCache)
+        .where(
+          (event) =>
+              !event.metadata.isFromCache && !event.metadata.hasPendingWrites,
+        )
         .map((event) => event.data() ?? <String, dynamic>{});
   }
 
@@ -97,10 +100,27 @@ class FirebaseUserRepository {
       await _requireAuthenticatedMfaSession(session);
       final account = _users.doc(documentIdForPhoneNumber(session.phoneNumber));
       final snapshots = await Future.wait([
-        account.get(),
-        userModuleDocument(account, UserModule.profile).get(),
-        userModuleDocument(account, UserModule.devices).get(),
+        account.get(const GetOptions(source: Source.server)),
+        userModuleDocument(
+          account,
+          UserModule.profile,
+        ).get(const GetOptions(source: Source.server)),
+        userModuleDocument(
+          account,
+          UserModule.devices,
+        ).get(const GetOptions(source: Source.server)),
       ]);
+      // A missing/stale downloaded document is not proof of account deletion,
+      // disability or device replacement. Only confirmed server data may revoke
+      // a restored session or replace its saved profile/onboarding state.
+      if (snapshots.any(
+        (snapshot) =>
+            snapshot.metadata.isFromCache || snapshot.metadata.hasPendingWrites,
+      )) {
+        throw const FirebaseUserRepositoryException(
+          'Your saved login is available. Connect to verify the latest account state.',
+        );
+      }
       if (!snapshots[0].exists) {
         throw const FirebaseUserRepositoryException(
           'Your account record is unavailable. Sign in again.',
@@ -200,9 +220,15 @@ class FirebaseUserRepository {
     } on FirebaseAuthException catch (error) {
       throw FirebaseUserRepositoryException(
         error.message ?? 'Firebase authentication failed.',
-        requiresSignIn:
-            error.code != 'network-request-failed' &&
-            error.code != 'too-many-requests',
+        // Unknown/internal/provider errors can be transient while offline.
+        // Erase local authentication only for a definitive credential denial.
+        requiresSignIn: const {
+          'user-disabled',
+          'user-not-found',
+          'invalid-user-token',
+          'user-token-expired',
+          'id-token-revoked',
+        }.contains(error.code),
       );
     }
   }

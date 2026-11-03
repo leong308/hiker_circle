@@ -646,6 +646,18 @@ import ActivityKit
         self.iosNativeSafetyStatus(result)
       case "requestIosSafetyPermissions":
         self.requestIosSafetyPermissions(result)
+      case "openHikeReminderNotificationSettings":
+        let settingsPath: String
+        if #available(iOS 16.0, *) {
+          settingsPath = UIApplication.openNotificationSettingsURLString
+        } else {
+          settingsPath = UIApplication.openSettingsURLString
+        }
+        guard let settingsUrl = URL(string: settingsPath) else {
+          result(false)
+          return
+        }
+        UIApplication.shared.open(settingsUrl) { opened in result(opened) }
       case "openBackgroundLocationSettings",
            "openFullScreenIntentSettings",
            "openOverlaySettings",

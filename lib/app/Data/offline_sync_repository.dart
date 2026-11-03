@@ -46,28 +46,58 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
     String hikeId,
     bool withdrawSelf,
     String? hazardId,
+    UpcomingHike? snapshot,
   ) async {
     final session = await _localDatabase.loadSession();
     if (session == null) throw _accountChangedForChat();
-    final state = await _localPlanningState(session, hikeId);
+    if (snapshot != null &&
+        await _localPlanningState(session, hikeId) == null) {
+      await _localDatabase.saveUpcomingHikesForPlanning(
+        ownerPhoneNumber: session.phoneNumber,
+        upcomingHikes: [snapshot],
+      );
+    }
+    final resolvedId = await _localDatabase.resolvePlannedHikeId(
+      ownerPhoneNumber: session.phoneNumber,
+      hikeId: hikeId,
+    );
+    final state = await _localPlanningState(session, resolvedId);
+    final archive = !withdrawSelf;
+    if (archive &&
+        state != null &&
+        state.upcomingHike.creatorPhone != session.phoneNumber) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Only the host can remove this hike.',
+      );
+    }
     final intent = <String, Object?>{
-      'hikeId': hikeId,
+      'hikeId': resolvedId,
       'withdrawSelf': withdrawSelf,
+      if (archive) 'archiveAsExpired': true,
+      if (archive && state?.scheduleSyncPending == true)
+        'uploadCancelledHistory': true,
       if (hazardId != null) 'hazardId': hazardId,
       'wasConsumed': state?.isConsumed ?? false,
-      if (hikeId.startsWith('local_pending_') && state != null)
+      if (archive &&
+          state != null &&
+          state.creationKey.isNotEmpty &&
+          (state.scheduleSyncPending ||
+              resolvedId ==
+                  'upcoming_${crypto.sha256.convert(utf8.encode('${session.phoneNumber}:${state.creationKey}')).toString().substring(0, 40)}'))
         'creationKey': state.creationKey,
+      if (archive && state?.upcomingHike.draft != null) ...{
+        'draft': state!.upcomingHike.draft!.toPersistence(),
+        'createdAtLocal': state.upcomingHike.createdAt
+            .toUtc()
+            .toIso8601String(),
+        'joinPolicy': state.joinPolicy,
+      },
     };
-    await _localDatabase.saveLocalPreference(
-      ownerPhoneNumber: session.phoneNumber,
-      key: 'pending_hike_cancellation:$hikeId',
-      value: intent,
-      isDirty: true,
-    );
-    await _localDatabase.setPlannedHikeConsumed(
-      session.phoneNumber,
-      hikeId,
-      true,
+    await _localDatabase.queuePlannedHikeCancellation(
+      owner: session.phoneNumber,
+      hikeId: resolvedId,
+      intent: intent,
+      archiveAsExpired: archive,
     );
     HikerCircleFirebaseRepository._planningChanges.add(session.phoneNumber);
     if (_firebaseBootstrapResult.isAvailable) {
@@ -76,56 +106,120 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
   }
 
   /// Cloud lifecycle decisions override a pending cancellation if the hike already started.
-  Future<void> _flushPlanCancellations(AppSession session) async {
-    final owner = session.phoneNumber;
-    final dirty = await _localDatabase.loadDirtyLocalPreferences(
-      ownerPhoneNumber: owner,
-    );
-    for (final entry in dirty.entries.where(
-      (e) => e.key.startsWith('pending_hike_cancellation:'),
-    )) {
-      if (entry.value is! Map) continue;
-      final intent = Map<String, dynamic>.from(entry.value as Map);
-      final localId = intent['hikeId'] as String;
-      final creationKey = intent['creationKey'] as String?;
-      final cloudId = creationKey == null
-          ? localId
-          : 'upcoming_${crypto.sha256.convert(utf8.encode('$owner:$creationKey')).toString().substring(0, 40)}';
-      try {
-        await _syncWrite('cancelUpcomingHike', owner, {
-          'hikeId': cloudId,
-          'withdrawSelf': intent['withdrawSelf'],
-          if (creationKey != null) 'creationKey': creationKey,
-          if (intent['hazardId'] != null) 'hazardId': intent['hazardId'],
-        });
-        await _localDatabase.saveLocalPreference(
-          ownerPhoneNumber: owner,
-          key: entry.key,
-          value: null,
-        );
-        await _invalidateReadModel(owner, 'my_upcoming_hikes');
-      } on FirebaseFunctionsException catch (error) {
-        if (!{
-          'permission-denied',
-          'failed-precondition',
-          'not-found',
-        }.contains(error.code)) {
-          rethrow;
-        }
-        await _localDatabase.saveLocalPreference(
-          ownerPhoneNumber: owner,
-          key: entry.key,
-          value: null,
-        );
-        if (error.code != 'not-found') {
-          await _localDatabase.setPlannedHikeConsumed(
-            owner,
-            localId,
-            intent['wasConsumed'] == true,
+  Future<void> _flushPlanCancellations(
+    AppSession session, {
+    Set<String>? confirmedHikes,
+  }) async {
+    final synced = confirmedHikes ?? <String>{};
+    try {
+      final owner = session.phoneNumber;
+      final dirty = await _localDatabase.loadDirtyLocalPreferences(
+        ownerPhoneNumber: owner,
+      );
+      for (final entry in dirty.entries.where(
+        (e) => e.key.startsWith('pending_hike_cancellation:'),
+      )) {
+        if (entry.value is! Map) continue;
+        final intent = Map<String, dynamic>.from(entry.value as Map);
+        final localId = intent['hikeId'] as String;
+        final creationKey = intent['creationKey'] as String?;
+        final cloudId = creationKey == null
+            ? localId
+            : 'upcoming_${crypto.sha256.convert(utf8.encode('$owner:$creationKey')).toString().substring(0, 40)}';
+        var cancellationCommitted = false;
+        try {
+          final cancellation = await _syncWrite('cancelUpcomingHike', owner, {
+            'hikeId': cloudId,
+            'withdrawSelf': intent['withdrawSelf'],
+            if (intent['archiveAsExpired'] == true) 'archiveAsExpired': true,
+            if (intent['cancelledAtLocal'] != null)
+              'cancelledAtLocal': intent['cancelledAtLocal'],
+            if (creationKey != null) 'creationKey': creationKey,
+            if (intent['hazardId'] != null) 'hazardId': intent['hazardId'],
+          });
+          cancellationCommitted = true;
+          // A cancellation tombstone fences any in-flight ordinary creation.
+          // Then create the full offline plan directly in its cancelled state.
+          if (creationKey != null &&
+              intent['archiveAsExpired'] == true &&
+              (intent['uploadCancelledHistory'] == true ||
+                  cancellation['needsHistoryUpload'] == true)) {
+            if (intent['draft'] is! Map) {
+              throw StateError('Saved cancelled plan is incomplete.');
+            }
+            final payload = <String, dynamic>{
+              'creationKey': creationKey,
+              'draft': intent['draft'],
+              'joinPolicy': intent['joinPolicy'] ?? 'approval',
+              'cancelledRecovery': true,
+              'offlineRecovery': {'createdAtLocal': intent['createdAtLocal']},
+            };
+            final request = _scheduleHikeRequest;
+            final confirmedId =
+                await (request != null
+                        ? request(payload)
+                        : _resolvedFunctions
+                              .httpsCallable('scheduleUpcomingHike')
+                              .call<Map<String, dynamic>>(payload)
+                              .then(
+                                (result) => _stringFrom(result.data['hikeId']),
+                              ))
+                    .timeout(
+                      HikerCircleFirebaseRepository._firebaseReadTimeout,
+                    );
+            if (confirmedId != cloudId) {
+              throw StateError('Cancelled schedule identity changed.');
+            }
+            if (await _cloudReadOwner() != owner) {
+              throw _accountChangedForChat();
+            }
+            await _localDatabase.confirmScheduledHike(
+              ownerPhoneNumber: owner,
+              creationKey: creationKey,
+              cloudHikeId: confirmedId,
+            );
+          }
+          final acknowledged = await _localDatabase.clearLocalPreferenceIfValue(
+            ownerPhoneNumber: owner,
+            key: entry.key,
+            expectedValue: entry.value,
           );
+          if (acknowledged) synced.add(cloudId);
+          await _invalidateReadModel(owner, 'my_upcoming_hikes');
+          await _conditionalCache.invalidateTypes(
+            owner: owner,
+            types: {'expired_hike_history_page'},
+          );
+        } on FirebaseFunctionsException catch (error) {
+          if (cancellationCommitted &&
+              creationKey != null &&
+              intent['archiveAsExpired'] == true) {
+            rethrow;
+          }
+          if (!{
+            'permission-denied',
+            'failed-precondition',
+            'not-found',
+          }.contains(error.code)) {
+            rethrow;
+          }
+          await _localDatabase.saveLocalPreference(
+            ownerPhoneNumber: owner,
+            key: entry.key,
+            value: null,
+          );
+          if (error.code != 'not-found') {
+            await _localDatabase.restoreRejectedPlannedCancellation(
+              owner: owner,
+              hikeId: localId,
+              intent: intent,
+            );
+          }
         }
+        HikerCircleFirebaseRepository._planningChanges.add(owner);
       }
-      HikerCircleFirebaseRepository._planningChanges.add(owner);
+    } finally {
+      if (confirmedHikes == null) _publishUpcomingHikeSync(session, synced);
     }
   }
 

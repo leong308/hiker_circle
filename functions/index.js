@@ -79,6 +79,7 @@ const {
 const {
   upcomingHikeReminderDue,
 } = require('./upcoming_hike_reminder_helpers');
+const localHikeReminderDelivery = require('./local_hike_reminder_delivery');
 const {
   normalizeNearbySosReport,
 } = require('./nearby_sos_helpers');
@@ -351,7 +352,10 @@ async function sendArrivalFootprintFile({phone, image, caption, fileName}) {
 
 for (const [name, method] of Object.entries({armHikeArrivalSafety: 'arm', confirmHikeArrivalSafety: 'confirmSafe'})) {
   exports[name] = onCall({timeoutSeconds: 60}, async request => {
-    const {uid} = authenticatedPhoneFor(request, 'Sign in to manage your hike arrival check.');
+    const {uid, phoneNumber} = authenticatedPhoneFor(request, 'Sign in to manage your hike arrival check.');
+    if (request.data?.expectedOwner != null && request.data.expectedOwner !== phoneNumber) {
+      throw new HttpsError('unauthenticated', 'The arrival response belongs to another signed-in account.');
+    }
     return require('./hike_arrival_safety')[method]({db: admin.firestore(), uid,
       sessionId: request.data?.sessionId, eventId: request.data?.eventId,
       warningAtMillis: request.data?.warningAtMillis, reason: request.data?.reason, ErrorType: HttpsError});
@@ -4239,6 +4243,8 @@ exports.cancelUpcomingHike = onCall({}, async (request) => {
       hikeId, uid, phoneNumber,
       withdrawSelf: request.data?.withdrawSelf === true,
       creationKey: String(request.data?.creationKey || ''),
+      archiveAsExpired: request.data?.archiveAsExpired === true,
+      cancelledAtLocal: request.data?.cancelledAtLocal,
       hazardId: String(request.data?.hazardId || '').trim(),
     }, HttpsError,
     () => admin.firestore.FieldValue.serverTimestamp()
@@ -4264,7 +4270,8 @@ exports.scheduleUpcomingHike = onCall(
       throw new HttpsError('invalid-argument', 'The hike schedule is invalid.');
     }
     const {offlineRecovery, expiredRecovery} = require('./offline_plan_policy').offlinePlanRecovery(request.data?.offlineRecovery, rawDraft);
-    const requestedPhones = !expiredRecovery && Array.isArray(rawDraft?.teamBuddies)
+    const archiveOnly = request.data?.cancelledRecovery === true;
+    const requestedPhones = !expiredRecovery && !archiveOnly && Array.isArray(rawDraft?.teamBuddies)
       ? rawDraft.teamBuddies
           .map((buddy) => String(buddy?.phoneNumber || '').trim())
           .filter((phone) => phone !== ownerPhone)
@@ -4318,7 +4325,7 @@ exports.scheduleUpcomingHike = onCall(
       if (owner.accountDisabled === true || owner.status === 'disabled') {
         throw new HttpsError('permission-denied', 'Your account is unavailable.');
       }
-      if (!trailSnapshot.exists) {
+      if (!trailSnapshot.exists && !archiveOnly) {
         throw new HttpsError('not-found', 'This trail is no longer available.');
       }
       if (existingHikeSnapshot.exists) {
@@ -4331,7 +4338,10 @@ exports.scheduleUpcomingHike = onCall(
         }
         return { hikeId: hikeReference.id, created: false };
       }
-      if (cancellation.data()?.cancelled === true) return {hikeId: hikeReference.id, created: false, cancelled: true};
+      if (archiveOnly && (cancellation.data()?.cancelled !== true || cancellation.data()?.owner !== uid)) {
+        throw new HttpsError('failed-precondition', 'Cancel this queued plan before uploading its history.');
+      }
+      if (cancellation.data()?.cancelled === true && !archiveOnly) return {hikeId: hikeReference.id, created: false, cancelled: true};
       const buddyPhones = new Set(
         (Array.isArray(owner.buddyPhoneNumbers) ? owner.buddyPhoneNumbers : [])
           .map((phone) => String(phone || '').trim())
@@ -4350,13 +4360,13 @@ exports.scheduleUpcomingHike = onCall(
           );
         }
       });
-      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {}, rawDraft?.trail);
+      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || (archiveOnly ? rawDraft?.trail : {}), rawDraft?.trail);
       const buddies = inviteeSnapshots.map((snapshot, index) =>
         teamBuddyFromUser(invitedPhones[index], snapshot.data() || {}, false, index)
       );
       const isGroupHike =
         String(rawDraft?.hikeType || '') === 'team' || invitedPhones.length > 0;
-      validateSoloHikeDistance(Number(trail.distanceKm), isGroupHike, rawDraft?.soloDistanceAcknowledgedKm, HttpsError);
+      if (!archiveOnly) validateSoloHikeDistance(Number(trail.distanceKm), isGroupHike, rawDraft?.soloDistanceAcknowledgedKm, HttpsError);
       const draft = {
         ...sharedHikePlan(rawDraft, trail, buddies, offlineRecovery ? {pastDepartureToleranceMillis: 365 * 24 * 60 * 60000} : {}),
         hikeType: isGroupHike ? 'team' : 'solo',
@@ -4419,6 +4429,9 @@ exports.scheduleUpcomingHike = onCall(
         notificationRadiusKm: 20,
         isDeleted: expiredRecovery,
         ...(expiredRecovery ? {expired: true, status: 'expired', deletedReason: 'departure_time_expired'} : {}),
+        ...(archiveOnly ? require('./cancelled_hike_history').cancelledHikeHistoryFields({uid,
+          timestamp:admin.firestore.FieldValue.serverTimestamp(),
+          cancelledAtLocal:cancellation.data()?.cancelledAtLocal}) : {}),
         sharedHikePlanPrivacyVersion: SHARED_HIKE_PLAN_PRIVACY_VERSION,
         draft,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -4452,7 +4465,7 @@ exports.scheduleUpcomingHike = onCall(
           { merge: true }
         );
       }
-      assertWindowRate(transaction, rateReference, rateSnapshot, {
+      if (!archiveOnly) assertWindowRate(transaction, rateReference, rateSnapshot, {
         limit: 5,
         windowMillis: 60 * 60 * 1000,
         message: 'Too many hikes were scheduled. Try again later.',
@@ -5991,14 +6004,13 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
 // private even if another account learns a document ID.
 async function readListExpiredScheduledHikes(request) {
   const { uid, phoneNumber } = authenticatedPhoneFor(request, 'Sign in to view scheduled hike history.');
-  const {START_WINDOW_MS, loadExpiredScheduledHikePage} = require('./expired_hike_history');
+  const {loadExpiredScheduledHikePage} = require('./expired_hike_history');
   const now = Date.now();
   const limit = Math.round(boundedNumber(request.data?.limit, 1, 200, 100));
   const { Filter } = require('firebase-admin/firestore');
   let query = admin.firestore().collection('upcomingHikes')
     .where(Filter.or(Filter.where('creatorUserId', '==', uid),
       Filter.where('participantPhones', 'array-contains', phoneNumber)))
-    .where('departureTimeLocal', '<=', new Date(now - START_WINDOW_MS).toISOString())
     .orderBy('departureTimeLocal', 'desc').orderBy(admin.firestore.FieldPath.documentId(), 'desc');
   const cursor = request.data?.cursor;
   if (cursor != null) {
@@ -11005,6 +11017,7 @@ exports.recoverFcmOutboxDeliveries = onSchedule('every 5 minutes', async () => {
 exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
   { document: 'upcomingHikes/{hikeId}', region: 'asia-southeast1' },
   async (event) => {
+    if (event.data?.data()?.isDeleted === true) return;
     const hike = await claimAtMostOnceDelivery(event.data.ref, {
       claimPrefix: 'nearbyNotificationDelivery',
       processedFields: [
@@ -11012,7 +11025,7 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
         'nearbyNotificationSentAtLocal',
       ],
     });
-    if (!hike) return;
+    if (!hike || hike.isDeleted === true) return;
     const hikeLatitude = Number(hike.latitude);
     const hikeLongitude = Number(hike.longitude);
     if (!Number.isFinite(hikeLatitude) || !Number.isFinite(hikeLongitude)) {
@@ -11243,6 +11256,17 @@ async function sendUpcomingHikeReminderToPhone(
   return { successCount, failureCount, skipped: false };
 }
 
+// Record only schedules actually queued by the current phone. Other clients and
+// slots retain cloud reminders; local acknowledgement never asserts delivery.
+exports.acknowledgeLocalHikeReminderSlots = onCall({}, async request => {
+  const reportAtMillis = Date.now();
+  const active = await mobileSessionSecurity.requireActive(request);
+  return localHikeReminderDelivery.acknowledgeLocalHikeReminderSlots({
+    db: admin.firestore(), uid: active.uid, sid: active.sid, data: request.data,
+    ErrorType: HttpsError, timestamp: () => FieldValue.serverTimestamp(), now: reportAtMillis,
+  });
+});
+
 // claimUpcomingHikeReminder: Claim the eligible per-user reminder window before any provider send.
 async function claimUpcomingHikeReminder({
   db,
@@ -11275,6 +11299,22 @@ async function claimUpcomingHikeReminder({
       legacy: !snapshot.exists,
     });
     if (!due.due) return null;
+
+    if (rawPreference.localDeliverySchedule) {
+      const sessionSnapshot = await transaction.get(db.collection('mobileSessions').doc(userId));
+      if (localHikeReminderDelivery.ownsLocalSlot({
+        rawPreference, departureMillis, slotMillis: due.slotMillis,
+        sessionState: sessionSnapshot.data(),
+      })) {
+        transaction.set(preferenceReference, {
+          departureTimeLocal: new Date(departureMillis).toISOString(),
+          lastLocalReminderSlotAtLocal: new Date(due.slotMillis).toISOString(),
+          lastLocalReminderHandling: 'os_scheduled',
+          updatedAt: FieldValue.serverTimestamp(),
+        }, {merge: true});
+        return null;
+      }
+    }
 
     const lastClaimedMillis = dateMillis(
       rawPreference.deliveryClaimedAtLocal

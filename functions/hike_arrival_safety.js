@@ -16,7 +16,7 @@ const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.t
 function publicState(record) {
   if (!record) return null;
   return Object.fromEntries(['version', 'eventId', 'enabled', 'status', 'latestArrivalAtMillis', 'warningAtMillis',
-    'responseDeadlineMillis', 'safeAtMillis', 'arrivedAtMillis', 'targetName', 'sentCount', 'uncertainCount',
+    'responseDeadlineMillis', 'safeAtMillis', 'completedAtMillis', 'arrivedAtMillis', 'targetName', 'sentCount', 'uncertainCount',
     'failedCount', 'lastAttemptAtMillis'].filter(key => record[key] !== undefined).map(key => [key, record[key]]));
 }
 
@@ -64,16 +64,35 @@ async function confirmSafe({db, uid, sessionId, eventId, reason, now = Date.now(
   const ref = db.collection('hikeSessions').doc(sessionId);
   return db.runTransaction(async tx => {
     const hike = (await tx.get(ref)).data();
+    // Cancellation never arms a warning. A missing/ended hike has no active
+    // watchdog to cancel, so stale local responses can settle idempotently.
+    if (!hike) return {eventId, enabled: false, status: 'completed'};
     requireOwner(hike, uid, ErrorType);
     const record = hike.arrivalSafety;
-    if (record?.eventId !== eventId) throw new ErrorType('failed-precondition', 'This arrival check has changed.');
-    if (TERMINAL.has(record.status)) return publicState(record);
+    if (record?.eventId === eventId && TERMINAL.has(record.status)) return publicState(record);
+    const plan = arrivalPlan(hike);
+    const expectedEvent = plan ? arrivalEventId(sessionId, plan.latestArrivalAtMillis) : null;
+    if (hike.status === 'active' && expectedEvent !== eventId) {
+      if (record?.eventId === eventId && record.enabled) {
+        tx.update(ref, {arrivalSafety: {...record, enabled: false, status: 'completed'}});
+      }
+      return {eventId, enabled: false, status: 'superseded'};
+    }
+    // A response may beat an in-flight arm call. Save a terminal tombstone for
+    // this event so that the later arm cannot restart an answered countdown.
+    const base = record?.eventId === eventId ? record : {version: 1, eventId,
+      latestArrivalAtMillis: plan?.latestArrivalAtMillis ?? now,
+      warningAtMillis: plan?.latestArrivalAtMillis ?? now,
+      responseDeadlineMillis: (plan?.latestArrivalAtMillis ?? now) + RESPONSE_WINDOW_MS};
     const receipts = await tx.get(db.collection('arrivalSafetyDeliveries').where('eventId', '==', eventId));
     const deliveries = receipts.docs.map(doc => doc.data());
-    const next = {...record, enabled: false, status: 'safe', safeAtMillis: now,
+    const ended = hike.status !== 'active' || reason === 'hike_ended';
+    const next = {...base, enabled: false, status: ended ? 'completed' : 'safe',
+      ...(ended ? {completedAtMillis: now} : {safeAtMillis: now}),
       sentCount: deliveries.filter(item => item.status === 'sent').length,
       uncertainCount: deliveries.filter(item => ['sending', 'delivery_uncertain'].includes(item.status)).length,
-      confirmationSource: reason === 'recorded_arrival' ? 'device_recorded_arrival' : 'hiker_confirmation'};
+      confirmationSource: ended ? 'hike_ended'
+        : reason === 'recorded_arrival' ? 'device_recorded_arrival' : 'hiker_confirmation'};
     tx.update(ref, {arrivalSafety: next});
     return publicState(next);
   });
