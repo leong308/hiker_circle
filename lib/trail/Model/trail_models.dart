@@ -349,6 +349,7 @@ class Trail {
     this.maxElevationMeters,
     required this.ratingAverage,
     this.ratingCount = 0,
+    this.ratingVoteCounts = const {},
     this.easyDifficultyVotes = 0,
     this.moderateDifficultyVotes = 0,
     this.hardDifficultyVotes = 0,
@@ -413,6 +414,12 @@ class Trail {
       maxElevationMeters: _trailNullableIntFrom(data['maxElevationMeters']),
       ratingAverage: _trailDoubleFrom(data['ratingAverage']),
       ratingCount: _trailIntFrom(data['ratingCount']),
+      ratingVoteCounts: {
+        for (var star = 1; star <= 5; star++)
+          '$star': _trailIntFrom(
+            _trailMapFrom(data['ratingVoteCounts'])['$star'],
+          ),
+      },
       easyDifficultyVotes: _trailIntFrom(difficultyVoteCounts['easy']),
       moderateDifficultyVotes: _trailIntFrom(difficultyVoteCounts['moderate']),
       hardDifficultyVotes: _trailIntFrom(difficultyVoteCounts['hard']),
@@ -473,6 +480,13 @@ class Trail {
   final int? maxElevationMeters;
   final double ratingAverage;
   final int ratingCount;
+  final Map<String, int> ratingVoteCounts;
+
+  bool get hasRatingDistribution =>
+      ratingCount > 0 &&
+      ratingVoteCounts.values.every((value) => value >= 0) &&
+      ratingVoteCounts.values.fold<int>(0, (total, value) => total + value) ==
+          ratingCount;
   final int easyDifficultyVotes;
   final int moderateDifficultyVotes;
   final int hardDifficultyVotes;
@@ -589,6 +603,7 @@ class Trail {
       if (maxElevationMeters != null) 'maxElevationMeters': maxElevationMeters,
       'ratingAverage': ratingAverage,
       'ratingCount': ratingCount,
+      if (hasRatingDistribution) 'ratingVoteCounts': ratingVoteCounts,
       'offlineMapAvailable': offlineMapAvailable,
       'offlineMapDownloaded': offlineMapDownloaded,
       'isVerifiedTrail': isVerifiedTrail,
@@ -692,6 +707,7 @@ class Trail {
     int? maxElevationMeters,
     double? ratingAverage,
     int? ratingCount,
+    Map<String, int>? ratingVoteCounts,
     int? easyDifficultyVotes,
     int? moderateDifficultyVotes,
     int? hardDifficultyVotes,
@@ -736,6 +752,7 @@ class Trail {
       maxElevationMeters: maxElevationMeters ?? this.maxElevationMeters,
       ratingAverage: ratingAverage ?? this.ratingAverage,
       ratingCount: ratingCount ?? this.ratingCount,
+      ratingVoteCounts: ratingVoteCounts ?? this.ratingVoteCounts,
       easyDifficultyVotes: easyDifficultyVotes ?? this.easyDifficultyVotes,
       moderateDifficultyVotes:
           moderateDifficultyVotes ?? this.moderateDifficultyVotes,

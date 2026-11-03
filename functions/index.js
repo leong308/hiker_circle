@@ -73,6 +73,8 @@ const {
 const {
   trailDifficultyAggregate,
   trailRatingAggregate,
+  hasRatingVoteCounts,
+  ratingSummaryFromVotes,
   validDifficultyVote,
   validRating,
 } = require('./trail_rating_helpers');
@@ -6025,8 +6027,14 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
     }
 
     const review = reviewSnapshot.data() || {};
+    let ratingBaseline = trailSnapshot.data() || {};
+    if (!hasRatingVoteCounts(ratingBaseline)) {
+      const votes = await transaction.get(trailReference.collection('ratings').select('rating'));
+      ratingBaseline = {...ratingBaseline,
+        ...ratingSummaryFromVotes(votes.docs.map(doc => doc.data().rating))};
+    }
     const aggregate = trailRatingAggregate(
-      trailSnapshot.data() || {},
+      ratingBaseline,
       reviewSnapshot.exists ? review.rating : null,
       rating
     );

@@ -604,6 +604,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   StreamSubscription<String>? _planningChangesSubscription;
   StreamSubscription<UpcomingHikeSyncNotice>? _upcomingSyncSubscription;
   StreamSubscription<SosCustomNoteChange>? _customNoteSyncSubscription;
+  StreamSubscription<String>? _hikeRatingSyncSubscription;
   final _syncedUpcomingHikeIds = <String>{};
   Timer? _upcomingSyncToastTimer;
 
@@ -955,6 +956,16 @@ class _HikerHomePageState extends State<HikerHomePage>
           if (mounted && owner == widget.session.phoneNumber) {
             unawaited(_restoreCachedUpcomingPlanningState());
           }
+        });
+    _hikeRatingSyncSubscription = HikerCircleFirebaseRepository.hikeRatingSyncs
+        .listen((owner) {
+          if (!mounted || owner != widget.session.phoneNumber) return;
+          HikerCircleToast.show(
+            context,
+            'Your hike rating synced to Firebase.',
+            tone: HikerCircleToastTone.success,
+            title: 'Rating synced',
+          );
         });
     _customNoteSyncSubscription = SosAlertRepository.customNoteChanges.listen((
       change,
@@ -5066,7 +5077,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       ..showSnackBar(
         const SnackBar(
           content: Text(
-            'Thanks — your rating and difficulty vote are now included.',
+            'Rating saved on this phone. It will sync with your hike when connected.',
           ),
           behavior: SnackBarBehavior.floating,
         ),
@@ -6503,6 +6514,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     _planningChangesSubscription?.cancel();
     _upcomingSyncSubscription?.cancel();
     _customNoteSyncSubscription?.cancel();
+    _hikeRatingSyncSubscription?.cancel();
     _upcomingSyncToastTimer?.cancel();
     _trailsSubscription?.cancel();
     _pendingTrailRequestsSubscription?.cancel();
@@ -7241,7 +7253,6 @@ class _HikerHomePageState extends State<HikerHomePage>
             summary: summary,
             rating: feedback.rating,
             difficulty: feedback.difficulty,
-            comment: feedback.comment,
           ),
     ),
   );

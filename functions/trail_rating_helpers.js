@@ -68,6 +68,21 @@ function trailDifficultyAggregate(trail, previousDifficulty, nextDifficulty) {
 }
 
 // trailRatingAggregate: Derive rating totals from validated completed-hike votes rather than trusting client counters.
+function hasRatingVoteCounts(trail) {
+  const counts = trail?.ratingVoteCounts;
+  return counts && [1, 2, 3, 4, 5].every(star => Number.isInteger(counts[star]) && counts[star] >= 0)
+    && Object.values(counts).reduce((sum, value) => sum + value, 0) === Number(trail.ratingCount || 0);
+}
+
+function ratingSummaryFromVotes(values) {
+  const ratingVoteCounts = {'1': 0, '2': 0, '3': 0, '4': 0, '5': 0};
+  for (const value of values) if (validRating(value)) ratingVoteCounts[Number(value)]++;
+  const ratingCount = Object.values(ratingVoteCounts).reduce((sum, value) => sum + value, 0);
+  const ratingSum = Object.entries(ratingVoteCounts).reduce((sum, [star, count]) => sum + Number(star) * count, 0);
+  return {ratingVoteCounts, ratingCount, ratingSum,
+    ratingAverage: ratingCount ? Math.round(ratingSum / ratingCount * 100) / 100 : 0};
+}
+
 function trailRatingAggregate(trail, previousRating, nextRating) {
   if (!validRating(nextRating)) {
     throw new TypeError('Rating must be an integer from 1 to 5.');
@@ -89,11 +104,18 @@ function trailRatingAggregate(trail, previousRating, nextRating) {
   const nextSum = replacing
     ? Math.max(0, ratingSum - Number(previousRating) + Number(nextRating))
     : ratingSum + Number(nextRating);
+  const counts = hasRatingVoteCounts(trail) ? {...trail.ratingVoteCounts}
+    : ratingCount === 0 ? ratingSummaryFromVotes([]).ratingVoteCounts : null;
+  if (counts) {
+    if (replacing) counts[Number(previousRating)] = Math.max(0, counts[Number(previousRating)] - 1);
+    counts[Number(nextRating)]++;
+  }
 
   return {
     ratingCount: nextCount,
     ratingSum: Math.round(nextSum * 10000) / 10000,
     ratingAverage: Math.round((nextSum / nextCount) * 100) / 100,
+    ...(counts ? {ratingVoteCounts: counts} : {}),
   };
 }
 
@@ -103,4 +125,6 @@ module.exports = {
   trailRatingAggregate,
   validDifficultyVote,
   validRating,
+  hasRatingVoteCounts,
+  ratingSummaryFromVotes,
 };

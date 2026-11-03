@@ -566,6 +566,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
               ratingCount: data['ratingCount'] is num
                   ? math.max(0, (data['ratingCount'] as num).toInt())
                   : _trail.ratingCount,
+              ratingVoteCounts: publishedCover.ratingVoteCounts,
               easyDifficultyVotes: easyVotes,
               moderateDifficultyVotes: moderateVotes,
               hardDifficultyVotes: hardVotes,
@@ -708,10 +709,11 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                       onShowOnMap: _showCheckpointOnMap,
                     ),
                   const SizedBox(height: 22),
-                  if (trail.hasCommunityDifficulty) ...[
-                    const SectionLabel(label: 'Hiker Difficulty'),
+                  if (trail.hasCommunityDifficulty ||
+                      trail.ratingCount > 0) ...[
+                    const SectionLabel(label: 'Hiker Feedbacks'),
                     const SizedBox(height: 8),
-                    _DifficultyBreakdownCard(trail: trail),
+                    HikerFeedbackCarousel(trail: trail),
                     const SizedBox(height: 22),
                   ],
                   const SectionLabel(label: 'Conditions and Safety'),

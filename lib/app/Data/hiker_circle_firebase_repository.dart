@@ -629,6 +629,8 @@ class HikerCircleFirebaseRepository {
       StreamController<UpcomingHikeSyncNotice>.broadcast();
   static Stream<UpcomingHikeSyncNotice> get upcomingHikeSyncs =>
       _upcomingHikeSyncs.stream;
+  static final _hikeRatingSyncs = StreamController<String>.broadcast();
+  static Stream<String> get hikeRatingSyncs => _hikeRatingSyncs.stream;
 
   void _publishUpcomingHikeSync(AppSession session, Set<String> ids) {
     if (ids.isNotEmpty && _captureAccountUid(session) != null) {
@@ -3859,7 +3861,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
-  final Map<String, Future<int>> _pendingEndUploads = {};
+  static final Map<String, Future<int>> _pendingEndUploads = {};
   final Map<String, Future<ActiveHikeCloudCompletionResult>>
   _hikeCompletionUploads = {};
 
@@ -3951,8 +3953,14 @@ class HikerCircleFirebaseRepository {
       limit: limit,
       uid: uid,
     );
-    _pendingEndUploads[key] = future;
-    return future.whenComplete(() => _pendingEndUploads.remove(key));
+    late final Future<int> drain;
+    drain = future.whenComplete(() {
+      if (identical(_pendingEndUploads[key], drain)) {
+        _pendingEndUploads.remove(key);
+      }
+    });
+    _pendingEndUploads[key] = drain;
+    return drain;
   }
 
   /// Flushes pending hike ends.
@@ -3993,7 +4001,7 @@ class HikerCircleFirebaseRepository {
         endedAt: endedAt,
       );
       try {
-        await _syncHikeCompletionOnce(
+        final completion = await uploadPendingHikeCompletion(
           session: session,
           activeHike: hike,
           summary: report,
@@ -4001,10 +4009,43 @@ class HikerCircleFirebaseRepository {
           expectedUid: uid,
         );
         _requireSameAccount(session, uid);
-        await _localDatabase.deletePendingHikeEnd(
+        final rating = pending.trailRating;
+        if (rating != null) {
+          if (!completion.completed || completion.status != 'completed') {
+            throw const HikerCircleFirebaseRepositoryException(
+              'The hike completion was not accepted, so its rating remains saved locally.',
+            );
+          }
+          await submitCompletedHikeRating(
+            session: session,
+            sessionId: completion.sessionId,
+            trailId: hike.trail.trailId,
+            rating: (rating['rating'] as num).toInt(),
+            difficulty: rating['difficulty'] as String,
+            comment: rating['comment'] as String? ?? '',
+          );
+          _requireSameAccount(session, uid);
+          try {
+            await _conditionalCache.invalidateTypes(
+              owner: session.phoneNumber,
+              types: const {'hike_history_list', 'hike_history_detail'},
+            );
+            await _conditionalCache.invalidateTypes(
+              owner: '',
+              types: const {'cloud_trail_catalog', 'cloud_trail'},
+            );
+          } catch (_) {
+            // A confirmed rating remains successful if a display cache is unavailable.
+          }
+        }
+        final removed = await _localDatabase.deletePendingHikeEnd(
           ownerPhoneNumber: session.phoneNumber,
           sessionId: pending.sessionId,
+          expectedSummaryPayload: pending.summaryPayload,
         );
+        if (removed && rating != null) {
+          _hikeRatingSyncs.add(session.phoneNumber);
+        }
         synced += 1;
       } catch (error) {
         await _localDatabase.markPendingHikeEndRetry(
@@ -4016,6 +4057,22 @@ class HikerCircleFirebaseRepository {
     }
     return synced;
   }
+
+  /// Completion and route upload must be acknowledged before publishing its rating.
+  @protected
+  Future<ActiveHikeCloudCompletionResult> uploadPendingHikeCompletion({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    required HikeSummaryReport summary,
+    required DateTime endedAt,
+    required String expectedUid,
+  }) => _syncHikeCompletionOnce(
+    session: session,
+    activeHike: activeHike,
+    summary: summary,
+    endedAt: endedAt,
+    expectedUid: expectedUid,
+  );
 
   /// Applies canonical team source.
   Future<ActiveHikeSession> _withCanonicalTeamSource(
@@ -4161,33 +4218,47 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  /// Confirms a locally ended hike before submitting its public trail feedback.
+  /// Retain the rating with its local completion; reconnect sends both before hash reads.
   Future<void> submitEndedHikeRating({
     required AppSession session,
     required ActiveHikeSession activeHike,
     required HikeSummaryReport summary,
     required int rating,
     required String difficulty,
-    String comment = '',
   }) async {
-    final completion = await confirmEndedHikeForSharing(
-      session: session,
-      activeHike: activeHike,
-      summary: summary,
-    );
-    if (!completion.completed || completion.status != 'completed') {
+    final normalizedDifficulty = difficulty.trim().toLowerCase();
+    if (activeHike.trail.isUnlisted ||
+        rating < 1 ||
+        rating > 5 ||
+        !const {'easy', 'moderate', 'hard'}.contains(normalizedDifficulty)) {
       throw const HikerCircleFirebaseRepositoryException(
-        'This hike was not marked completed, so it cannot be rated.',
+        'Choose 1 to 5 stars and select Easy, Moderate, or Hard.',
       );
     }
-    await submitCompletedHikeRating(
-      session: session,
-      sessionId: completion.sessionId,
-      trailId: activeHike.trail.trailId,
-      rating: rating,
-      difficulty: difficulty,
-      comment: comment,
+    await _localDatabase.queuePendingHikeEnd(
+      ownerPhoneNumber: session.phoneNumber,
+      activeHike: activeHike,
+      summary: summary,
+      endedAt: summary.endedAt,
+      trailRating: {'rating': rating, 'difficulty': normalizedDifficulty},
     );
+    // A completion drain may already have captured a snapshot without this rating.
+    // Join it, then run a fresh snapshot so the new rating cannot be stranded.
+    final uid = _captureAccountUid(session);
+    final running = uid == null
+        ? null
+        : _pendingEndUploads['${session.phoneNumber}:$uid'];
+    unawaited(() async {
+      try {
+        if (running != null) await running;
+        if (NetworkReachabilityService.instance.latest.state !=
+            NetworkReachabilityState.offline) {
+          await flushPendingHikeEnds(session: session);
+        }
+      } catch (_) {
+        // The durable record remains eligible for the next reconciliation.
+      }
+    }());
   }
 
   /// Saves a vote only after the backend validates the completed owner session.

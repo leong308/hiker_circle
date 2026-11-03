@@ -565,10 +565,251 @@ class _HourlyForecastRow extends StatelessWidget {
   }
 }
 
+/// Keeps the original card dimensions while paging between hiker feedback charts.
+class HikerFeedbackCarousel extends StatefulWidget {
+  const HikerFeedbackCarousel({super.key, required this.trail});
+  final Trail trail;
+
+  @override
+  State<HikerFeedbackCarousel> createState() => _HikerFeedbackCarouselState();
+}
+
+class _HikerFeedbackCarouselState extends State<HikerFeedbackCarousel> {
+  final _controller = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _show(int page) => _controller.animateToPage(
+    page,
+    duration: MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 220),
+    curve: Curves.easeOut,
+  );
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Stack(
+        children: [
+          // This non-painted reference preserves the existing difficulty card's
+          // natural height, including wrapped text and accessibility scaling.
+          ExcludeSemantics(
+            child: IgnorePointer(
+              child: Opacity(
+                opacity: 0,
+                child: _DifficultyBreakdownCard(
+                  key: const ValueKey('feedback-size-reference'),
+                  trail: widget.trail,
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: PageView(
+              key: const ValueKey('hiker-feedback-pages'),
+              controller: _controller,
+              onPageChanged: (value) => setState(() => _page = value),
+              children: [
+                _DifficultyBreakdownCard(
+                  key: const ValueKey('feedback-difficulty-card'),
+                  trail: widget.trail,
+                ),
+                _StarRatingBreakdownCard(
+                  key: const ValueKey('feedback-rating-card'),
+                  trail: widget.trail,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      Semantics(
+        label: 'Feedback chart ${_page + 1} of 2',
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              tooltip: 'Previous feedback chart',
+              onPressed: _page == 0 ? null : () => _show(0),
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              icon: const Icon(Icons.chevron_left_rounded),
+            ),
+            for (var page = 0; page < 2; page++)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: _page == page ? 16 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: _page == page
+                        ? _TrailColors.green
+                        : _TrailColors.separatorFor(context),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+              ),
+            IconButton(
+              tooltip: 'Next feedback chart',
+              onPressed: _page == 1 ? null : () => _show(1),
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              icon: const Icon(Icons.chevron_right_rounded),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+class _StarRatingBreakdownCard extends StatelessWidget {
+  const _StarRatingBreakdownCard({super.key, required this.trail});
+  final Trail trail;
+
+  @override
+  Widget build(BuildContext context) => _InsetGroup(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Star rating spread',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: _TrailColors.textFor(context),
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      trail.ratingCount > 0
+                          ? '${trail.ratingAverage.toStringAsFixed(1)} / 5 · ${trail.ratingCount} ${trail.ratingCount == 1 ? 'rating' : 'ratings'}'
+                          : 'No star ratings yet',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _TrailColors.secondaryTextFor(context),
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.star_rounded, color: _TrailColors.orange),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: Center(
+              child: trail.ratingCount > 0 && !trail.hasRatingDistribution
+                  ? Text(
+                      'Rating spread is not available yet.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _TrailColors.secondaryTextFor(context),
+                      ),
+                    )
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var star = 5; star >= 1; star--) ...[
+                          _StarRatingBar(
+                            key: ValueKey('star-rating-row-$star'),
+                            star: star,
+                            votes: trail.ratingVoteCounts['$star'] ?? 0,
+                            total: trail.ratingCount,
+                          ),
+                          if (star > 1) const SizedBox(height: 3),
+                        ],
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _StarRatingBar extends StatelessWidget {
+  const _StarRatingBar({
+    super.key,
+    required this.star,
+    required this.votes,
+    required this.total,
+  });
+  final int star, votes, total;
+  @override
+  Widget build(BuildContext context) {
+    final fraction = total > 0 ? (votes / total).clamp(0.0, 1.0) : 0.0;
+    final percentage = (fraction * 100).round();
+    final style = Theme.of(context).textTheme.labelSmall?.copyWith(
+      height: 1.05,
+      color: _TrailColors.secondaryTextFor(context),
+      letterSpacing: 0,
+    );
+    return Semantics(
+      label: '$star stars, $votes votes, $percentage percent',
+      child: Row(
+        children: [
+          SizedBox(
+            width: 34,
+            child: Row(
+              children: [
+                Text('$star', style: style),
+                const SizedBox(width: 3),
+                const Icon(
+                  Icons.star_rounded,
+                  size: 11,
+                  color: _TrailColors.orange,
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: fraction,
+                minHeight: 6,
+                color: _TrailColors.orange,
+                backgroundColor: _TrailColors.orange.withValues(alpha: 0.14),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 72,
+            child: Text(
+              '$percentage% · $votes',
+              textAlign: TextAlign.end,
+              style: style,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Displays the difficulty breakdown card.
 class _DifficultyBreakdownCard extends StatelessWidget {
   /// Creates difficulty breakdown card.
-  const _DifficultyBreakdownCard({required this.trail});
+  const _DifficultyBreakdownCard({super.key, required this.trail});
 
   final Trail trail;
 
@@ -589,7 +830,9 @@ class _DifficultyBreakdownCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Community result: ${trail.difficulty}',
+                        trail.hasCommunityDifficulty
+                            ? 'Community result: ${trail.difficulty}'
+                            : 'Difficulty not rated',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
                               color: _TrailColors.textFor(context),

@@ -19,16 +19,16 @@ class TrailRatingDialog extends StatefulWidget {
 
 /// Manages the trail rating dialog presentation and lifecycle.
 class _TrailRatingDialogState extends State<TrailRatingDialog> {
-  final _commentController = TextEditingController();
   int _rating = 0;
   String? _difficulty;
   bool _isSubmitting = false;
   String? _errorMessage;
+  HikerCircleLoadingDialogRoute? _loadingRoute;
 
-  /// Releases resources owned by this instance.
   @override
   void dispose() {
-    _commentController.dispose();
+    final loading = _loadingRoute;
+    WidgetsBinding.instance.addPostFrameCallback((_) => loading?.close());
     super.dispose();
   }
 
@@ -39,21 +39,30 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
       _isSubmitting = true;
       _errorMessage = null;
     });
+    final loading = HikerCircleLoadingDialogRoute(
+      context: context,
+      compact: true,
+      message: 'Saving your route rating…',
+      detail: 'Keeping your rating with the saved hike on this phone.',
+    );
+    _loadingRoute = loading;
+    unawaited(Navigator.of(context, rootNavigator: true).push<void>(loading));
     try {
       await widget.onSubmit(
-        TrailRatingFeedback(
-          rating: _rating,
-          difficulty: _difficulty!,
-          comment: _commentController.text.trim(),
-        ),
+        TrailRatingFeedback(rating: _rating, difficulty: _difficulty!),
       );
+      loading.close();
       if (mounted) _presentSubmitEffect1();
     } catch (error) {
+      loading.close();
       if (!mounted) return;
       setState(() {
         _isSubmitting = false;
         _errorMessage = error.toString();
       });
+    } finally {
+      loading.close();
+      _loadingRoute = null;
     }
   }
 
@@ -206,26 +215,6 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
                     ],
                   ),
                   const SizedBox(height: 18),
-                  TextField(
-                    key: const Key('trail-rating-comment'),
-                    controller: _commentController,
-                    enabled: !_isSubmitting,
-                    minLines: 2,
-                    maxLines: 4,
-                    maxLength: 500,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: InputDecoration(
-                      labelText: 'Comment (optional)',
-                      hintText: 'Trail conditions, views, or helpful tips...',
-                      alignLabelWithHint: true,
-                      filled: true,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 2),
                   if (_errorMessage != null) ...[
                     Text(
                       _errorMessage!,
@@ -238,7 +227,7 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
                     const SizedBox(height: 8),
                   ],
                   Text(
-                    'Your rating and difficulty vote contribute to this route’s public community results.',
+                    'Your rating is saved on this phone and will sync with your completed hike when connected.',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant,
@@ -248,23 +237,6 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
                 ],
               ),
             ),
-            if (_isSubmitting)
-              HikerCircleLoadingToastOverlay(
-                compact: true,
-                message: 'Saving your route rating…',
-                detail: 'Updating the trail community rating.',
-                // Completion confirmation can take 45 seconds before the vote is saved.
-                timeout: const Duration(seconds: 60),
-                onTimeout: () {
-                  if (mounted) {
-                    setState(() {
-                      _isSubmitting = false;
-                      _errorMessage =
-                          'Saving the rating timed out. Please try again.';
-                    });
-                  }
-                },
-              ),
           ],
         ),
         actions: [
@@ -282,7 +254,7 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
               backgroundColor: const Color(0xFF34A853),
               foregroundColor: Colors.white,
             ),
-            child: const Text('Submit rating'),
+            child: const Text('Save rating'),
           ),
         ],
       ),

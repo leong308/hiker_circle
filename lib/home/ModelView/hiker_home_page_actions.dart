@@ -292,9 +292,8 @@ abstract final class _HikerHomePageDataActions {
   nameFormedHikeGroupChat(HikerCircleFirebaseRepository receiver) =>
       receiver.nameFormedHikeGroupChat;
 
-  /// Binds feedback submission after completion confirmation to the data source.
+  /// Binds rating persistence with its local hike completion to the data source.
   static Future<void> Function({
-    String comment,
     required String difficulty,
     required int rating,
     required AppSession session,

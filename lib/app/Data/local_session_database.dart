@@ -1303,6 +1303,7 @@ class LocalSessionDatabase {
     required ActiveHikeSession activeHike,
     HikeSummaryReport? summary,
     DateTime? endedAt,
+    Map<String, dynamic>? trailRating,
   }) async {
     final owner = ownerPhoneNumber.trim();
     final sessionId = activeHike.sessionId.trim();
@@ -1318,18 +1319,38 @@ class LocalSessionDatabase {
     }
     final database = await _openDatabase();
     final now = DateTime.now().toUtc().toIso8601String();
-    await database.insert('pending_hike_ends', {
-      'owner_phone_number': owner,
-      'session_id': sessionId,
-      'active_hike_payload_json': jsonEncode(activeHike.toPersistence()),
-      if (summary != null)
-        'summary_payload_json': jsonEncode(summary.toFirestore()),
-      if (endedAt != null) 'ended_at': endedAt.toUtc().toIso8601String(),
-      'created_at': now,
-      'updated_at': now,
-      'retry_count': 0,
-      'last_error': '',
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await database.transaction((transaction) async {
+      final rows = await transaction.query(
+        'pending_hike_ends',
+        where: 'owner_phone_number = ? AND session_id = ?',
+        whereArgs: [owner, sessionId],
+        limit: 1,
+      );
+      final previous = rows.isEmpty ? null : rows.single;
+      final previousSummary = _decodeNullableJsonMap(
+        previous?['summary_payload_json'] as String?,
+      );
+      final rating =
+          trailRating ?? previousSummary?[LocalPendingHikeEnd.trailRatingKey];
+      final savedSummary = summary?.toFirestore() ?? previousSummary;
+      await transaction.insert('pending_hike_ends', {
+        'owner_phone_number': owner,
+        'session_id': sessionId,
+        'active_hike_payload_json': jsonEncode(activeHike.toPersistence()),
+        if (savedSummary != null || rating != null)
+          'summary_payload_json': jsonEncode({
+            ...?savedSummary,
+            if (rating != null) LocalPendingHikeEnd.trailRatingKey: rating,
+          }),
+        if (endedAt != null || previous?['ended_at'] != null)
+          'ended_at':
+              previous?['ended_at'] ?? endedAt!.toUtc().toIso8601String(),
+        'created_at': previous?['created_at'] ?? now,
+        'updated_at': now,
+        'retry_count': 0,
+        'last_error': '',
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   /// Loads pending hike ends.
@@ -1351,16 +1372,38 @@ class LocalSessionDatabase {
   }
 
   /// Deletes pending hike end.
-  Future<void> deletePendingHikeEnd({
+  Future<bool> deletePendingHikeEnd({
     required String ownerPhoneNumber,
     required String sessionId,
+    Map<String, dynamic>? expectedSummaryPayload,
   }) async {
     final database = await _openDatabase();
-    await database.delete(
-      'pending_hike_ends',
-      where: 'owner_phone_number = ? AND session_id = ?',
-      whereArgs: [ownerPhoneNumber.trim(), sessionId.trim()],
-    );
+    return database.transaction((transaction) async {
+      final rows = await transaction.query(
+        'pending_hike_ends',
+        where: 'owner_phone_number = ? AND session_id = ?',
+        whereArgs: [ownerPhoneNumber.trim(), sessionId.trim()],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+      final summary = _decodeNullableJsonMap(
+        rows.single['summary_payload_json'] as String?,
+      );
+      if (expectedSummaryPayload == null) {
+        // Sharing/completion acknowledgement alone cannot discard a queued rating.
+        if (summary?[LocalPendingHikeEnd.trailRatingKey] != null) return false;
+      } else if (stableContentHash(summary) !=
+          stableContentHash(expectedSummaryPayload)) {
+        // A rating saved while an older completion was uploading stays queued.
+        return false;
+      }
+      return await transaction.delete(
+            'pending_hike_ends',
+            where: 'owner_phone_number = ? AND session_id = ?',
+            whereArgs: [ownerPhoneNumber.trim(), sessionId.trim()],
+          ) >
+          0;
+    });
   }
 
   /// Marks pending hike end retry.
@@ -4748,6 +4791,8 @@ class LocalPlannedHikeState {
 
 /// Represents local pending hike end.
 class LocalPendingHikeEnd {
+  static const trailRatingKey = '_pendingTrailRating';
+
   /// Creates local pending hike end.
   const LocalPendingHikeEnd({
     required this.ownerPhoneNumber,
@@ -4796,6 +4841,11 @@ class LocalPendingHikeEnd {
   final DateTime updatedAt;
   final int retryCount;
   final String lastError;
+
+  Map<String, dynamic>? get trailRating {
+    final value = summaryPayload?[trailRatingKey];
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  }
 
   /// Returns active hike.
   ActiveHikeSession? get activeHike {
