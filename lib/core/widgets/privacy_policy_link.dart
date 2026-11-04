@@ -8,11 +8,18 @@ import '../services/privacy_policy_launcher.dart';
 /// Displays the privacy policy link.
 class PrivacyPolicyLink extends StatelessWidget {
   /// Creates privacy policy link.
-  const PrivacyPolicyLink({super.key});
+  const PrivacyPolicyLink({
+    super.key,
+    this.label = 'Privacy Policy',
+    this.languageCode,
+  });
+
+  final String label;
+  final String? languageCode;
 
   /// Opens.
   Future<void> _open(BuildContext context) async {
-    final launched = await launchPrivacyPolicy();
+    final launched = await launchPrivacyPolicy(languageCode: languageCode);
     if (!context.mounted || launched) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -32,7 +39,7 @@ class PrivacyPolicyLink extends StatelessWidget {
     return TextButton.icon(
       onPressed: () => unawaited(_open(context)),
       icon: const Icon(Icons.privacy_tip_outlined, size: 18),
-      label: const Text('Privacy Policy'),
+      label: Text(label),
     );
   }
 }

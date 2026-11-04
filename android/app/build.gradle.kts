@@ -52,11 +52,6 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         buildConfigField("boolean", "CAPTURE_ONLY", (System.getenv("HC_CAPTURE_ONLY") == "1").toString())
-        buildConfigField(
-            "boolean",
-            "DEVELOPMENT_ONLY_SIGNING",
-            developmentOnlySigning.toString(),
-        )
     }
 
     buildFeatures {
@@ -81,7 +76,6 @@ android {
         }
 
         release {
-            proguardFile("proguard-rules.pro")
             val releaseSigning = signingConfigs.findByName("release")
             if (releaseSigning != null) {
                 if (
@@ -112,13 +106,6 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-functions")
-    implementation("com.google.firebase:firebase-appcheck-playintegrity")
-    if (developmentOnlySigning) {
-        // Local release-mode testing uses a registered per-installation token.
-        implementation("com.google.firebase:firebase-appcheck-debug")
-    } else {
-        debugImplementation("com.google.firebase:firebase-appcheck-debug")
-    }
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")

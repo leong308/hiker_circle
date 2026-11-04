@@ -4,19 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#173f35">
-  <meta name="description" content="HikerCircle Privacy Policy">
-  <title>Privacy Policy | HikerCircle</title>
+  <meta name="description" content="HikerCircle Malaysia privacy notice in Bahasa Melayu and English: location sharing, emergency contacts, WhatsApp, privacy rights and data requests.">
+  <meta name="referrer" content="no-referrer">
+  <title>Privacy Notice | HikerCircle Malaysia</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=hc-2">
   <style>
-    @font-face {
-      font-family: "Inter";
-      src: url("/privacy-assets/InterVariable.ttf") format("truetype");
-      font-style: normal;
-      font-weight: 100 900;
-      font-display: swap;
-    }
-
-    :root {
+:root {
       color-scheme: light;
       --pine-950: #0c2923;
       --pine-900: #173f35;
@@ -44,7 +37,7 @@
         radial-gradient(circle at 8% 0%, rgba(217, 137, 54, 0.13), transparent 25rem),
         linear-gradient(180deg, #edf3ed 0, #f7f8f4 26rem, #f4f7f2 100%);
       color: var(--ink);
-      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 16px;
       line-height: 1.72;
     }
@@ -338,245 +331,421 @@
       section + section { break-before: auto; }
       a { color: black; }
     }
+
+    [hidden] { display: none !important; }
+    a, h2, h3, p, li { overflow-wrap: anywhere; }
+    a:focus-visible, summary:focus-visible {
+      outline: 3px solid #9a5b1e;
+      outline-offset: 4px;
+      border-radius: 4px;
+    }
+    .header-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: .65rem; }
+    .language-switch { display: inline-flex; gap: .25rem; padding: .3rem; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
+    .language-switch a { display: flex; align-items: center; min-height: 44px; padding: .45rem .75rem; border-radius: 10px; text-decoration: none; font-size: .86rem; font-weight: 650; }
+    .language-switch a[aria-current="true"] { background: var(--pine-900); color: white; }
+    .skip-link { position: absolute; left: 1rem; top: -10rem; z-index: 10; padding: .75rem; background: white; }
+    .skip-link:focus { top: .5rem; }
+    .toc summary { cursor: pointer; min-height: 28px; color: var(--pine-900); font-size: .95rem; font-weight: 700; }
+    .toc ol { margin-top: .8rem; }
+    .notice-version { margin: 0 0 1.1rem; color: var(--muted); font-size: .9rem; }
+    .notice-version a { font-weight: 650; }
+    .hero > * { position: relative; z-index: 1; }
+    .policy h2 { font-size: clamp(1.7rem, 4vw, 2.4rem); }
+    .policy h3 { margin-top: 1.6rem; }
+    .contact-card { overflow-wrap: anywhere; }
+    .policy .legal-links { font-size: .92rem; }
+    .site-footer a { min-height: 32px; display: inline-flex; align-items: center; }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+    @media (max-width: 560px) {
+      .site-header { flex-wrap: wrap; }
+      .header-actions { width: 100%; justify-content: flex-start; }
+      .language-switch { width: 100%; }
+      .language-switch a { flex: 1; justify-content: center; }
+      .hero { padding: 2.1rem 1.6rem; }
+      .hero h1 { font-size: 2.85rem; line-height: 1.05; }
+      .hero::after { display: none; }
+      .updated { margin-top: 1.25rem; }
+      .policy { padding: 1.4rem; }
+      section + section { margin-top: 2.4rem; padding-top: 2.4rem; }
+    }
+    @media print {
+      .language-switch, .header-actions, .skip-link { display: none; }
+      .hero::before, .hero::after { display: none; }
+      .contact-card, .plain-language { background: white; color: black; border: 1px solid #aaa; }
+      .contact-card a { color: black; }
+      h2, h3 { break-after: avoid; }
+    }
   </style>
+  <script src="/site/privacy-policy.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#policy-content">Skip to notice / Terus ke notis</a>
   <header class="site-header">
-    <a class="brand" href="/" aria-label="Go to HikerCircle home page">
-      <img src="/privacy-assets/app-icon.png" alt="" width="42" height="42">
+    <a class="brand" href="/" aria-label="HikerCircle home / Laman utama HikerCircle">
+      <img src="/favicon.png" alt="" width="42" height="42">
       <span>HikerCircle</span>
     </a>
-    <a class="header-link" href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20question">Privacy contact</a>
-  </header>
-
-  <main>
-    <header class="hero">
-      <p class="eyebrow">Your data on the trail</p>
-      <h1>Privacy Policy</h1>
-      <p class="hero-copy">This policy explains what HikerCircle collects, why it is used, when it may be shared, and the choices available to you.</p>
-      <span class="updated">Last updated 1 September 2026</span>
-    </header>
-
-    <div class="layout">
-      <nav class="toc" aria-label="Privacy policy sections">
-        <p class="toc-title">On this page</p>
-        <ol>
-          <li><a href="#scope">Scope</a></li>
-          <li><a href="#information">Information collected</a></li>
-          <li><a href="#collection">How information is collected</a></li>
-          <li><a href="#use">How information is used</a></li>
-          <li><a href="#location">Location and safety data</a></li>
-          <li><a href="#sharing">When information is shared</a></li>
-          <li><a href="#permissions">Device permissions</a></li>
-          <li><a href="#legal-bases">Legal bases</a></li>
-          <li><a href="#retention">Retention</a></li>
-          <li><a href="#security">Security</a></li>
-          <li><a href="#transfers">International transfers</a></li>
-          <li><a href="#choices">Your choices and rights</a></li>
-          <li><a href="#regional">Regional disclosures</a></li>
-          <li><a href="#children">Children</a></li>
-          <li><a href="#third-parties">Third-party services</a></li>
-          <li><a href="#changes">Changes to this policy</a></li>
-          <li><a href="#contact">Contact</a></li>
-        </ol>
+    <div class="header-actions">
+      <nav class="language-switch" aria-label="Notice language / Bahasa notis">
+        <a href="?lang=ms#policy-ms" lang="ms" hreflang="ms" data-language-choice="ms">Bahasa Melayu</a>
+        <a href="?lang=en#policy-en" lang="en" hreflang="en" data-language-choice="en">English</a>
       </nav>
+      <a class="header-link" href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">Email / E-mel</a>
+    </div>
+  </header>
+  <main id="policy-content">
+    <div id="policy-en" data-policy-language="en" lang="en">
+      <header class="hero">
+        <p class="eyebrow">HikerCircle · Malaysia</p>
+        <h1>Privacy Notice</h1>
+        <p class="hero-copy">How your information is collected, used and shared, and the choices available to you under Malaysian data-protection requirements.</p>
+        <span class="updated">Last updated 4 November 2026</span>
+      </header>
+      <div class="layout">
+        <details class="toc" open>
+          <summary>On this page</summary>
+          <nav aria-label="On this page">
+            <ol>
+              <li><a href="#en-scope">Who is responsible</a></li>
+              <li><a href="#en-information">Data we collect and its sources</a></li>
+              <li><a href="#en-purposes">Purposes and required information</a></li>
+              <li><a href="#en-location">Location recording and sharing links</a></li>
+              <li><a href="#en-emergency">Emergency contacts, WhatsApp and SOS buttons</a></li>
+              <li><a href="#en-recipients">Who may receive or access data</a></li>
+              <li><a href="#en-permissions">Device permissions and your controls</a></li>
+              <li><a href="#en-consent">Malaysia PDPA and consent</a></li>
+              <li><a href="#en-transfers">Processing outside Malaysia</a></li>
+              <li><a href="#en-retention">How long records remain</a></li>
+              <li><a href="#en-security">Security and personal-data breaches</a></li>
+              <li><a href="#en-rights">Access, correction and other choices</a></li>
+              <li><a href="#en-deletion">Account and data deletion requests</a></li>
+              <li><a href="#en-children">Users under 18</a></li>
+              <li><a href="#en-website">This website and external services</a></li>
+              <li><a href="#en-changes">Changes to this notice</a></li>
+              <li><a href="#en-contact">Privacy contact and complaints</a></li>
+            </ol>
+          </nav>
+        </details>
+        <article class="policy" aria-label="Privacy Notice">
+          <p class="notice-version">Full English notice. A complete Bahasa Melayu version is available using the language selector above.</p>
+          <section id="en-scope" aria-labelledby="en-scope-title">
+            <h2 id="en-scope-title">1. Who is responsible</h2>
+            <p>This notice explains how HikerCircle handles personal data through the mobile app, its website, live-location viewer and connected hiking features. It is designed for use in Malaysia with reference to the Personal Data Protection Act 2010 (Act 709), as amended, and applicable Malaysian requirements.</p>
+            <p><strong>Leong Zi Qi, the independent developer of HikerCircle, is the data controller and privacy contact.</strong> HikerCircle is operated from Malaysia. Contact <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">leongziqi@gmail.com</a> about how your data is handled or to make a privacy request.</p>
+            <p>This notice is available in full in Bahasa Melayu and English. Both versions describe the same practices. Reading this notice or continuing to use the app does not, by itself, give permission for every optional use of your data. Device permissions, sharing actions and any additional consent requests apply to the relevant feature.</p>
+          </section>
 
-      <article class="policy">
-        <section id="scope">
-          <h2>1. Scope and controller</h2>
-          <p>This Privacy Policy describes how HikerCircle ("HikerCircle", "we", "us", or "our") handles personal information when you use the HikerCircle mobile application, HikerCircle web pages, live-location pages, connected safety features, and related services (together, the "Services").</p>
-          <p>HikerCircle is operated from Malaysia by its independent developer, who determines why and how personal information is processed and is therefore the controller unless a feature-specific notice says otherwise. The Services may be made available worldwide, although features, providers, and legal rights can differ by country or region.</p>
-          <p>"Personal information" means information that identifies, relates to, describes, or can reasonably be linked directly or indirectly to an individual. Depending on applicable law, precise location, SOS circumstances, authentication information, and some profile details may be treated as sensitive personal information and receive additional protection.</p>
-          <p>By using the Services, you acknowledge the practices described in this policy. Some features ask for separate permission or confirmation before collecting or sharing sensitive information, such as precise location, contacts, camera or photo access, Bluetooth, motion signals, or notifications. A shorter notice shown inside a feature supplements this policy; if it provides more specific information for that feature, the more specific notice applies to that processing.</p>
-        </section>
+          <section id="en-information" aria-labelledby="en-information-title">
+            <h2 id="en-information-title">2. Data we collect and its sources</h2>
+            <p>We collect data that you provide, data generated when you use a feature, information supplied by other users, and information needed from service providers:</p>
+            <ul>
+            <li><strong>Account and security:</strong> phone number, account and session identifiers, password hashes, verification and recovery records, Authenticator configuration and protected secrets, passkey public credentials, security events and login status. Passkey private keys and fingerprint or face templates used by your device are not sent to HikerCircle.</li>
+            <li><strong>Profile and preferences:</strong> username, chosen profile photo, gender, hiking experience and frequency, selected residential area and its coordinates, preferences, buddies, achievements and hiker level.</li>
+            <li><strong>Hiking and location:</strong> selected trails, checkpoints, routes, departure and return times, team membership, location coordinates and reported accuracy, capture times, recorded footprints, check-ins, distance, duration, battery status and live-sharing state. Location comes from your phone or from a location you select for a feature.</li>
+            <li><strong>Safety and contacts:</strong> emergency-contact names, numbers and relationships that you enter or select; SOS mode, trigger time, selected message and shirt colour; reported fall or stillness events, dispatch outcomes and retry records. A note you choose to provide may reveal health information, which requires additional care.</li>
+            <li><strong>Community and feedback:</strong> posts, stories, chat messages, membership and message status, comments, reactions, ratings and difficulty choices, caution reports, support or feedback reports, drafts, and photos, videos or other attachments supported by the feature.</li>
+            <li><strong>Device and nearby context:</strong> app/platform details, notification tokens, permission and connectivity state, motion signals used for safety detection, supported SOS button identifiers, local pairing data, nearby observations and optional debugging records. Technical providers may process IP addresses, request times and other connection metadata.</li>
+            </ul>
+            <p>Other users may supply your details when naming you as an emergency contact, inviting you to a hike, or communicating with you. Mapping, weather and messaging providers return the information needed for the requested feature. The app may store records on the phone for offline operation and later synchronize eligible records with its backend.</p>
+          </section>
 
-        <section id="information">
-          <h2>2. Information we collect</h2>
+          <section id="en-purposes" aria-labelledby="en-purposes-title">
+            <h2 id="en-purposes-title">3. Purposes and required information</h2>
+            <p>We use the data to provide account access and recovery; profiles and preferences; trail discovery, route previews and weather; hike planning, reminders, preparation, tracking and history; team coordination and chat; live sharing, safety checks and SOS attempts; community features; moderation; feedback handling; service security and troubleshooting. We also produce aggregate service totals that do not identify an individual.</p>
+            <p><strong>Required for the relevant service:</strong> a verified phone number and required sign-in/onboarding information are needed for an account. At least one emergency contact is required to finish onboarding. A location-dependent feature needs a usable location, and cloud or messaging operations need connectivity. Without the necessary data, the associated account step or feature cannot be completed.</p>
+            <p><strong>Optional:</strong> a profile photo, community content, additional contacts, attachments and live sharing are optional. Camera, address-book, Bluetooth, background-location and notification access are requested when relevant. You can enter a contact manually instead of importing it. Refusing optional data or permission may limit that feature without authorizing unrelated collection.</p>
+            <p>HikerCircle does not sell your personal data or use your location, private messages, contacts or SOS details for third-party behavioural advertising.</p>
+          </section>
 
-          <h3>Account and authentication information</h3>
-          <p>We may collect your telephone number, Firebase user identifier, account and session identifiers, authentication status, passkey credential identifiers and public keys, multi-factor authentication settings, encrypted authentication secrets, security-question responses or derived values, login and password-reset records, and related security logs. Authentication credentials are handled in protected or derived form where the feature permits. A passkey private key and any fingerprint, face, or device unlock data used to release it remain with your device, operating system, or passkey provider and are not received by HikerCircle.</p>
+          <section id="en-location" aria-labelledby="en-location-title">
+            <h2 id="en-location-title">4. Location recording and sharing links</h2>
+            <p>Location is used for trail context, route and weather requests, active-hike recording, check-ins, route-deviation checks, team coordination, nearby safety features and emergency location. Background access supports enabled tracking or sharing when the app is not visible. A map or weather request can send the selected coordinates to that provider even if public live sharing is off.</p>
+            <p>Active-hike records are retained locally to support offline use, with eligible updates synchronized when a connection is available. Turning off location permission does not remove records already saved on the phone or in the cloud. The operating system, device or battery settings can interrupt recording.</p>
+            <p><strong>A live-location link is access to shared information.</strong> Anyone who has an active link can open the viewer without a HikerCircle account and can forward it. The shared record can include the latest location, its time and accuracy, and the route made available by that feature. Share it only with people you trust. The viewer does not provide a public directory of all shares.</p>
+            <p>A new share is valid for 24 hours. An explicit activation or renewal of an active share extends its expiry to 24 hours from that action and can keep the same link. Reopening the app or publishing another location does not automatically renew it. A stopped or expired share receives a new link when activated again.</p>
+            <p>Stopping sharing stops new phone updates immediately. Viewer access ends when the backend deactivates the share or its expiry is reached; an offline stop request may be retried later. Expiry ends viewer access, not necessarily retention of every related record. It cannot remove screenshots, messages or copies already held by recipients.</p>
+          </section>
 
-          <h3>Profile information</h3>
-          <p>This may include your username, profile photograph, gender, hiking experience, hiking frequency, residential city or area and its approximate coordinates, hiker level, achievements, buddies, and preferences.</p>
+          <section id="en-emergency" aria-labelledby="en-emergency-title">
+            <h2 id="en-emergency-title">5. Emergency contacts, WhatsApp and SOS buttons</h2>
+            <p>When you save another person's contact details, tell them why you are adding them and obtain their agreement to receive the relevant alerts. Entering a number is not a record that its owner has agreed. If you are a named contact and want to raise a concern, use the privacy contact below.</p>
+            <p>For WhatsApp verification or an SOS/contact notification, the backend passes the recipient number and the message data required for that operation to GREEN-API and WhatsApp. Depending on the operation, this can include a verification message, your name or phone number, incident type and time, selected note, coordinates, a map or live-sharing link and relevant hike information. Saved-contact validation limits SOS dispatch to the account's saved recipients.</p>
+            <p><strong>The linked-device GREEN-API gateway used by HikerCircle is a third-party integration, separate from Meta's official WhatsApp Business Platform.</strong> A gateway or account restriction can interrupt alerts. The provider handles the recipient number and message supplied to it; do not assume that WhatsApp encryption prevents the gateway or HikerCircle's backend from processing the message submitted for sending. See the <a href="https://green-api.com/articles/en/unofficial-whatsapp-api-what-is-it-and-how-to-use-it/">GREEN-API explanation</a> and <a href="https://www.whatsapp.com/legal/terms-of-service">WhatsApp terms</a>.</p>
+            <p>Eligible failed or offline alerts can be saved for retry after reconnection. Provider acceptance is different from recipient delivery or reading. Stopping a local siren does not cancel a message already accepted for sending. The app does not automatically dispatch official rescue services.</p>
+            <p>A paired SOS button uses locally saved pairing information. Nearby non-owner button observations may be recorded locally and uploaded as unverified nearby context. Their coordinates can come from a relay or the detecting phone; they do not prove the button's position or authenticate the person carrying it. Nearby observations do not give the observer access to the owner's pairing secret or private account.</p>
+          </section>
 
-          <h3>Hike, location, and safety information</h3>
-          <p>Depending on the features you use and permissions you grant, we may process precise or approximate location, background location during an active hike or SOS handoff, route points, map pins, trail selections, start and destination points, checkpoints, hike schedules, check-ins, distance, duration, timestamps, battery percentages, live-location sharing status, and fall or stillness events inferred from device motion sensors.</p>
+          <section id="en-recipients" aria-labelledby="en-recipients-title">
+            <h2 id="en-recipients-title">6. Who may receive or access data</h2>
+            <ul>
+            <li><strong>People involved in a feature:</strong> the selected emergency contacts, hike hosts and members, buddies, chat recipients, community viewers, report reviewers and holders of an active live-sharing link receive the information the feature makes available. Community content can be copied or reshared.</li>
+            <li><strong>Authorized administrators:</strong> permitted account support, trail-request review, moderation, safety administration and feedback review may involve access to the records needed for those tasks. Administrative access is subject to account roles and backend rules.</li>
+            <li><strong>Infrastructure and platform providers:</strong> Google Firebase/Google Cloud support authentication, data and file storage, hosting, functions and notifications. Apple services support relevant iOS, notification and passkey operations. These providers may process account identifiers, tokens, uploaded data and technical connection information needed for those services.</li>
+            <li><strong>Map, route and weather providers:</strong> depending on the feature, Mapbox, Google Maps/Routes, Geoapify, OpenRouteService, OpenTopoData, OpenStreetMap-based services and Open-Meteo may receive selected coordinates, route points and technical request information.</li>
+            <li><strong>Communication providers:</strong> GREEN-API and WhatsApp process the recipient and message information described above. Opening the phone dialler, a map app or the phone's sharing menu also involves the app or service you choose.</li>
+            <li><strong>Legal or safety recipients:</strong> information may be disclosed to a competent authority or another appropriate party where required or permitted by law, including a lawful request, a security investigation or protection of vital interests.</li>
+            </ul>
+            <p>Other app users are not given general access to private authentication data, emergency-contact lists or notification tokens. Choosing a public or sharing feature changes the audience for that feature; account authentication does not make an active shared link private to a named recipient.</p>
+          </section>
 
-          <h3>SOS and emergency information</h3>
-          <p>This may include the type and time of an SOS, your location, nearby SOS reports, incident identifiers, emergency-contact names and telephone numbers that you provide or select, contact-delivery status, and messages or map links sent to your selected contacts or eligible nearby HikerCircle users. An SOS may reveal sensitive information about your circumstances.</p>
+          <section id="en-permissions" aria-labelledby="en-permissions-title">
+            <h2 id="en-permissions-title">7. Device permissions and your controls</h2>
+            <p>You control device permissions through Android or iOS settings. Relevant permissions include location, background location, motion, Bluetooth/nearby devices, camera or flashlight, selected photos/files, contacts and notifications.</p>
+            <p>Address-book access is used when you choose to pick a contact. The selected emergency-contact fields are saved for that purpose; HikerCircle does not upload your entire address book for that action. You can select media rather than give access to unrelated files where the operating system supports it.</p>
+            <p>Revoking a permission stops or limits the related collection after the change takes effect, but it does not withdraw content already sent or delete cloud records. Device permission is a technical permission and is not blanket consent for every disclosure, overseas transfer or future purpose. Use Stop Live, the relevant feature settings, or contact us if you also wish to stop processing or request deletion.</p>
+          </section>
 
-          <h3>Social, community, and user content</h3>
-          <p>We may collect buddy requests, team-hike participation, group or direct chat messages, read status, community posts, comments, reactions, trail ratings, hazard reports, group names, and photographs, videos, files, or other attachments you choose to upload. Content you share with other users can be copied or reshared by them outside HikerCircle.</p>
+          <section id="en-consent" aria-labelledby="en-consent-title">
+            <h2 id="en-consent-title">8. Malaysia PDPA and consent</h2>
+            <p>The Malaysian framework includes the General, Notice and Choice, Disclosure, Security, Retention, Data Integrity and Access Principles. Our data handling must have a lawful purpose and the applicable legal basis. Where consent is required, it must be obtained for that processing. Other permitted grounds can include necessary performance of a contract, a legal obligation or protection of vital interests; an emergency is not blanket permission for unrelated processing.</p>
+            <p>Where a feature requires consent, we must explain its purpose and choices. You may withdraw consent by writing to the contact below, and use app or device controls for the associated collection. Some requested services cannot continue without the information they require. Receipt of a privacy notice alone is not consent, and changes of purpose may require a new notice and consent.</p>
+            <p>The post-onboarding notice uses a checkbox that is not preselected and a separate Agree &amp; continue action. An acceptance receipt records the notice and policy versions, chosen language, action time on your phone and server recording time. It is saved on your phone first and uploaded to your account when a connection is available, so the same notice need not be accepted again. Choosing Not now signs you out without recording acceptance; it does not delete information already provided for account setup. Agreeing does not activate optional features or device permissions.</p>
+            <p>SOS notes or reports may contain health information. Do not include more than is needed. Processing sensitive personal data requires explicit consent or another condition permitted by Malaysian law. Device biometric verification does not mean HikerCircle receives your fingerprint or face template.</p>
+            <p class="legal-links">Malaysian sources: <a href="https://www.pdp.gov.my/wp-content/uploads/2026/10/Akta-709-cetakan-semula-2026-BI.pdf">Act 709, 2026 reprint</a>, <a href="https://www.pdp.gov.my/ppdpv1/wp-content/uploads/2024/11/Act-A1727.pdf">2024 amendments</a>, and <a href="https://www.pdp.gov.my/en/akta/data-protection-by-design-guideline-dpbd/">data protection by design guidance</a>.</p>
+          </section>
 
-          <h3>Device and technical information</h3>
-          <p>We may collect device and app identifiers, app version and platform, push-notification tokens, IP address and request metadata processed by our hosting and cloud providers, Bluetooth device identifiers and pairing status for supported SOS devices, connectivity status, crash or diagnostic details, rate-limit and abuse-prevention records, and local app database records needed for offline operation.</p>
+          <section id="en-transfers" aria-labelledby="en-transfers-title">
+            <h2 id="en-transfers-title">9. Processing outside Malaysia</h2>
+            <p>HikerCircle is operated from Malaysia, but cloud, mapping, platform and communication providers may route, process, back up or store data in other countries. Provider locations differ by service and configuration. A Malaysian user or a Malaysia-based developer does not mean every copy remains in Malaysia.</p>
+            <p>Where section 129 of Act 709 applies, an overseas transfer needs a permitted condition and appropriate protection. Depending on the circumstances, this may involve an adequately protective destination, informed consent, contractual necessity or another statutory condition. Consent is not assumed simply because you use the app. You may contact us for information about the providers, destination information available for the feature, purpose and applicable transfer arrangements. See the Commissioner's <a href="https://www.pdp.gov.my/ppdpv1/wp-content/uploads/2025/08/GP_CBPDT_EN-1.pdf">2025 cross-border transfer guidelines</a>.</p>
+          </section>
 
-          <h3>Support communications</h3>
-          <p>If you contact us, we collect the information in your request, your contact details, and any files or context you provide so we can respond.</p>
+          <section id="en-retention" aria-labelledby="en-retention-title">
+            <h2 id="en-retention-title">10. How long records remain</h2>
+            <p>Retention depends on the record and its purpose. We do not treat live-link expiry as a universal data-deletion period.</p>
+            <ul>
+            <li><strong>Live viewer:</strong> access lasts until deactivation or the current expiry, including an explicit renewal. Related account, hike, route and security records may remain separately.</li>
+            <li><strong>Verification:</strong> OTP, recovery and MFA challenges have short validity windows. A challenge becoming invalid does not mean every log or underlying record is deleted at the same moment.</li>
+            <li><strong>Hike history, profiles and content:</strong> records are kept while needed for the account, selected history/community features or a request under review. They are reviewed for removal when that purpose ends.</li>
+            <li><strong>Retry and security records:</strong> pending operations, dispatch outcomes, abuse-prevention and request logs may remain as needed to reconcile work, investigate an incident or meet a legal requirement. A retry deadline does not automatically erase the alert record.</li>
+            <li><strong>Local and recipient copies:</strong> app data and drafts may remain on your phone until removed by a supported feature, clearing app data or uninstalling. Recipients can retain their own copies. Backups and provider logs can follow separate service lifecycles.</li>
+            </ul>
+            <p>We must not keep personal data longer than necessary for its purpose. A deletion request is assessed across the relevant local, cloud and provider-held records; any justified retention or limits will be explained. There is no promise here that all history or backups are erased automatically after 24 hours.</p>
+          </section>
 
-          <h3>Website and aggregate information</h3>
-          <p>The public website requests aggregate community totals, such as registered-user and completed-hike counts, from HikerCircle's servers. These published totals do not identify individual users. We may also create aggregated or de-identified information for service reliability, safety analysis, and statistics. If that information is combined with identifiable information, we treat the combined information as personal information while it remains identifiable.</p>
-        </section>
+          <section id="en-security" aria-labelledby="en-security-title">
+            <h2 id="en-security-title">11. Security and personal-data breaches</h2>
+            <p>Safeguards include account authentication, MFA where configured, account-role checks, database/storage rules, protected credential records, server-held messaging credentials, network transport protection and abuse controls. They do not make every record end-to-end encrypted or every local database immune to device access. Protect your phone, screen lock, account and sharing links.</p>
+            <p>If a personal-data breach occurs, we will investigate, contain it, assess its impact and take appropriate remedial steps. Where notification is required, we will notify the Personal Data Protection Commissioner and affected individuals according to Malaysian law and the applicable breach-notification guidelines. Use the privacy contact to report suspected unauthorized access. Do not send us a password, verification code, Authenticator secret or passkey private key.</p>
+          </section>
 
-        <section id="collection">
-          <h2>3. How we collect information</h2>
-          <p>We collect information:</p>
-          <ul>
-            <li><strong>directly from you</strong>, such as when you register, complete your profile, plan a hike, add an emergency contact, post content, or contact us;</li>
-            <li><strong>from your device</strong>, when you grant permissions or use features involving location, motion, camera, photos, files, Bluetooth, or notifications;</li>
-            <li><strong>through your activity</strong>, such as hike progress, check-ins, messages, safety actions, and feature settings;</li>
-            <li><strong>from other users</strong>, when they invite you, add you as a buddy, include you in a hike, communicate with you, or report nearby safety information; and</li>
-            <li><strong>from service providers</strong>, such as authentication, cloud hosting, maps, weather, messaging, and notification providers.</li>
-          </ul>
-        </section>
+          <section id="en-rights" aria-labelledby="en-rights-title">
+            <h2 id="en-rights-title">12. Access, correction and other choices</h2>
+            <p>You may contact us to request access to or correction of your personal data, withdraw consent in writing, or exercise an applicable right under Act 709. Where the statutory conditions are met, you may request prevention of processing likely to cause unwarranted substantial damage or distress, prevention of direct marketing, or data portability subject to technical feasibility and compatible formats.</p>
+            <p>We verify identity using information reasonably necessary for the request and respond within applicable statutory periods. Some requests have lawful exceptions or fees; we will explain a restriction, any applicable fee, or an extension rather than promise an unconditional right. You can also update supported profile fields, contacts, content, notifications and sharing settings in the app. We do not currently send direct marketing.</p>
+            <p>A request to access or correct data is different from a request to delete an account. Contact us if you are an emergency contact or another person whose details were provided by a user.</p>
+          </section>
 
-        <section id="use">
-          <h2>4. How we use information</h2>
-          <p>We use personal information to:</p>
-          <ul>
-            <li>create, authenticate, secure, and maintain your account;</li>
-            <li>provide profiles, buddy connections, community features, chats, trail discovery, hike planning, hike histories, ratings, reminders, and achievements;</li>
-            <li>record active hikes and restore relevant hike information across supported devices;</li>
-            <li>provide maps, routes, weather context, nearby hike information, and live-location sharing that you activate;</li>
-            <li>operate SOS features, fall-and-stillness alerts, nearby safety notices, paired SOS buttons, emergency-contact delivery, and related status updates;</li>
-            <li>send transactional, safety, invitation, chat, and reminder notifications;</li>
-            <li>moderate content, investigate reports, prevent spam, fraud, misuse, or unauthorized access, and enforce service rules;</li>
-            <li>troubleshoot, maintain, measure, and improve the reliability, accessibility, safety, and performance of the Services;</li>
-            <li>produce de-identified or aggregate service statistics, including the community totals displayed on the public website;</li>
-            <li>respond to support, privacy, and legal requests; and</li>
-            <li>comply with applicable law and protect users, the public, our rights, and the integrity of the Services.</li>
-          </ul>
-          <div class="plain-language"><strong>HikerCircle does not sell your personal information or share it for cross-context behavioural advertising.</strong> We do not use precise location, SOS information, private messages, contacts, or authentication information for third-party behavioural advertising.</div>
-        </section>
+          <section id="en-deletion" aria-labelledby="en-deletion-title">
+            <h2 id="en-deletion-title">13. Account and data deletion requests</h2>
+            <p>Email <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20account%20or%20data%20deletion">leongziqi@gmail.com</a> with the subject <strong>HikerCircle account or data deletion</strong>. Give the account phone number and describe whether you want the account, a particular hike, contact record, report or other data removed. Provide only the information needed to identify the request; we will arrange appropriate verification.</p>
+            <p>Deletion is handled as a request to the developer, not a claim that an automatic in-app erasure button exists. We will explain the records covered, any information still needed for security or law, and limitations involving shared messages, recipient copies or backups. Uninstalling the app or signing out does not by itself delete the cloud account or recall WhatsApp messages. If an offline device later reconnects, a pending local change may still require reconciliation; tell us if you also need help addressing that copy.</p>
+          </section>
 
-        <section id="location">
-          <h2>5. Location and safety data</h2>
-          <p>Location is central to some HikerCircle features and can be sensitive. The app may request foreground location for maps, trail context, nearby safety information, navigation, check-ins, and SOS location sharing. If you enable active-hike monitoring, live-location sharing, or a paired SOS handoff, the app may request background location so those features can continue when the app is not visible. Operating systems may pause or limit background delivery.</p>
-          <p>When you intentionally share live location, join a team hike, create certain hike plans, or trigger an SOS, relevant location and hike details may be visible to the people you select, hike participants, emergency contacts, or eligible nearby HikerCircle users. A person who receives a live-location link may be able to open it without a HikerCircle account and may forward it. Share links only with people you trust and stop sharing when it is no longer needed.</p>
-          <p>HikerCircle safety features support situational awareness but are not an emergency service, medical device, or guaranteed rescue system. Network, battery, sensor, device, operating-system, and third-party service limitations may affect delivery.</p>
-        </section>
+          <section id="en-children" aria-labelledby="en-children-title">
+            <h2 id="en-children-title">14. Users under 18</h2>
+            <p>If you are under 18, a parent, guardian or person with parental responsibility must provide the consent required for processing your personal data and supervise use of the safety and sharing features. Do not add another child's details without the appropriate authority. Contact us if a child's data has been supplied without the required authorization so it can be investigated and handled appropriately.</p>
+          </section>
 
-        <section id="sharing">
-          <h2>6. When we share information</h2>
-          <p>We may disclose information in the following circumstances:</p>
-          <ul>
-            <li><strong>At your direction or as part of a feature.</strong> We share data with buddies, hike hosts and participants, chat recipients, community viewers, emergency contacts, nearby users, or anyone with a live-location link when you use the corresponding feature.</li>
-            <li><strong>With service providers.</strong> Providers process data for cloud infrastructure, authentication, databases, file storage, push notifications, maps, routes, elevation, weather, communications, and security. Depending on the feature and configuration, these may include Google Firebase and Google Cloud, Google Maps and Routes, Mapbox, Geoapify, OpenRouteService, OpenTopoData, OpenStreetMap-based services, Open-Meteo, Apple platform services, and GREEN-API or WhatsApp services. A provider may receive the request data needed for its feature, which can include IP and device information and, for a map, route, weather, or safety request, coordinates.</li>
-            <li><strong>For legal and safety reasons.</strong> We may preserve or disclose information when we reasonably believe it is necessary to comply with law or a valid legal process; respond to an emergency; prevent harm; investigate abuse, fraud, or security incidents; or protect users, the public, HikerCircle, or others.</li>
-            <li><strong>During an organizational change.</strong> If HikerCircle is involved in a merger, acquisition, financing, reorganization, or transfer of assets, information may be disclosed subject to appropriate confidentiality and legal safeguards. We will notify users where required.</li>
-            <li><strong>With your consent.</strong> We may disclose information for another purpose that we explain and to which you agree.</li>
-          </ul>
-          <p>Public profile or community information is visible according to the feature's design and your settings. Private account, authentication, emergency-contact, and push-token fields are not intended to be public.</p>
-        </section>
+          <section id="en-website" aria-labelledby="en-website-title">
+            <h2 id="en-website-title">15. This website and external services</h2>
+            <p>This privacy page loads its presentation files from HikerCircle hosting and does not add advertising trackers or analytics cookies. Its language choice is represented in the page address; it does not need a tracking cookie or browser-storage profile. Hosting providers may process IP address, browser/request details and timestamps to deliver and protect the page.</p>
+            <p>Other HikerCircle pages can request aggregate service counts or, when you open a valid share, the data needed by the live-location viewer. External maps, WhatsApp, app stores and provider websites have their own privacy terms. HikerCircle remains responsible for its own disclosures and applicable provider arrangements; an external provider's policy does not remove those responsibilities.</p>
+          </section>
 
-        <section id="permissions">
-          <h2>7. Device permissions</h2>
-          <p>HikerCircle may request the following permissions only on supported devices and when relevant to a feature:</p>
-          <ul>
-            <li><strong>Location:</strong> maps, nearby features, active-hike tracking, check-ins, live-location sharing, and SOS handoff;</li>
-            <li><strong>Motion or sensors:</strong> detecting a possible fall followed by stillness during an active hike;</li>
-            <li><strong>Bluetooth and nearby devices:</strong> pairing or listening for an SOS button and exchanging supported nearby team-hike or safety signals;</li>
-            <li><strong>Camera:</strong> profile or trail photos and flashlight-based SOS alerts;</li>
-            <li><strong>Photos, videos, and files:</strong> media or attachments that you choose to upload;</li>
-            <li><strong>Contacts:</strong> selecting emergency contacts when you initiate that action; and</li>
-            <li><strong>Notifications:</strong> safety alerts, messages, invitations, reminders, and service updates.</li>
-          </ul>
-          <p>You can change permissions in your device settings. Disabling a permission may stop the related feature from working. Selecting a contact does not authorize HikerCircle to upload your entire address book; only the contact details you choose for the feature should be processed.</p>
-        </section>
+          <section id="en-changes" aria-labelledby="en-changes-title">
+            <h2 id="en-changes-title">16. Changes to this notice</h2>
+            <p>Last updated: <strong>4 November 2026</strong>. We will update this notice when the features, recipients or processing practices change. Material changes requiring additional notice or consent will be addressed before the relevant new processing. Both language versions will be updated together; please tell us about any difference so it can be clarified consistently with Malaysian law.</p>
+          </section>
 
-        <section id="legal-bases">
-          <h2>8. Legal bases for processing</h2>
-          <p>Where applicable law requires a legal basis, the basis depends on the purpose and context:</p>
-          <ul>
-            <li><strong>Contract or requested service:</strong> creating and authenticating an account and providing the profile, hike, chat, route, reminder, and sharing features you request;</li>
-            <li><strong>Consent:</strong> optional access to precise or background location, contacts, photos, camera, Bluetooth, motion signals, or notifications where consent is required;</li>
-            <li><strong>Legitimate interests:</strong> securing and improving the Services, preventing abuse, maintaining reliable operations, responding to support, and protecting users, after considering the impact on individual rights;</li>
-            <li><strong>Legal obligation:</strong> complying with applicable law, valid legal process, recordkeeping, or regulatory requests; and</li>
-            <li><strong>Vital interests:</strong> processing reasonably necessary to protect a person's life or safety during an emergency where the law permits.</li>
-          </ul>
-          <p>You may decline optional information, but the related feature may then be unavailable. You may withdraw consent through device or app settings or by contacting us, without affecting processing already carried out lawfully.</p>
-        </section>
+          <section id="en-contact" aria-labelledby="en-contact-title">
+            <h2 id="en-contact-title">17. Privacy contact and complaints</h2>
+            <p>For access, correction, consent withdrawal, deletion or a privacy complaint, contact the controller:</p>
+            <div class="contact-card"><strong>Leong Zi Qi — HikerCircle</strong><br>Independent developer and data controller, Malaysia<br>Email: <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">leongziqi@gmail.com</a><br>Website: <a href="https://hiker-circle.web.app">hiker-circle.web.app</a></div>
+            <p>State what happened, the relevant account or record and the action requested. We may need limited identity information, but never your password or one-time code. If you wish to raise a complaint with Malaysia's Personal Data Protection Commissioner, visit the <a href="https://www.pdp.gov.my/en/">official JPDP website</a> for the current complaint route, or email <a href="mailto:aduan@pdp.gov.my">aduan@pdp.gov.my</a>.</p>
+          </section>
+        </article>
+      </div>
+    </div>
+    <div id="policy-ms" data-policy-language="ms" lang="ms">
+      <header class="hero">
+        <p class="eyebrow">HikerCircle · Malaysia</p>
+        <h1>Notis Privasi</h1>
+        <p class="hero-copy">Cara maklumat anda dikumpul, digunakan dan dikongsi, serta pilihan anda di bawah keperluan perlindungan data Malaysia.</p>
+        <span class="updated">Dikemas kini 4 November 2026</span>
+      </header>
+      <div class="layout">
+        <details class="toc" open>
+          <summary>Kandungan halaman</summary>
+          <nav aria-label="Kandungan halaman">
+            <ol>
+              <li><a href="#ms-scope">Pihak yang bertanggungjawab</a></li>
+              <li><a href="#ms-information">Data yang dikumpul dan sumbernya</a></li>
+              <li><a href="#ms-purposes">Tujuan dan maklumat yang diperlukan</a></li>
+              <li><a href="#ms-location">Rakaman lokasi dan pautan perkongsian</a></li>
+              <li><a href="#ms-emergency">Kenalan kecemasan, WhatsApp dan butang SOS</a></li>
+              <li><a href="#ms-recipients">Pihak yang menerima atau mengakses data</a></li>
+              <li><a href="#ms-permissions">Kebenaran peranti dan kawalan anda</a></li>
+              <li><a href="#ms-consent">PDPA Malaysia dan persetujuan</a></li>
+              <li><a href="#ms-transfers">Pemprosesan di luar Malaysia</a></li>
+              <li><a href="#ms-retention">Tempoh penyimpanan rekod</a></li>
+              <li><a href="#ms-security">Keselamatan dan pelanggaran data peribadi</a></li>
+              <li><a href="#ms-rights">Akses, pembetulan dan pilihan lain</a></li>
+              <li><a href="#ms-deletion">Permintaan pemadaman akaun dan data</a></li>
+              <li><a href="#ms-children">Pengguna bawah umur 18 tahun</a></li>
+              <li><a href="#ms-website">Laman web ini dan perkhidmatan luar</a></li>
+              <li><a href="#ms-changes">Perubahan kepada notis ini</a></li>
+              <li><a href="#ms-contact">Hubungan privasi dan aduan</a></li>
+            </ol>
+          </nav>
+        </details>
+        <article class="policy" aria-label="Notis Privasi">
+          <p class="notice-version">Notis penuh Bahasa Melayu. Versi lengkap bahasa Inggeris tersedia melalui pilihan bahasa di atas.</p>
+          <section id="ms-scope" aria-labelledby="ms-scope-title">
+            <h2 id="ms-scope-title">1. Pihak yang bertanggungjawab</h2>
+            <p>Notis ini menerangkan cara HikerCircle mengendalikan data peribadi melalui aplikasi mudah alih, laman web, paparan lokasi langsung dan ciri pendakian yang berkaitan. Notis ini disediakan untuk kegunaan di Malaysia dengan merujuk kepada Akta Perlindungan Data Peribadi 2010 (Akta 709), sebagaimana dipinda, serta keperluan Malaysia yang terpakai.</p>
+            <p><strong>Leong Zi Qi, pembangun bebas HikerCircle, ialah pengawal data dan pihak perhubungan bagi urusan privasi.</strong> HikerCircle dikendalikan dari Malaysia. Hubungi <a href="mailto:leongziqi@gmail.com?subject=Permintaan%20privasi%20HikerCircle">leongziqi@gmail.com</a> mengenai pengendalian data anda atau untuk membuat permintaan privasi.</p>
+            <p>Notis penuh tersedia dalam Bahasa Melayu dan bahasa Inggeris. Kedua-dua versi menerangkan amalan yang sama. Membaca notis ini atau terus menggunakan aplikasi tidak dengan sendirinya memberi kebenaran bagi setiap penggunaan pilihan data anda. Kebenaran peranti, tindakan perkongsian dan apa-apa permintaan persetujuan tambahan terpakai kepada ciri yang berkenaan.</p>
+          </section>
 
-        <section id="retention">
-          <h2>9. Data retention</h2>
-          <p>We retain personal information for as long as reasonably necessary to provide the Services, keep accounts and hike histories functioning, meet the purposes described in this policy, resolve disputes, enforce agreements, maintain security and abuse-prevention records, and comply with legal obligations. Retention differs by data type and context.</p>
-          <p>For example, public live-location share links are configured to expire no later than 24 hours after creation; temporary authentication and multi-factor challenges expire after their short verification window and are removed by scheduled cleanup; account, profile, hike-history, and user-content records may remain while the account or associated feature remains active; and messages or shared content may remain visible to their recipients or groups. Security, rate-limit, transaction, deletion, and backup records may remain for a limited period after other data is removed where needed for the purposes above.</p>
-          <p>Data and cached trail media stored only on your device may remain until you remove it, clear the app's data or cache, or uninstall the app. When retention is no longer necessary, information is deleted, anonymized, or isolated from further use as appropriate. We may retain de-identified or aggregated information that can no longer reasonably identify you.</p>
-        </section>
+          <section id="ms-information" aria-labelledby="ms-information-title">
+            <h2 id="ms-information-title">2. Data yang dikumpul dan sumbernya</h2>
+            <p>Kami mengumpul data yang anda berikan, data yang terhasil apabila anda menggunakan sesuatu ciri, maklumat daripada pengguna lain dan maklumat yang diperlukan daripada penyedia perkhidmatan:</p>
+            <ul>
+            <li><strong>Akaun dan keselamatan:</strong> nombor telefon, pengecam akaun dan sesi, hash kata laluan, rekod pengesahan dan pemulihan, tetapan Authenticator dan rahsia yang dilindungi, kelayakan awam kunci laluan, peristiwa keselamatan dan status log masuk. Kunci peribadi kunci laluan serta templat cap jari atau wajah yang digunakan oleh peranti tidak dihantar kepada HikerCircle.</li>
+            <li><strong>Profil dan pilihan:</strong> nama pengguna, foto profil yang dipilih, jantina, pengalaman dan kekerapan mendaki, kawasan kediaman yang dipilih dan koordinatnya, pilihan, rakan, pencapaian dan tahap pendaki.</li>
+            <li><strong>Pendakian dan lokasi:</strong> denai yang dipilih, pusat pemeriksaan, laluan, masa bertolak dan pulang, keahlian pasukan, koordinat lokasi dan ketepatan yang dilaporkan, masa rakaman, jejak lokasi, daftar masuk keselamatan, jarak, tempoh, status bateri dan status perkongsian langsung. Lokasi diperoleh daripada telefon atau lokasi yang anda pilih bagi sesuatu ciri.</li>
+            <li><strong>Keselamatan dan kenalan:</strong> nama, nombor dan hubungan kenalan kecemasan yang anda masukkan atau pilih; mod SOS, masa pencetus, mesej dan warna baju yang dipilih; peristiwa jatuh atau tidak bergerak yang dilaporkan, hasil penghantaran dan rekod cubaan semula. Nota yang anda berikan mungkin mendedahkan maklumat kesihatan yang memerlukan penjagaan tambahan.</li>
+            <li><strong>Komuniti dan maklum balas:</strong> siaran, cerita, mesej sembang, keahlian dan status mesej, komen, reaksi, penilaian dan pilihan kesukaran, laporan bahaya, laporan sokongan atau maklum balas, draf, serta foto, video atau lampiran lain yang disokong oleh ciri berkenaan.</li>
+            <li><strong>Peranti dan konteks berdekatan:</strong> butiran aplikasi/platform, token pemberitahuan, status kebenaran dan sambungan, isyarat pergerakan untuk pengesanan keselamatan, pengecam butang SOS yang disokong, data pemasangan setempat, pemerhatian berdekatan dan rekod penyahpepijatan pilihan. Penyedia teknikal mungkin memproses alamat IP, masa permintaan dan metadata sambungan lain.</li>
+            </ul>
+            <p>Pengguna lain mungkin memberikan butiran anda apabila menamakan anda sebagai kenalan kecemasan, menjemput anda menyertai pendakian atau berkomunikasi dengan anda. Penyedia peta, cuaca dan pemesejan membekalkan maklumat yang diperlukan bagi ciri yang diminta. Aplikasi boleh menyimpan rekod pada telefon untuk kegunaan luar talian dan kemudian menyegerakkan rekod yang layak dengan sistem pelayannya.</p>
+          </section>
 
-        <section id="security">
-          <h2>10. Data security</h2>
-          <p>We use administrative, technical, and organizational safeguards designed to protect personal information. These include authenticated access, database and storage access rules, transport encryption, restricted security fields, protected or derived credential storage where appropriate, rate limits, and service monitoring. No method of storage or transmission is completely secure, so we cannot guarantee absolute security.</p>
-          <p>If a personal-data breach occurs, we will investigate and take reasonable containment and remediation steps. We will notify affected individuals and relevant authorities when required by applicable law.</p>
-          <p>You are responsible for keeping your device, telephone account, passkeys, verification codes, and login methods secure. Contact us promptly if you believe your account or information has been compromised.</p>
-        </section>
+          <section id="ms-purposes" aria-labelledby="ms-purposes-title">
+            <h2 id="ms-purposes-title">3. Tujuan dan maklumat yang diperlukan</h2>
+            <p>Kami menggunakan data untuk menyediakan akses dan pemulihan akaun; profil dan pilihan; carian denai, pratonton laluan dan cuaca; perancangan, peringatan, persediaan, penjejakan dan sejarah pendakian; penyelarasan pasukan dan sembang; perkongsian langsung, semakan keselamatan dan cubaan SOS; ciri komuniti; penyederhanaan kandungan; pengendalian maklum balas; keselamatan perkhidmatan dan penyelesaian masalah. Kami juga menghasilkan jumlah perkhidmatan agregat yang tidak mengenal pasti individu.</p>
+            <p><strong>Diperlukan untuk perkhidmatan berkaitan:</strong> nombor telefon yang disahkan dan maklumat log masuk/pendaftaran yang diperlukan adalah perlu bagi akaun. Sekurang-kurangnya satu kenalan kecemasan diperlukan untuk melengkapkan pendaftaran. Ciri berasaskan lokasi memerlukan lokasi yang boleh digunakan, manakala operasi awan atau pemesejan memerlukan sambungan. Tanpa data yang diperlukan, langkah akaun atau ciri berkenaan tidak dapat dilengkapkan.</p>
+            <p><strong>Pilihan:</strong> foto profil, kandungan komuniti, kenalan tambahan, lampiran dan perkongsian langsung adalah pilihan. Akses kamera, buku alamat, Bluetooth, lokasi latar belakang dan pemberitahuan diminta apabila berkaitan. Anda boleh memasukkan kenalan secara manual tanpa mengimportnya. Penolakan data atau kebenaran pilihan mungkin mengehadkan ciri tersebut tetapi tidak membenarkan pengumpulan yang tidak berkaitan.</p>
+            <p>HikerCircle tidak menjual data peribadi anda atau menggunakan lokasi, mesej peribadi, kenalan atau butiran SOS anda untuk pengiklanan tingkah laku pihak ketiga.</p>
+          </section>
 
-        <section id="transfers">
-          <h2>11. International data transfers</h2>
-          <p>HikerCircle is operated from Malaysia. HikerCircle and its service providers may process, route, back up, or store information in Malaysia, the United States, or other countries where those providers operate. This means information may be transferred outside your country of residence, and those countries may have different data-protection laws.</p>
-          <p>Where applicable law requires transfer safeguards, we rely on legally recognized mechanisms made available for the relevant service, contractual protections, adequacy decisions, or other permitted safeguards, together with technical and organizational measures. You may contact us for information about safeguards relevant to your data.</p>
-        </section>
+          <section id="ms-location" aria-labelledby="ms-location-title">
+            <h2 id="ms-location-title">4. Rakaman lokasi dan pautan perkongsian</h2>
+            <p>Lokasi digunakan bagi konteks denai, permintaan laluan dan cuaca, rakaman pendakian aktif, daftar masuk keselamatan, semakan penyimpangan laluan, penyelarasan pasukan, ciri keselamatan berdekatan dan lokasi kecemasan. Akses latar belakang menyokong penjejakan atau perkongsian yang diaktifkan apabila aplikasi tidak kelihatan. Permintaan peta atau cuaca boleh menghantar koordinat yang dipilih kepada penyedia walaupun perkongsian langsung awam dimatikan.</p>
+            <p>Rekod pendakian aktif disimpan secara setempat bagi menyokong kegunaan luar talian, dengan kemas kini yang layak disegerakkan apabila sambungan tersedia. Mematikan kebenaran lokasi tidak memadamkan rekod yang telah disimpan pada telefon atau dalam awan. Sistem pengendalian, peranti atau tetapan bateri boleh mengganggu rakaman.</p>
+            <p><strong>Pautan lokasi langsung memberikan akses kepada maklumat yang dikongsi.</strong> Sesiapa yang memiliki pautan aktif boleh membuka paparan tanpa akaun HikerCircle dan boleh memajukannya. Rekod yang dikongsi boleh merangkumi lokasi terkini, masa dan ketepatannya, serta laluan yang disediakan oleh ciri tersebut. Kongsi hanya dengan orang yang dipercayai. Paparan tidak menyediakan direktori awam bagi semua perkongsian.</p>
+            <p>Perkongsian baharu sah selama 24 jam. Pengaktifan atau pembaharuan perkongsian aktif secara nyata melanjutkan tamat tempohnya kepada 24 jam daripada tindakan tersebut dan boleh mengekalkan pautan yang sama. Membuka semula aplikasi atau menerbitkan lokasi lain tidak memperbaharuinya secara automatik. Perkongsian yang dihentikan atau tamat tempoh menerima pautan baharu apabila diaktifkan semula.</p>
+            <p>Menghentikan perkongsian menghentikan kemas kini telefon baharu dengan serta-merta. Akses paparan tamat apabila pelayan menyahaktifkan perkongsian atau tamat tempohnya dicapai; permintaan berhenti ketika luar talian mungkin dicuba semula kemudian. Tamat tempoh menamatkan akses paparan, bukan semestinya penyimpanan setiap rekod berkaitan. Ia tidak boleh membuang tangkap layar, mesej atau salinan yang telah dimiliki penerima.</p>
+          </section>
 
-        <section id="choices">
-          <h2>12. Your choices and privacy rights</h2>
-          <p>Depending on your location and applicable law, you may have rights to confirmation and information about processing; access; correction; deletion or anonymization; restriction or blocking; objection; portability; withdrawal of consent; information about recipients; and review of qualifying automated decisions. You may also have the right to complain to, or appeal to, a privacy or data-protection authority.</p>
-          <p>You can manage some information and choices directly in the app, including profile details, live-location sharing, hike settings, emergency contacts, notifications, and device permissions. You can delete content where the feature offers that control. To request account or data deletion, or to exercise another privacy right, email us using the contact below. We may ask for information reasonably necessary to verify your identity or an authorized agent. We will respond within the period required by applicable law and will not discriminate against you for exercising a privacy right. We may retain information where permitted or required by law, including records needed for security, fraud prevention, dispute resolution, or legal compliance.</p>
+          <section id="ms-emergency" aria-labelledby="ms-emergency-title">
+            <h2 id="ms-emergency-title">5. Kenalan kecemasan, WhatsApp dan butang SOS</h2>
+            <p>Apabila anda menyimpan butiran kenalan orang lain, maklumkan sebab mereka ditambah dan dapatkan persetujuan mereka untuk menerima amaran yang berkaitan. Memasukkan nombor bukan rekod bahawa pemiliknya telah bersetuju. Jika anda dinamakan sebagai kenalan dan ingin mengemukakan kebimbangan, gunakan maklumat hubungan privasi di bawah.</p>
+            <p>Bagi pengesahan WhatsApp atau pemberitahuan SOS/kenalan, pelayan menghantar nombor penerima dan data mesej yang diperlukan kepada GREEN-API dan WhatsApp. Mengikut operasi, ini boleh termasuk mesej pengesahan, nama atau nombor telefon anda, jenis dan masa kejadian, nota yang dipilih, koordinat, pautan peta atau perkongsian langsung dan maklumat pendakian berkaitan. Pengesahan kenalan tersimpan mengehadkan penghantaran SOS kepada penerima tersimpan bagi akaun tersebut.</p>
+            <p><strong>Gerbang peranti terpaut GREEN-API yang digunakan oleh HikerCircle ialah integrasi pihak ketiga yang berasingan daripada WhatsApp Business Platform rasmi Meta.</strong> Sekatan gerbang atau akaun boleh mengganggu amaran. Penyedia mengendalikan nombor penerima dan mesej yang dibekalkan; jangan menganggap penyulitan WhatsApp menghalang gerbang atau pelayan HikerCircle daripada memproses mesej yang diserahkan untuk dihantar. Lihat <a href="https://green-api.com/articles/en/unofficial-whatsapp-api-what-is-it-and-how-to-use-it/">penerangan GREEN-API</a> dan <a href="https://www.whatsapp.com/legal/terms-of-service">terma WhatsApp</a>.</p>
+            <p>Amaran gagal atau luar talian yang layak boleh disimpan untuk cubaan semula selepas sambungan pulih. Penerimaan oleh penyedia berbeza daripada penghantaran kepada penerima atau pembacaan mesej. Menghentikan siren setempat tidak membatalkan mesej yang telah diterima untuk dihantar. Aplikasi tidak menggerakkan perkhidmatan penyelamat rasmi secara automatik.</p>
+            <p>Butang SOS yang dipasangkan menggunakan maklumat pemasangan tersimpan secara setempat. Pemerhatian butang bukan milik pengguna yang berdekatan boleh direkodkan secara setempat dan dimuat naik sebagai konteks berdekatan yang belum disahkan. Koordinatnya boleh datang daripada geganti atau telefon pengesan; ia tidak membuktikan kedudukan butang atau mengesahkan individu yang membawanya. Pemerhatian berdekatan tidak memberi pemerhati akses kepada rahsia pemasangan atau akaun peribadi pemilik.</p>
+          </section>
 
-          <h3>Automated processing</h3>
-          <p>HikerCircle uses rules and device signals to provide features such as possible fall or stillness detection, trail ordering, safety status, and route or weather suggestions. These features assist you and do not make decisions based solely on automated processing that produce legal or similarly significant effects. Sensor-based alerts can be inaccurate and should not replace personal judgment or emergency services.</p>
-        </section>
+          <section id="ms-recipients" aria-labelledby="ms-recipients-title">
+            <h2 id="ms-recipients-title">6. Pihak yang menerima atau mengakses data</h2>
+            <ul>
+            <li><strong>Orang yang terlibat dalam sesuatu ciri:</strong> kenalan kecemasan yang dipilih, penganjur dan ahli pendakian, rakan, penerima sembang, penonton komuniti, penyemak laporan dan pemegang pautan perkongsian langsung aktif menerima maklumat yang disediakan oleh ciri tersebut. Kandungan komuniti boleh disalin atau dikongsi semula.</li>
+            <li><strong>Pentadbir yang diberi kuasa:</strong> sokongan akaun, semakan permintaan denai, penyederhanaan kandungan, pentadbiran keselamatan dan semakan maklum balas yang dibenarkan mungkin melibatkan akses kepada rekod yang diperlukan untuk tugas tersebut. Akses pentadbiran tertakluk kepada peranan akaun dan peraturan pelayan.</li>
+            <li><strong>Penyedia infrastruktur dan platform:</strong> Google Firebase/Google Cloud menyokong pengesahan, penyimpanan data dan fail, pengehosan, fungsi pelayan dan pemberitahuan. Perkhidmatan Apple menyokong operasi iOS, pemberitahuan dan kunci laluan yang berkaitan. Penyedia ini mungkin memproses pengecam akaun, token, data yang dimuat naik dan maklumat sambungan teknikal yang diperlukan.</li>
+            <li><strong>Penyedia peta, laluan dan cuaca:</strong> mengikut ciri, Mapbox, Google Maps/Routes, Geoapify, OpenRouteService, OpenTopoData, perkhidmatan berasaskan OpenStreetMap dan Open-Meteo mungkin menerima koordinat, titik laluan dan maklumat permintaan teknikal yang dipilih.</li>
+            <li><strong>Penyedia komunikasi:</strong> GREEN-API dan WhatsApp memproses maklumat penerima dan mesej seperti diterangkan di atas. Membuka pendail telefon, aplikasi peta atau menu perkongsian telefon turut melibatkan aplikasi atau perkhidmatan yang anda pilih.</li>
+            <li><strong>Penerima bagi tujuan undang-undang atau keselamatan:</strong> maklumat boleh dizahirkan kepada pihak berkuasa berwibawa atau pihak lain yang sesuai apabila diwajibkan atau dibenarkan undang-undang, termasuk permintaan sah, siasatan keselamatan atau perlindungan kepentingan vital.</li>
+            </ul>
+            <p>Pengguna aplikasi lain tidak diberikan akses umum kepada data pengesahan peribadi, senarai kenalan kecemasan atau token pemberitahuan. Memilih ciri awam atau perkongsian mengubah khalayak bagi ciri tersebut; pengesahan akaun tidak menjadikan pautan perkongsian aktif terhad kepada penerima bernama sahaja.</p>
+          </section>
 
-        <section id="regional">
-          <h2>13. Regional disclosures</h2>
+          <section id="ms-permissions" aria-labelledby="ms-permissions-title">
+            <h2 id="ms-permissions-title">7. Kebenaran peranti dan kawalan anda</h2>
+            <p>Anda mengawal kebenaran peranti melalui tetapan Android atau iOS. Kebenaran yang berkaitan termasuk lokasi, lokasi latar belakang, pergerakan, Bluetooth/peranti berdekatan, kamera atau lampu suluh, foto/fail yang dipilih, kenalan dan pemberitahuan.</p>
+            <p>Akses buku alamat digunakan apabila anda memilih untuk memilih kenalan. Medan kenalan kecemasan yang dipilih disimpan bagi tujuan tersebut; HikerCircle tidak memuat naik keseluruhan buku alamat anda untuk tindakan itu. Anda boleh memilih media tanpa memberikan akses kepada fail tidak berkaitan apabila disokong oleh sistem pengendalian.</p>
+            <p>Menarik balik kebenaran menghentikan atau mengehadkan pengumpulan berkaitan selepas perubahan berkuat kuasa, tetapi tidak menarik balik kandungan yang telah dihantar atau memadamkan rekod awan. Kebenaran peranti ialah kebenaran teknikal, bukan persetujuan menyeluruh untuk setiap penzahiran, pemindahan ke luar negara atau tujuan masa hadapan. Gunakan Stop Live, tetapan ciri berkaitan atau hubungi kami jika anda juga ingin menghentikan pemprosesan atau meminta pemadaman.</p>
+          </section>
 
-          <h3>European Economic Area, United Kingdom, and Switzerland</h3>
-          <p>Where the relevant law applies, you may request access, rectification, erasure, restriction, portability, or objection; withdraw consent; and complain to the supervisory authority where you live, work, or believe an infringement occurred. You may object at any time to direct marketing. HikerCircle does not currently conduct direct marketing or solely automated decision-making with legal or similarly significant effects.</p>
+          <section id="ms-consent" aria-labelledby="ms-consent-title">
+            <h2 id="ms-consent-title">8. PDPA Malaysia dan persetujuan</h2>
+            <p>Rangka kerja Malaysia merangkumi Prinsip Am, Notis dan Pilihan, Penzahiran, Keselamatan, Penyimpanan, Integriti Data dan Akses. Pengendalian data kami mesti mempunyai tujuan yang sah dan asas undang-undang yang terpakai. Jika persetujuan diperlukan, ia mesti diperoleh bagi pemprosesan tersebut. Asas lain yang dibenarkan boleh termasuk pelaksanaan kontrak yang perlu, kewajipan undang-undang atau perlindungan kepentingan vital; kecemasan bukan kebenaran menyeluruh untuk pemprosesan tidak berkaitan.</p>
+            <p>Jika sesuatu ciri memerlukan persetujuan, kami mesti menerangkan tujuan dan pilihannya. Anda boleh menarik balik persetujuan secara bertulis melalui hubungan di bawah serta menggunakan kawalan aplikasi atau peranti bagi pengumpulan berkaitan. Sesetengah perkhidmatan yang diminta tidak dapat diteruskan tanpa maklumat yang diperlukan. Penerimaan notis privasi sahaja bukan persetujuan, dan perubahan tujuan mungkin memerlukan notis serta persetujuan baharu.</p>
+            <p>Notis selepas persediaan akaun menggunakan kotak semak yang tidak dipilih terlebih dahulu dan tindakan Setuju &amp; teruskan yang berasingan. Rekod persetujuan menyimpan versi notis dan dasar, bahasa pilihan, masa tindakan pada telefon anda serta masa direkodkan oleh pelayan. Rekod disimpan pada telefon terlebih dahulu dan dimuat naik ke akaun apabila sambungan tersedia, supaya notis yang sama tidak perlu dipersetujui semula. Memilih Bukan sekarang akan melog keluar tanpa merekodkan persetujuan; tindakan ini tidak memadamkan maklumat yang sudah diberikan bagi persediaan akaun. Persetujuan ini tidak mengaktifkan ciri pilihan atau kebenaran peranti.</p>
+            <p>Nota SOS atau laporan mungkin mengandungi maklumat kesihatan. Jangan masukkan maklumat melebihi keperluan. Pemprosesan data peribadi sensitif memerlukan persetujuan nyata atau syarat lain yang dibenarkan oleh undang-undang Malaysia. Pengesahan biometrik peranti tidak bermakna HikerCircle menerima templat cap jari atau wajah anda.</p>
+            <p class="legal-links">Sumber Malaysia: <a href="https://www.pdp.gov.my/wp-content/uploads/2026/10/Akta-709-cetakan-semula-2026-BI.pdf">Akta 709, cetakan semula 2026</a>, <a href="https://www.pdp.gov.my/ppdpv1/wp-content/uploads/2024/11/Act-A1727.pdf">pindaan 2024</a> dan <a href="https://www.pdp.gov.my/en/akta/data-protection-by-design-guideline-dpbd/">panduan perlindungan data melalui reka bentuk</a>.</p>
+          </section>
 
-          <h3>California and certain other United States jurisdictions</h3>
-          <p>Subject to legal applicability and exceptions, residents may request the categories and specific pieces of personal information collected, sources, purposes, and recipient categories; request correction or deletion; opt out of sale or sharing for cross-context behavioural advertising; limit certain uses of sensitive personal information; use an authorized agent; and exercise rights without discriminatory treatment. HikerCircle does not currently sell personal information, share it for cross-context behavioural advertising, or use sensitive personal information to infer characteristics beyond providing the requested Services.</p>
+          <section id="ms-transfers" aria-labelledby="ms-transfers-title">
+            <h2 id="ms-transfers-title">9. Pemprosesan di luar Malaysia</h2>
+            <p>HikerCircle dikendalikan dari Malaysia, tetapi penyedia awan, peta, platform dan komunikasi mungkin menghala, memproses, membuat sandaran atau menyimpan data di negara lain. Lokasi penyedia berbeza mengikut perkhidmatan dan konfigurasi. Pengguna atau pembangun yang berada di Malaysia tidak bermakna setiap salinan kekal di Malaysia.</p>
+            <p>Jika seksyen 129 Akta 709 terpakai, pemindahan ke luar negara memerlukan syarat yang dibenarkan dan perlindungan yang sesuai. Mengikut keadaan, ini mungkin melibatkan destinasi yang memberi perlindungan mencukupi, persetujuan termaklum, keperluan kontrak atau syarat statutori lain. Persetujuan tidak dianggap telah diberikan hanya kerana anda menggunakan aplikasi. Anda boleh menghubungi kami untuk maklumat mengenai penyedia, maklumat destinasi yang tersedia bagi ciri tersebut, tujuan dan aturan pemindahan yang terpakai. Lihat <a href="https://www.pdp.gov.my/ppdpv1/wp-content/uploads/2025/08/GP_CBPDT_EN-1.pdf">garis panduan pemindahan rentas sempadan 2025</a> oleh Pesuruhjaya.</p>
+          </section>
 
-          <h3>Brazil</h3>
-          <p>Where Brazil's LGPD applies, you may request confirmation of processing; access; correction; anonymization, blocking, or deletion of unnecessary or non-compliant data; portability where regulated; information about sharing and consent choices; withdrawal of consent; and review of qualifying automated decisions. You may petition the Brazilian National Data Protection Authority after first contacting us about the request.</p>
+          <section id="ms-retention" aria-labelledby="ms-retention-title">
+            <h2 id="ms-retention-title">10. Tempoh penyimpanan rekod</h2>
+            <p>Penyimpanan bergantung pada rekod dan tujuannya. Tamat tempoh pautan langsung bukan tempoh pemadaman sejagat bagi semua data.</p>
+            <ul>
+            <li><strong>Paparan langsung:</strong> akses berterusan sehingga penyahaktifan atau tamat tempoh semasa, termasuk pembaharuan nyata. Rekod akaun, pendakian, laluan dan keselamatan berkaitan mungkin kekal secara berasingan.</li>
+            <li><strong>Pengesahan:</strong> cabaran OTP, pemulihan dan MFA mempunyai tempoh sah yang singkat. Cabaran yang menjadi tidak sah tidak bermakna setiap log atau rekod asas dipadam pada masa yang sama.</li>
+            <li><strong>Sejarah pendakian, profil dan kandungan:</strong> rekod disimpan selagi diperlukan bagi akaun, ciri sejarah/komuniti yang dipilih atau permintaan yang sedang disemak. Rekod disemak untuk dibuang apabila tujuan tersebut berakhir.</li>
+            <li><strong>Rekod cubaan semula dan keselamatan:</strong> operasi tertunda, hasil penghantaran, pencegahan penyalahgunaan dan log permintaan mungkin kekal mengikut keperluan penyelarasan kerja, siasatan kejadian atau kewajipan undang-undang. Tarikh akhir cubaan semula tidak memadam rekod amaran secara automatik.</li>
+            <li><strong>Salinan setempat dan penerima:</strong> data aplikasi dan draf mungkin kekal pada telefon sehingga dibuang melalui ciri yang disokong, pengosongan data aplikasi atau penyahpasangan. Penerima boleh menyimpan salinan sendiri. Sandaran dan log penyedia mungkin mempunyai kitar hayat perkhidmatan yang berasingan.</li>
+            </ul>
+            <p>Kami tidak boleh menyimpan data peribadi lebih lama daripada yang diperlukan bagi tujuannya. Permintaan pemadaman dinilai terhadap rekod setempat, awan dan penyedia yang berkaitan; penyimpanan yang berasas atau apa-apa had akan diterangkan. Notis ini tidak menjanjikan bahawa semua sejarah atau sandaran dipadam secara automatik selepas 24 jam.</p>
+          </section>
 
-          <h3>Other countries and regions</h3>
-          <p>Privacy laws in Malaysia, Australia, Canada, New Zealand, Singapore, and other jurisdictions may provide additional rights or complaint channels. We honor applicable local rights even if they are not listed word-for-word here. Contact us and identify your country or region so the request can be handled under the appropriate law.</p>
-        </section>
+          <section id="ms-security" aria-labelledby="ms-security-title">
+            <h2 id="ms-security-title">11. Keselamatan dan pelanggaran data peribadi</h2>
+            <p>Langkah perlindungan termasuk pengesahan akaun, MFA jika dikonfigurasi, semakan peranan akaun, peraturan pangkalan data/storan, rekod kelayakan yang dilindungi, kelayakan pemesejan pada pelayan, perlindungan penghantaran rangkaian dan kawalan penyalahgunaan. Langkah ini tidak menjadikan setiap rekod disulitkan hujung ke hujung atau setiap pangkalan data setempat kebal daripada akses peranti. Lindungi telefon, kunci skrin, akaun dan pautan perkongsian anda.</p>
+            <p>Jika berlaku pelanggaran data peribadi, kami akan menyiasat, membendungnya, menilai kesannya dan mengambil langkah pemulihan yang sesuai. Jika pemberitahuan diwajibkan, kami akan memaklumkan Pesuruhjaya Perlindungan Data Peribadi dan individu terjejas mengikut undang-undang Malaysia serta garis panduan pemberitahuan pelanggaran yang terpakai. Gunakan hubungan privasi untuk melaporkan akses tanpa kebenaran yang disyaki. Jangan hantar kata laluan, kod pengesahan, rahsia Authenticator atau kunci peribadi kunci laluan kepada kami.</p>
+          </section>
 
-        <section id="children">
-          <h2>14. Children's privacy</h2>
-          <p>The Services are not directed to children under 13. If the law where you live requires a higher age for a person to consent to personal-data processing, a parent or legal guardian must authorize use of the Services. If you believe a child has provided personal information without the required authorization, contact us so we can investigate and take appropriate action.</p>
-        </section>
+          <section id="ms-rights" aria-labelledby="ms-rights-title">
+            <h2 id="ms-rights-title">12. Akses, pembetulan dan pilihan lain</h2>
+            <p>Anda boleh menghubungi kami untuk meminta akses atau pembetulan data peribadi, menarik balik persetujuan secara bertulis atau melaksanakan hak yang terpakai di bawah Akta 709. Jika syarat statutori dipenuhi, anda boleh meminta pencegahan pemprosesan yang mungkin menyebabkan kerosakan atau tekanan besar yang tidak wajar, pencegahan pemasaran langsung atau kebolehalihan data tertakluk kepada kebolehlaksanaan teknikal dan format yang serasi.</p>
+            <p>Kami mengesahkan identiti menggunakan maklumat yang semunasabahnya diperlukan bagi permintaan dan menjawab dalam tempoh statutori yang terpakai. Sesetengah permintaan mempunyai pengecualian sah atau fi; kami akan menerangkan sekatan, fi yang berkenaan atau pelanjutan, bukan menjanjikan hak tanpa syarat. Anda juga boleh mengemas kini medan profil, kenalan, kandungan, pemberitahuan dan tetapan perkongsian yang disokong dalam aplikasi. Kami tidak menghantar pemasaran langsung pada masa ini.</p>
+            <p>Permintaan akses atau pembetulan data berbeza daripada permintaan memadamkan akaun. Hubungi kami jika anda ialah kenalan kecemasan atau individu lain yang butirannya diberikan oleh pengguna.</p>
+          </section>
 
-        <section id="third-parties">
-          <h2>15. Third-party services and website technologies</h2>
-          <p>The Services may open or rely on third-party services, such as mapping, navigation, trail-reference, weather, platform, Firebase, WhatsApp, or external web services. Their handling of information is governed by their own terms and privacy policies. HikerCircle is not responsible for the privacy practices of a third party once you leave or directly interact with that service.</p>
-          <p>The public HikerCircle website does not currently use advertising trackers, analytics cookies, browser local storage, or cross-site behavioural advertising. It requests aggregate community statistics and website files from HikerCircle infrastructure. Firebase Hosting and network infrastructure may process ordinary request information, such as IP address, browser information, requested URL, and timestamps, to deliver and protect the page.</p>
-          <p>Because HikerCircle does not currently sell personal information or share it for cross-context behavioural advertising, browser signals such as Global Privacy Control do not change those practices. If website tracking or advertising practices change, this policy and any legally required consent or opt-out controls will be updated before that processing begins.</p>
-        </section>
+          <section id="ms-deletion" aria-labelledby="ms-deletion-title">
+            <h2 id="ms-deletion-title">13. Permintaan pemadaman akaun dan data</h2>
+            <p>E-mel <a href="mailto:leongziqi@gmail.com?subject=Pemadaman%20akaun%20atau%20data%20HikerCircle">leongziqi@gmail.com</a> dengan tajuk <strong>Pemadaman akaun atau data HikerCircle</strong>. Berikan nombor telefon akaun dan nyatakan sama ada anda ingin membuang akaun, pendakian tertentu, rekod kenalan, laporan atau data lain. Berikan hanya maklumat yang diperlukan untuk mengenal pasti permintaan; kami akan mengatur pengesahan yang sesuai.</p>
+            <p>Pemadaman dikendalikan sebagai permintaan kepada pembangun, bukan dakwaan bahawa butang pemadaman automatik wujud dalam aplikasi. Kami akan menerangkan rekod yang diliputi, maklumat yang masih diperlukan untuk keselamatan atau undang-undang serta had berkaitan mesej dikongsi, salinan penerima atau sandaran. Menyahpasang aplikasi atau log keluar tidak dengan sendirinya memadam akaun awan atau menarik balik mesej WhatsApp. Jika peranti luar talian bersambung semula kemudian, perubahan setempat tertunda mungkin masih memerlukan penyelarasan; maklumkan jika anda juga memerlukan bantuan bagi salinan tersebut.</p>
+          </section>
 
-        <section id="changes">
-          <h2>16. Changes to this policy</h2>
-          <p>We may update this policy as HikerCircle changes or as legal requirements develop. We will post the revised policy here and update the date at the top. If a change materially affects how we handle personal information, we will provide additional notice where reasonably possible or legally required.</p>
-        </section>
+          <section id="ms-children" aria-labelledby="ms-children-title">
+            <h2 id="ms-children-title">14. Pengguna bawah umur 18 tahun</h2>
+            <p>Jika anda bawah umur 18 tahun, ibu bapa, penjaga atau pihak yang mempunyai tanggungjawab keibubapaan mesti memberikan persetujuan yang diperlukan bagi pemprosesan data peribadi anda dan menyelia penggunaan ciri keselamatan serta perkongsian. Jangan tambah butiran kanak-kanak lain tanpa kuasa yang sesuai. Hubungi kami jika data kanak-kanak diberikan tanpa kebenaran yang diperlukan supaya perkara itu dapat disiasat dan dikendalikan sewajarnya.</p>
+          </section>
 
-        <section id="contact">
-          <h2>17. Contact us</h2>
-          <p>For privacy questions, requests, complaints, or account and data deletion, contact the HikerCircle developer and data controller. Include the email or telephone number associated with the account, the country or region whose law applies, and the request you want us to consider. Do not email passwords, verification codes, authenticator secrets, or passkey data.</p>
-          <div class="contact-card">
-            <strong>HikerCircle Privacy — Malaysia</strong><br>
-            Email: <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">leongziqi@gmail.com</a><br>
-            Website: <a href="https://hiker-circle.web.app">hiker-circle.web.app</a>
-          </div>
-        </section>
-      </article>
+          <section id="ms-website" aria-labelledby="ms-website-title">
+            <h2 id="ms-website-title">15. Laman web ini dan perkhidmatan luar</h2>
+            <p>Halaman privasi ini memuatkan fail paparannya daripada pengehosan HikerCircle dan tidak menambah penjejak pengiklanan atau kuki analitik. Pilihan bahasanya dinyatakan dalam alamat halaman; ia tidak memerlukan kuki penjejakan atau profil storan pelayar. Penyedia pengehosan mungkin memproses alamat IP, butiran pelayar/permintaan dan cap masa untuk menyampaikan serta melindungi halaman.</p>
+            <p>Halaman HikerCircle lain boleh meminta jumlah perkhidmatan agregat atau, apabila anda membuka perkongsian yang sah, data yang diperlukan oleh paparan lokasi langsung. Peta luar, WhatsApp, gedung aplikasi dan laman penyedia mempunyai terma privasi sendiri. HikerCircle kekal bertanggungjawab terhadap penzahiran dan aturan penyedia yang terpakai; dasar penyedia luar tidak menghapuskan tanggungjawab tersebut.</p>
+          </section>
+
+          <section id="ms-changes" aria-labelledby="ms-changes-title">
+            <h2 id="ms-changes-title">16. Perubahan kepada notis ini</h2>
+            <p>Dikemas kini pada: <strong>4 November 2026</strong>. Kami akan mengemas kini notis ini apabila ciri, penerima atau amalan pemprosesan berubah. Perubahan penting yang memerlukan notis atau persetujuan tambahan akan ditangani sebelum pemprosesan baharu berkenaan. Kedua-dua versi bahasa akan dikemas kini bersama; sila maklumkan sebarang perbezaan supaya ia dapat dijelaskan selaras dengan undang-undang Malaysia.</p>
+          </section>
+
+          <section id="ms-contact" aria-labelledby="ms-contact-title">
+            <h2 id="ms-contact-title">17. Hubungan privasi dan aduan</h2>
+            <p>Bagi akses, pembetulan, penarikan balik persetujuan, pemadaman atau aduan privasi, hubungi pengawal data:</p>
+            <div class="contact-card"><strong>Leong Zi Qi — HikerCircle</strong><br>Pembangun bebas dan pengawal data, Malaysia<br>E-mel: <a href="mailto:leongziqi@gmail.com?subject=Permintaan%20privasi%20HikerCircle">leongziqi@gmail.com</a><br>Laman web: <a href="https://hiker-circle.web.app">hiker-circle.web.app</a></div>
+            <p>Nyatakan perkara yang berlaku, akaun atau rekod berkaitan dan tindakan yang diminta. Kami mungkin memerlukan maklumat identiti terhad, tetapi tidak sekali-kali kata laluan atau kod sekali guna. Untuk mengemukakan aduan kepada Pesuruhjaya Perlindungan Data Peribadi Malaysia, lawati <a href="https://www.pdp.gov.my/">laman rasmi JPDP</a> bagi saluran aduan semasa, atau e-mel <a href="mailto:aduan@pdp.gov.my">aduan@pdp.gov.my</a>.</p>
+          </section>
+        </article>
+      </div>
     </div>
   </main>
-
   <footer class="site-footer">
-    <span>&copy; 2026 HikerCircle</span>
-    <nav aria-label="Footer links">
-      <a href="/">Home</a>
-      <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">Privacy contact</a>
+    <span>&copy; 2026 HikerCircle · Malaysia</span>
+    <nav aria-label="Footer links / Pautan bawah">
+      <a href="/">Home / Laman utama</a>
+      <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">Privacy contact / Hubungan privasi</a>
     </nav>
   </footer>
 </body>

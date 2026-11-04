@@ -5,6 +5,16 @@ final _chatRetryTimers = <String, Timer>{};
 
 /// Durable owner writes remain separate from cloud-owned downloaded snapshots.
 extension OfflineSyncRepository on HikerCircleFirebaseRepository {
+  /// Consent upload participates in the existing reconnect drain, with its own failure state.
+  Future<void> flushPrivacyConsent({required AppSession session}) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    await PrivacyConsentRepository(
+      database: _localDatabase,
+      firestore: _resolvedFirestore,
+      readOwner: _cloudReadOwner,
+    ).flush(session.phoneNumber);
+  }
+
   /// Keeps completed plans and pending cancellations hidden across cached or live snapshots.
   Future<Set<String>> loadLocallyHiddenUpcomingHikeIds(String owner) async {
     final states = await _localDatabase.loadPlannedHikeStates(

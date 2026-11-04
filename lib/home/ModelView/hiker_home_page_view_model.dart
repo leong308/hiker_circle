@@ -780,6 +780,12 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
         synchronizePending: () async {
           await Future.wait<void>([
             commandRunReconnectStep(
+              'privacy consent',
+              () => stateHikerCircleRepository.flushPrivacyConsent(
+                session: requestedSession,
+              ),
+            ),
+            commandRunReconnectStep(
               'caution reports',
               () => stateHikerCircleRepository.flushPendingCautionReports(
                 session: requestedSession,

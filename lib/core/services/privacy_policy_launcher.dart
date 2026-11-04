@@ -6,13 +6,15 @@ const privacyPolicyUrl = 'https://hiker-circle.web.app/privacy-policy';
 final privacyPolicyUri = Uri.parse(privacyPolicyUrl);
 
 /// Computes launch privacy policy.
-Future<bool> launchPrivacyPolicy() async {
+Future<bool> launchPrivacyPolicy({String? languageCode}) async {
   try {
     if (!await supportsLaunchMode(LaunchMode.inAppBrowserView)) {
       return false;
     }
     return await launchUrl(
-      privacyPolicyUri,
+      languageCode == 'en' || languageCode == 'ms'
+          ? privacyPolicyUri.replace(queryParameters: {'lang': languageCode})
+          : privacyPolicyUri,
       mode: LaunchMode.inAppBrowserView,
       browserConfiguration: const BrowserConfiguration(showTitle: true),
     );

@@ -133,7 +133,7 @@ const adminAuthorization = createAdminAuthorization({HttpsError});
 // Purpose-limited login/recovery handlers validate their own OTP/MFA artifacts.
 function onCall(options, handler) {
   const {authenticationFlow = false, ...firebaseOptions} = options;
-  return firebaseOnCall({enforceAppCheck: true, ...firebaseOptions}, async request => {
+  return firebaseOnCall(firebaseOptions, async request => {
     if (!authenticationFlow) {
       const active = await mobileSessionSecurity.requireActive(request);
       adminAuthorization.bindActiveAccount(request, active.account);
@@ -233,7 +233,8 @@ exports.endDisabledAccountSession = onDocumentWritten({document: 'users/{userId}
 // backend intentionally still uses their concise syntax throughout. Keep one
 // compatibility adapter at the entry point so every callable and trigger uses
 // the supported modular SDK underneath without a risky whole-file rewrite.
-const firestoreAccessor = () => getFirestore();
+// A regular function preserves attached SDK classes through the emulator proxy.
+function firestoreAccessor() { return getFirestore(); }
 Object.assign(firestoreAccessor, {
   FieldPath,
   FieldValue,

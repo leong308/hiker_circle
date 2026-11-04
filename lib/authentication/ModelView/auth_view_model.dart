@@ -1,6 +1,5 @@
 // AuthViewModel coordinates sign-in, registration, verification, recovery and session changes.
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -16,9 +15,7 @@ class AuthViewModel extends ChangeNotifier {
   AuthViewModel({
     FirebaseFunctions? firebaseFunctions,
     MultiFactorAuthService? multiFactorAuthService,
-    FirebaseAppCheck? firebaseAppCheck,
   }) : _firebaseFunctions = firebaseFunctions ?? FirebaseFunctions.instance,
-       _firebaseAppCheckOverride = firebaseAppCheck,
        _multiFactorAuthService =
            multiFactorAuthService ??
            MultiFactorAuthService(
@@ -27,47 +24,6 @@ class AuthViewModel extends ChangeNotifier {
 
   final FirebaseFunctions _firebaseFunctions;
   final MultiFactorAuthService _multiFactorAuthService;
-  final FirebaseAppCheck? _firebaseAppCheckOverride;
-
-  /// A rejected app token never reaches the public login/password handler.
-  /// Refresh it once, retaining server App Check enforcement and user identity.
-  /// Other failures may have reached the handler, so they must not be replayed.
-  Future<T> _withAppCheckRecovery<T>(Future<T> Function() request) async {
-    try {
-      return await request();
-    } on FirebaseFunctionsException catch (error) {
-      if (error.code != 'unauthenticated') rethrow;
-      AuthFlowDiagnostics.event('authentication-app-check', 'refresh');
-      try {
-        final token =
-            await (_firebaseAppCheckOverride ?? FirebaseAppCheck.instance)
-                .getToken(true)
-                .timeout(const Duration(seconds: 15));
-        // Native SDKs can supply a placeholder when attestation fails. Do not
-        // repeat the request with a missing/malformed JWT. Firebase verifies it.
-        final parts = token?.split('.');
-        if (parts == null ||
-            parts.length != 3 ||
-            parts.any((part) => part.isEmpty)) {
-          throw StateError('App verification did not return a token.');
-        }
-      } catch (refreshError) {
-        AuthFlowDiagnostics.event(
-          'authentication-app-check',
-          'failure',
-          error: refreshError,
-        );
-        throw FirebaseFunctionsException(
-          code: 'unauthenticated',
-          message:
-              'Unable to verify this app securely. Check your connection and try again.',
-        );
-      }
-      AuthFlowDiagnostics.event('authentication-app-check', 'retry');
-      // Deliberately outside the first attempt's try: a second rejection stops.
-      return request();
-    }
-  }
 
   AuthMode _authMode = AuthMode.signUp;
   AuthStatus _status = AuthStatus.enteringPhone;
@@ -155,11 +111,7 @@ class AuthViewModel extends ChangeNotifier {
       Future<HttpsCallableResult<dynamic>> request() => _firebaseFunctions
           .httpsCallable('sendGreenApiLoginCode')
           .call(parameters);
-      // Authenticated security changes retain their own session checks and do
-      // not use the public login retry path.
-      final response = authenticatedReverification
-          ? await request()
-          : await _withAppCheckRecovery(request);
+      final response = await request();
       final data = response.data;
       if (data is! Map || data['challengeId'] is! String) {
         throw FirebaseFunctionsException(
@@ -319,11 +271,9 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await _withAppCheckRecovery(
-        () => _firebaseFunctions.httpsCallable('sendPasswordResetCode').call(
-          <String, Object?>{'phoneNumber': normalized},
-        ),
-      );
+      final response = await _firebaseFunctions
+          .httpsCallable('sendPasswordResetCode')
+          .call(<String, Object?>{'phoneNumber': normalized});
       final data = response.data;
       if (data is! Map || data['challengeId'] is! String) {
         throw FirebaseFunctionsException(
@@ -594,7 +544,7 @@ class AuthViewModel extends ChangeNotifier {
       case 'permission-denied':
         return 'Access denied. Please try again.';
       case 'unauthenticated':
-        return 'Unable to verify this app securely. Check your connection and try again.';
+        return 'Your sign-in session could not be verified. Please sign in again.';
       case 'unavailable':
         return 'Service is temporarily unavailable. Try again later.';
       case 'resource-exhausted':

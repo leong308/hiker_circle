@@ -174,7 +174,8 @@ class OnboardingRepository {
           'requiresOnboarding': false,
           'onboardingCompletedAt': FieldValue.serverTimestamp(),
           'onboardingCompletedAtLocal': now.toIso8601String(),
-          'onboardingVersion': 1,
+          // Version 2 finishes setup before the account's one-time privacy gate.
+          'onboardingVersion': 2,
         }, SetOptions(merge: true));
       });
       await _invalidateProfile(session);

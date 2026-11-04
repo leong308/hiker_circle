@@ -1,6 +1,5 @@
 // AppDelegate bridges iOS safety monitoring, native location, widgets, alarms, and deep links.
 import Flutter
-import FirebaseAppCheck
 import UIKit
 import AVFoundation
 import AudioToolbox
@@ -126,10 +125,6 @@ import ActivityKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    // FlutterFire installs its own factory during registration. Override it
-    // afterwards, before Firebase is configured, so native/headless calls use
-    // the same signing-aware provider as Flutter.
-    AppCheck.setAppCheckProviderFactory(HikerCircleAppCheckFactory())
     speechSynthesizer.delegate = self
     if let registrar = registrar(forPlugin: "QrScannerPlugin") {
       let factory = QrScannerPlatformViewFactory(messenger: registrar.messenger())

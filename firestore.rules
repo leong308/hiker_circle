@@ -397,8 +397,30 @@ service cloud.firestore {
       return data.keys().hasOnly([
         'profile', 'profileSetupCompleted', 'profileUpdatedAt',
         'profileUpdatedAtLocal', 'requiresOnboarding', 'onboardingVersion',
-        'onboardingCompletedAt', 'onboardingCompletedAtLocal'
-      ]);
+        'onboardingCompletedAt', 'onboardingCompletedAtLocal', 'privacyConsent'
+      ]) && validPrivacyConsent(data);
+    }
+
+    function validPrivacyConsent(data) {
+      // The first receipt is retained; other profile edits cannot remove or replace it.
+      return request.method == 'update' && resource.data.keys().hasAny(['privacyConsent'])
+        ? data.keys().hasAny(['privacyConsent'])
+          && data.privacyConsent == resource.data.privacyConsent
+        : !data.keys().hasAny(['privacyConsent']) || (
+          data.privacyConsent is map
+          && data.privacyConsent.keys().hasOnly([
+            'accepted', 'noticeId', 'policyVersion', 'languageCode',
+            'acceptedAtLocal', 'recordedAt'
+          ])
+          && data.privacyConsent.accepted == true
+          && data.privacyConsent.noticeId == 'post-onboarding-v1'
+          && data.privacyConsent.policyVersion == '2026-11-04'
+          && data.privacyConsent.languageCode in ['en', 'ms']
+          && data.privacyConsent.acceptedAtLocal is string
+          && data.privacyConsent.acceptedAtLocal.size() <= 40
+          && data.privacyConsent.acceptedAtLocal.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3,6}Z$')
+          && data.privacyConsent.recordedAt == request.time
+        );
     }
 
     function deviceFieldsOnly(data) {

@@ -3009,7 +3009,7 @@ class LocalSessionDatabase {
 
     final opening = SecureLocalDatabase.open(
       databasePath,
-      version: 39,
+      version: 40,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -3022,6 +3022,7 @@ class LocalSessionDatabase {
             username TEXT NOT NULL DEFAULT '',
             requires_onboarding INTEGER NOT NULL DEFAULT 0,
             onboarding_profile_complete INTEGER NOT NULL DEFAULT 0,
+            requires_privacy_consent INTEGER NOT NULL DEFAULT 0,
             photo_url TEXT,
             photo_bytes BLOB
           )
@@ -3051,6 +3052,11 @@ class LocalSessionDatabase {
         await _createCautionOutboxTables(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 40) {
+          await database.execute(
+            'ALTER TABLE users ADD COLUMN requires_privacy_consent INTEGER NOT NULL DEFAULT 0',
+          );
+        }
         if (oldVersion < 39) {
           await _createCautionOutboxTables(database);
         }
@@ -4668,6 +4674,7 @@ class LocalSessionDatabase {
       'is_super_admin': session.isSuperAdmin ? 1 : 0,
       'username': session.username,
       'requires_onboarding': session.requiresOnboarding ? 1 : 0,
+      'requires_privacy_consent': session.requiresPrivacyConsent ? 1 : 0,
       'onboarding_profile_complete': session.isOnboardingProfileComplete
           ? 1
           : 0,
@@ -4693,6 +4700,7 @@ class LocalSessionDatabase {
       isSuperAdmin: row['is_super_admin'] == 1,
       username: row['username'] as String? ?? '',
       requiresOnboarding: row['requires_onboarding'] == 1,
+      requiresPrivacyConsent: row['requires_privacy_consent'] == 1,
       isOnboardingProfileComplete: row['onboarding_profile_complete'] == 1,
       photoURL: row['photo_url'] as String?,
       photoBytes: row['photo_bytes'] is Uint8List

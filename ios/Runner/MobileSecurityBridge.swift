@@ -2,28 +2,6 @@
 import Flutter
 import UIKit
 import Security
-import FirebaseCore
-import FirebaseAppCheck
-import DeviceCheck
-
-final class HikerCircleAppCheckFactory: NSObject, AppCheckProviderFactory {
-  static var providerName: String {
-    #if DEBUG
-      return "debug"
-    #else
-      // Personal Team profiles cannot authorize App Attest or DeviceCheck.
-      // This explicit build setting also covers optimized private sideloads.
-      return Bundle.main.object(forInfoDictionaryKey: "HikerCircleAppCheckProvider") as? String == "debug"
-        ? "debug" : "appAttestWithDeviceCheckFallback"
-    #endif
-  }
-
-  func createProvider(with app: FirebaseApp) -> AppCheckProvider? {
-    if Self.providerName == "debug" { return AppCheckDebugProvider(app: app) }
-    if DCAppAttestService.shared.isSupported { return AppAttestProvider(app: app) }
-    return DeviceCheckProvider(app: app)
-  }
-}
 
 enum LocalDatabaseKeyStore {
   private static let lock = NSRecursiveLock()
@@ -72,7 +50,6 @@ final class MobileSecurityBridge {
       let data = call.arguments as? [String: Any] ?? [:]
       switch call.method {
       case "deviceInfo": result(["name": UIDevice.current.model, "platform": "ios"])
-      case "appCheckProvider": result(HikerCircleAppCheckFactory.providerName)
       case "databaseKey":
         do { result(try LocalDatabaseKeyStore.key(data["name"] as? String ?? "")) }
         catch { result(FlutterError(code: "database-key-unavailable", message: "The protected local database key is unavailable.", details: nil)) }

@@ -7,6 +7,7 @@ import '../Model/app_session.dart';
 import 'firebase_bootstrap.dart';
 import 'user_module_paths.dart';
 import '../../core/models/account_role.dart';
+import '../../onboarding/Model/privacy_consent_receipt.dart';
 
 /// Represents firebase user repository exception.
 class FirebaseUserRepositoryException implements Exception {
@@ -155,6 +156,9 @@ class FirebaseUserRepository {
         username: _username(data),
         requiresOnboarding: _requiresOnboarding(data),
         isOnboardingProfileComplete: _isProfileSetupComplete(data),
+        requiresPrivacyConsent: PrivacyConsentReceipt.isRequiredForProfile(
+          data,
+        ),
         photoURL: _photoURL(data),
       );
     } on FirebaseUserRepositoryException {

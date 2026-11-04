@@ -1255,16 +1255,6 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             loader.ensureInitializationComplete(applicationContext, null)
             val engine = FlutterEngine(applicationContext)
             backgroundEngine = engine
-            MethodChannel(
-                engine.dartExecutor.binaryMessenger,
-                "hiker_circle/build_config",
-            ).setMethodCallHandler { call, result ->
-                if (call.method == "isDevelopmentOnlyRelease") {
-                    result.success(BuildConfig.DEVELOPMENT_ONLY_SIGNING)
-                } else {
-                    result.notImplemented()
-                }
-            }
             val channel = MethodChannel(
                 engine.dartExecutor.binaryMessenger,
                 "hiker_circle/hike_safety_background",

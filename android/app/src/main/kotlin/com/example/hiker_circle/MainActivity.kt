@@ -136,15 +136,6 @@ class MainActivity : FlutterFragmentActivity() {
     // configureFlutterEngine: Register platform channels and attach lifecycle-aware native bridges.
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        // Keep the UI engine aligned with Application and the headless engine.
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hiker_circle/build_config")
-            .setMethodCallHandler { call, result ->
-                if (call.method == "isDevelopmentOnlyRelease") {
-                    result.success(BuildConfig.DEVELOPMENT_ONLY_SIGNING)
-                } else {
-                    result.notImplemented()
-                }
-            }
         val arrivalChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hiker_circle/arrival_safety")
         HikeArrivalSafety.onChanged = { arrivalChannel.invokeMethod("onArrivalSafetyChanged", null) }
         arrivalChannel.setMethodCallHandler { call, result ->

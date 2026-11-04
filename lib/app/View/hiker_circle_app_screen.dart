@@ -209,16 +209,6 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   /// Builds root.
   Widget _buildRoot({String? initialDeepLink}) {
     final platformDeepLink = initialDeepLink ?? _pendingPlatformDeepLink;
-    if (platformDeepLink != null &&
-        !_appViewModel.isInitializing &&
-        _appViewModel.session != null &&
-        !_appViewModel.session!.requiresOnboarding) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _pendingPlatformDeepLink == platformDeepLink) {
-          _pendingPlatformDeepLink = null;
-        }
-      });
-    }
     if (_checkingLaunchLock) return const _StartupPage();
     if (_launchLocked && _appViewModel.session != null) {
       return PrivateScreenUnlockPage(
@@ -241,13 +231,32 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
             onCompleted: _appViewModel.completeOnboarding,
             firebaseBootstrapResult: widget.firebaseBootstrapResult,
           )
-        : HikerHomePage(
-            key: ValueKey('home:${_appViewModel.session!.phoneNumber}'),
-            session: _appViewModel.session!,
-            onSignOut: _appViewModel.signOut,
-            firebaseBootstrapResult: widget.firebaseBootstrapResult,
-            initialDeepLink: platformDeepLink,
-          );
+        : _appViewModel.session!.requiresPrivacyConsent
+        ? PrivacyConsentGate(
+            key: ValueKey('privacy:${_appViewModel.session!.phoneNumber}'),
+            ownerPhoneNumber: _appViewModel.session!.phoneNumber,
+            homeBuilder: (_) => _buildHome(platformDeepLink),
+            onNotNow: _appViewModel.signOut,
+          )
+        : _buildHome(platformDeepLink);
+  }
+
+  Widget _buildHome(String? platformDeepLink) {
+    // Keep a pending invitation/SOS route until the consent gate actually opens home.
+    if (platformDeepLink != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _pendingPlatformDeepLink == platformDeepLink) {
+          _pendingPlatformDeepLink = null;
+        }
+      });
+    }
+    return HikerHomePage(
+      key: ValueKey('home:${_appViewModel.session!.phoneNumber}'),
+      session: _appViewModel.session!,
+      onSignOut: _appViewModel.signOut,
+      firebaseBootstrapResult: widget.firebaseBootstrapResult,
+      initialDeepLink: platformDeepLink,
+    );
   }
 
   /// Computes deep link from platform route.

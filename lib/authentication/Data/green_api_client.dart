@@ -104,9 +104,8 @@ class GreenApiClient {
           retryable: false,
         );
       }
-      // The callable SDK attaches both Auth and App Check credentials. Avoid
-      // separate token lookups here: either can perform an extra network
-      // refresh before the emergency request even reaches Firebase.
+      // The callable SDK attaches Firebase Auth credentials. Avoid a separate
+      // token lookup before the emergency request reaches Firebase.
       final response = await _resolvedFunctions
           .httpsCallable('sendSosWhatsAppMessage')
           .call(<String, dynamic>{

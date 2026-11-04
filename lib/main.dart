@@ -29,7 +29,6 @@ Future<void> hikerCircleFirebaseMessagingBackgroundHandler(
   RemoteMessage message,
 ) async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Native startup installs App Check before headless Firebase calls.
   // Logging the received notification remains local-only.
   if (Firebase.apps.isEmpty) {
     await Firebase.initializeApp(

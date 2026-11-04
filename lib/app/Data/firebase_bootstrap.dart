@@ -2,11 +2,9 @@
 // remain usable.
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../firebase_options.dart';
-import 'app_check_build_support.dart';
 
 /// Represents firebase bootstrap result.
 class FirebaseBootstrapResult {
@@ -38,15 +36,6 @@ abstract final class FirebaseBootstrap {
           !kIsWeb &&
           defaultTargetPlatform == TargetPlatform.android) {
         await FirebaseAuth.instance.setSettings(forceRecaptchaFlow: true);
-      }
-      if (!kIsWeb &&
-          (defaultTargetPlatform == TargetPlatform.android ||
-              defaultTargetPlatform == TargetPlatform.iOS)) {
-        await FirebaseAppCheck.instance.activate(
-          providerAndroid: await androidAppCheckProviderForBuild(),
-          providerApple: await appleAppCheckProviderForBuild(),
-        );
-        await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
       }
       return const FirebaseBootstrapResult.available();
     } on FirebaseException catch (error) {

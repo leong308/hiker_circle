@@ -13,6 +13,7 @@ import '../core/widgets/loading_toast.dart';
 import '../feedback/feedback_capture_form.dart';
 import '../home/View/hiker_home_page.dart';
 import '../onboarding/View/first_time_onboarding_flow.dart';
+import '../onboarding/View/privacy_consent_gate.dart';
 import 'Data/app_settings_controller.dart';
 import 'Data/firebase_bootstrap.dart';
 import 'Data/firebase_user_repository.dart';
