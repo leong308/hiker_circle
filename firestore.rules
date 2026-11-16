@@ -413,7 +413,7 @@ service cloud.firestore {
             'acceptedAtLocal', 'recordedAt'
           ])
           && data.privacyConsent.accepted == true
-          && data.privacyConsent.noticeId == 'post-onboarding-v1'
+          && data.privacyConsent.noticeId in ['signup-v2', 'signup-v1', 'post-onboarding-v1']
           && data.privacyConsent.policyVersion == '2026-11-04'
           && data.privacyConsent.languageCode in ['en', 'ms']
           && data.privacyConsent.acceptedAtLocal is string

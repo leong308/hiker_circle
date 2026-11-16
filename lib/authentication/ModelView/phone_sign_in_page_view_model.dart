@@ -45,6 +45,7 @@ class _PhoneSignInPageStateViewModel extends ChangeNotifier {
   late final void Function(bool visible) effectSetLoadingOverlayVisible;
 
   late final Future<void> Function() effectPresentOpenForgotPasswordEffect1;
+  late final Future<void> Function(String phoneNumber) effectSyncPrivacyConsent;
 
   bool stateIsCompletingSignIn = false;
 
@@ -91,6 +92,11 @@ class _PhoneSignInPageStateViewModel extends ChangeNotifier {
         login['expectedPreviousSessionId'] as String? ?? '',
       );
       AuthFlowDiagnostics.event(stage, 'success');
+      // Pre-sign-up acceptance stays local until this account is authenticated
+      // and owns an active mobile session. A failure remains queued for recovery.
+      unawaited(
+        effectSyncPrivacyConsent(session.phoneNumber).catchError((Object _) {}),
+      );
       stage = 'persist-app-session';
       AuthFlowDiagnostics.event(stage, 'start');
       await readOnSignedIn()(session);

@@ -7,10 +7,12 @@ class PhoneSignInPage extends StatefulWidget {
     super.key,
     required this.onSignedIn,
     AuthViewModel? viewModel,
+    this.privacyConsentRepository,
   }) : _viewModel = viewModel;
 
   final Future<void> Function(AppSession session) onSignedIn;
   final AuthViewModel? _viewModel;
+  final PrivacyConsentRepository? privacyConsentRepository;
 
   /// Creates the presentation state for this widget.
   @override
@@ -48,11 +50,19 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   );
   final _resendCountdown = ValueNotifier<int>(0);
   late final AuthViewModel _viewModel;
+  late final PrivacyConsentRepository _privacyConsentRepository;
   Timer? _resendCooldownTimer;
   bool _otpDialogOpen = false;
   bool _isResendingOtp = false;
   bool _isVerifyingOtp = false;
   int _otpAttempt = 0;
+  bool _isSubmittingPhone = false;
+
+  bool get _canEditCredentials =>
+      !_viewModel.isBusy &&
+      !_isCompletingSignIn &&
+      !_viewModel.hasCodeBeenSent &&
+      !_isSubmittingPhone;
 
   bool _obscurePassword = true;
 
@@ -69,6 +79,9 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     _screenModel.effectSetLoadingOverlayVisible = _setLoadingOverlayVisible;
     _screenModel.effectPresentOpenForgotPasswordEffect1 =
         _presentOpenForgotPasswordEffect1;
+    _privacyConsentRepository =
+        widget.privacyConsentRepository ?? PrivacyConsentRepository();
+    _screenModel.effectSyncPrivacyConsent = _privacyConsentRepository.flush;
 
     _viewModel = widget._viewModel ?? AuthViewModel();
     _viewModel.setAuthMode(AuthMode.login);
@@ -145,23 +158,44 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
 
   /// Sends code.
   Future<void> _sendCode() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
+    if (!_canEditCredentials || !_formKey.currentState!.validate()) return;
+    final mode = _viewModel.authMode;
+    final phone = PhoneNumberFormatter.normalize(_phoneController.text);
+    final password = _passwordController.text;
+    setState(() => _isSubmittingPhone = true);
     FocusScope.of(context).unfocus();
-    _setLoadingOverlayVisible(true);
-    await _viewModel.sendCode(
-      _phoneController.text,
-      password: _viewModel.authMode == AuthMode.login
-          ? _passwordController.text
-          : null,
-    );
-    if (!mounted) return;
-    _setLoadingOverlayVisible(false);
-    if (_viewModel.hasCodeBeenSent) {
-      _otpController.clear();
-      _startResendCooldown();
-      await _showOtpDialog();
+    try {
+      if (mode == AuthMode.signUp) {
+        final accepted = await requestSignupPrivacyConsent(
+          context,
+          phoneNumber: phone,
+          repository: _privacyConsentRepository,
+        );
+        if (!mounted || !accepted) return;
+        // A delayed choice must not submit a different phone or login mode.
+        if (_viewModel.authMode != mode ||
+            PhoneNumberFormatter.normalize(_phoneController.text) != phone) {
+          return;
+        }
+      }
+      if (!mounted) return;
+      _setLoadingOverlayVisible(true);
+      await _viewModel.sendCode(
+        phone,
+        password: mode == AuthMode.login ? password : null,
+      );
+      if (!mounted) return;
+      _setLoadingOverlayVisible(false);
+      if (_viewModel.hasCodeBeenSent) {
+        _otpController.clear();
+        _startResendCooldown();
+        await _showOtpDialog();
+      }
+    } finally {
+      if (mounted) {
+        _setLoadingOverlayVisible(false);
+        setState(() => _isSubmittingPhone = false);
+      }
     }
   }
 
@@ -308,10 +342,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                   const SizedBox(height: 16),
                   _ModeToggle(
                     currentMode: _viewModel.authMode,
-                    enabled:
-                        !_viewModel.isBusy &&
-                        !_isCompletingSignIn &&
-                        !_viewModel.hasCodeBeenSent,
+                    enabled: _canEditCredentials,
                     onChanged: (mode) {
                       _resendCooldownTimer?.cancel();
                       _otpController.clear();
@@ -405,10 +436,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
           controller: _phoneController,
           keyboardType: TextInputType.phone,
           textInputAction: TextInputAction.next,
-          enabled:
-              !_viewModel.isBusy &&
-              !_isCompletingSignIn &&
-              !_viewModel.hasCodeBeenSent,
+          enabled: _canEditCredentials,
           decoration: const InputDecoration(
             labelText: 'Phone number',
             hintText: '012 345 6789',
@@ -423,21 +451,14 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
             obscureText: _obscurePassword,
             textInputAction: TextInputAction.done,
             autofillHints: const [AutofillHints.password],
-            enabled:
-                !_viewModel.isBusy &&
-                !_isCompletingSignIn &&
-                !_viewModel.hasCodeBeenSent,
+            enabled: _canEditCredentials,
             decoration: InputDecoration(
               labelText: 'Password',
               prefixIcon: const Icon(Icons.key_rounded),
               suffixIcon: IconButton(
-                onPressed:
-                    _viewModel.isBusy ||
-                        _isCompletingSignIn ||
-                        _viewModel.hasCodeBeenSent
-                    ? null
-                    : () =>
-                          setState(() => _obscurePassword = !_obscurePassword),
+                onPressed: _canEditCredentials
+                    ? () => setState(() => _obscurePassword = !_obscurePassword)
+                    : null,
                 tooltip: _obscurePassword ? 'Show password' : 'Hide password',
                 icon: Icon(
                   _obscurePassword
@@ -458,9 +479,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
-              onPressed: _viewModel.isBusy || _isCompletingSignIn
-                  ? null
-                  : _openForgotPassword,
+              onPressed: _canEditCredentials ? _openForgotPassword : null,
               child: const Text('Forgot password?'),
             ),
           ),
@@ -468,9 +487,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
         if (!_viewModel.hasCodeBeenSent) ...[
           const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed: _viewModel.isBusy || _isCompletingSignIn
-                ? null
-                : _sendCode,
+            onPressed: _canEditCredentials ? _sendCode : null,
             icon: const Icon(Icons.message_outlined),
             label: Text(
               _viewModel.authMode == AuthMode.login ? 'Proceed' : 'Send OTP',

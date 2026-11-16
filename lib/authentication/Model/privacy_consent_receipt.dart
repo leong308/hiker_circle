@@ -1,29 +1,31 @@
-/// The agreement presented after profile and emergency-contact setup.
+/// The agreement presented before a sign-up phone number is submitted.
 /// Optional permissions and sharing actions remain separate decisions.
 class PrivacyConsentReceipt {
   const PrivacyConsentReceipt({
     required this.acceptedAt,
     required this.languageCode,
+    this.noticeId = currentNoticeId,
   });
 
   static const noticeVersion = '2026-11-04';
-  static const noticeId = 'post-onboarding-v1';
+  // The revised notice explicitly names overseas processing in the agreement.
+  // Historical receipts keep the wording version that was originally accepted.
+  static const currentNoticeId = 'signup-v2';
+  static const previousNoticeId = 'signup-v1';
+  static const legacyNoticeId = 'post-onboarding-v1';
   static const localKey = 'privacy_consent_receipt';
   final DateTime acceptedAt;
   final String languageCode;
-
-  /// Existing completed accounts are not interrupted by a rollout of the new flow.
-  static bool isRequiredForProfile(Map<String, dynamic> profile) {
-    final version = profile['onboardingVersion'];
-    return version is num &&
-        version >= 2 &&
-        fromMap(profile['privacyConsent']) == null;
-  }
+  final String noticeId;
 
   static PrivacyConsentReceipt? fromMap(Object? value) {
     if (value is! Map ||
         value['accepted'] != true ||
-        value['noticeId'] != noticeId ||
+        !const [
+          currentNoticeId,
+          previousNoticeId,
+          legacyNoticeId,
+        ].contains(value['noticeId']) ||
         value['policyVersion'] != noticeVersion ||
         !const ['en', 'ms'].contains(value['languageCode'])) {
       return null;
@@ -33,6 +35,7 @@ class PrivacyConsentReceipt {
     return PrivacyConsentReceipt(
       acceptedAt: time.toUtc(),
       languageCode: value['languageCode'] as String,
+      noticeId: value['noticeId'] as String,
     );
   }
 

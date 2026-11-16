@@ -3,8 +3,15 @@ part of '../help_center_page_feature.dart';
 /// Displays the help center page.
 class HelpCenterPage extends StatelessWidget {
   /// Creates help center page.
-  const HelpCenterPage({super.key, this.isAdmin = false});
+  const HelpCenterPage({
+    super.key,
+    this.isAdmin = false,
+    this.isSuperAdmin = false,
+    this.ownerPhoneNumber,
+  });
   final bool isAdmin;
+  final bool isSuperAdmin;
+  final String? ownerPhoneNumber;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -90,6 +97,18 @@ class HelpCenterPage extends StatelessWidget {
         subtitle: 'Send feedback or suggest an improvement',
         onTap: () => _open(context, FeedbackPage(isAdmin: isAdmin)),
       ),
+      if (ownerPhoneNumber != null && !isSuperAdmin)
+        _GuideLink(
+          key: const Key('withdraw-consent-delete-account'),
+          icon: Icons.person_remove_outlined,
+          iconColor: Theme.of(context).colorScheme.error,
+          title: 'Delete HikerCircle account',
+          subtitle: 'Remove your account record and sign out',
+          onTap: () => showAccountDeletionConfirmations(
+            context,
+            ownerPhoneNumber: ownerPhoneNumber!,
+          ),
+        ),
     ],
   );
 }
@@ -1384,18 +1403,19 @@ class _Explanation extends StatelessWidget {
 /// Displays the guide icon.
 class _GuideIcon extends StatelessWidget {
   /// Creates guide icon.
-  const _GuideIcon(this.icon);
+  const _GuideIcon(this.icon, {this.color = _green});
   final IconData icon;
+  final Color color;
 
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(10),
     decoration: BoxDecoration(
-      color: _green.withValues(alpha: 0.12),
+      color: color.withValues(alpha: 0.12),
       borderRadius: BorderRadius.circular(12),
     ),
-    child: Icon(icon, color: _green, size: 22),
+    child: Icon(icon, color: color, size: 22),
   );
 }
 
@@ -1403,12 +1423,15 @@ class _GuideIcon extends StatelessWidget {
 class _GuideLink extends StatelessWidget {
   /// Creates guide link.
   const _GuideLink({
+    super.key,
     required this.icon,
+    this.iconColor = _green,
     required this.title,
     required this.subtitle,
     required this.onTap,
   });
   final IconData icon;
+  final Color iconColor;
   final String title, subtitle;
   final VoidCallback onTap;
 
@@ -1419,7 +1442,7 @@ class _GuideLink extends StatelessWidget {
     child: _HelpCard(
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: _GuideIcon(icon),
+        leading: _GuideIcon(icon, color: iconColor),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right_rounded, size: 20),

@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-02",
+  "updated": "2026-11-16",
   "chapters": [
     {
       "id": "access",
@@ -49,7 +49,7 @@
     {
       "id": "archive",
       "title": "Product archive",
-      "subtitle": "A newly captured look at where HikerCircle began."
+      "subtitle": "A preserved look at where HikerCircle began."
     }
   ],
   "items": [
@@ -57,17 +57,16 @@
       "id": "sign-in",
       "chapter": "access",
       "title": "Phone sign-in",
-      "description": "Return to your account with phone-based sign-in and the configured verification method.",
+      "description": "Preview the current phone-login entry interface and the Home landing layout.",
       "flow": [
-        "Open HikerCircle",
-        "Enter phone number",
-        "Complete sign-in",
-        "Arrive at Home"
+        "View credential-free Login overview",
+        "Open isolated Home UI preview",
+        "Review current landing layout"
       ],
-      "source": "needed",
-      "capture": "sign-in.mp4 (10–15 sec): Show the prepared phone sign-in screen. Complete the demo sign-in; omit codes and passwords. Finish on the current Home screen. Use a demo account. Exclude credential entry from the recording.",
+      "source": "device",
+      "capture": "sign-in.mp4 (16 sec): Credential-free Login overview followed by a separate Home UI preview. No authentication performed; demo GPS unavailable notice visible.",
       "captureFile": "sign-in.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 16-second credential-free Login overview and isolated Home UI preview. No actual sign-in or authentication succeeded in this recording. Credentials are omitted. The fixture denies GPS permission and the Home location-unavailable snackbar remains visible.",
       "points": [
         {
           "label": "Phone access",
@@ -82,6 +81,30 @@
         "screenshots": [],
         "recording": {
           "file": "sign-in.mp4",
+          "duration": "16 sec",
+          "steps": [
+            "Show the current credential-free Login overview.",
+            "Open the Home UI preview through the isolated fixture.",
+            "Show the landing layout; do not claim successful authentication."
+          ]
+        },
+        "setup": "Isolated current-widget UI preview. No credentials or actual authentication. GPS denied; the location-unavailable snackbar may be visible."
+      },
+      "capturedAt": "2026-11-16T02:41:36.226104+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI preview · credentials omitted; no sign-in performed"
+      },
+      "image": "/internal/app-showcase/media/sign-in.png",
+      "video": "/internal/app-showcase/media/sign-in.mp4",
+      "poster": "/internal/app-showcase/media/sign-in.png",
+      "supersededCapturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "sign-in.mp4",
           "duration": "10–15 sec",
           "steps": [
             "Show the prepared phone sign-in screen.",
@@ -90,6 +113,49 @@
           ]
         },
         "setup": "Use a demo account. Exclude credential entry from the recording."
+      }
+    },
+    {
+      "id": "signup-privacy",
+      "chapter": "access",
+      "title": "Privacy before sign-up",
+      "description": "Review the privacy notice and consent choices before creating an account.",
+      "flow": [
+        "Begin sign-up",
+        "Review privacy notice",
+        "Review consent choices"
+      ],
+      "source": "device",
+      "capture": "signup-privacy.png: Current sign-up privacy notice and consent choices.",
+      "captureFile": "signup-privacy.png",
+      "notes": "Reviewed connected-device capture of current production widgets with isolated fictional data. No production account, sharing or alert action was performed.",
+      "points": [
+        {
+          "label": "Read the notice",
+          "detail": "Open the current privacy notice before continuing sign-up."
+        },
+        {
+          "label": "Choose before continuing",
+          "detail": "Review the acknowledgement and consent choices in the sign-up dialog."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "signup-privacy.png",
+            "show": "Current sign-up privacy notice and consent choices."
+          }
+        ],
+        "setup": "Use the isolated no-dispatch capture app with fictional data."
+      },
+      "image": "/internal/app-showcase/media/signup-privacy.png",
+      "capturedAt": "2026-11-16T02:08:12.080529+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
       }
     },
     {
@@ -131,9 +197,23 @@
             "show": "City picker: city-level map and selected city."
           }
         ],
-        "setup": "Use fictional profile details and a city-level location."
+        "setup": "Password screen intentionally blocks capture. The protected screenshot is unavailable; the dependent screen was not attempted. Capture protection remains enabled."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "notes": "Password screen intentionally blocks capture. The protected screenshot is unavailable; the dependent screen was not attempted. Capture protection has not been bypassed and no replacement media is supplied.",
+      "captureAvailability": {
+        "status": "unavailable",
+        "reason": "Password screen intentionally blocks capture",
+        "files": {
+          "onboarding.png": {
+            "status": "unavailable",
+            "reason": "Password screen intentionally blocks capture"
+          },
+          "onboarding-city.png": {
+            "status": "not-attempted",
+            "reason": "Dependent flow was not attempted after the protected screen blocked capture."
+          }
+        }
+      }
     },
     {
       "id": "login-security",
@@ -145,10 +225,10 @@
         "Choose login security",
         "Review methods"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "login-security.png: Login security overview with available methods. Show the methods list. Keep setup secrets, QR codes and verification codes out of the capture.",
       "captureFile": "login-security.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget login-security overview with fictional local method state. The planned screenshot is supplied; setup secrets, QR codes and verification codes are not shown.",
       "points": [
         {
           "label": "Authenticator",
@@ -167,7 +247,16 @@
           }
         ],
         "setup": "Show the methods list. Keep setup secrets, QR codes and verification codes out of the capture."
-      }
+      },
+      "capturedAt": "2026-11-16T02:14:47.959151+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "image": "/internal/app-showcase/media/login-security.png"
     },
     {
       "id": "account-recovery",
@@ -204,9 +293,23 @@
             "show": "Recovery verification prompt, with no codes or credentials."
           }
         ],
-        "setup": "Use a test account; capture before requesting a code or resetting its password."
+        "setup": "Password screen intentionally blocks capture. The protected screenshot is unavailable; the dependent screen was not attempted. Capture protection remains enabled."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "notes": "Password screen intentionally blocks capture. The protected screenshot is unavailable; the dependent screen was not attempted. Capture protection has not been bypassed and no replacement media is supplied.",
+      "captureAvailability": {
+        "status": "unavailable",
+        "reason": "Password screen intentionally blocks capture",
+        "files": {
+          "account-recovery.png": {
+            "status": "unavailable",
+            "reason": "Password screen intentionally blocks capture"
+          },
+          "account-recovery-verification.png": {
+            "status": "not-attempted",
+            "reason": "Dependent flow was not attempted after the protected screen blocked capture."
+          }
+        }
+      }
     },
     {
       "id": "emergency-contacts",
@@ -219,7 +322,7 @@
         "Open contact editor",
         "Save controlled demo data"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "emergency-contacts.png: Contact list: three fictional names, relationships and count. emergency-contact-editor.png: Contact editor: name, phone and relationship fields. Use fictional contacts in a demo account.",
       "captureFile": "emergency-contacts.png",
       "points": [
@@ -245,7 +348,25 @@
         ],
         "setup": "Use fictional contacts in a demo account."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "notes": "Reviewed fictional contact list and latest correct swipe-to-edit modal for Jamie. Both requested current-widget screenshots are supplied. No contact was saved or changed.",
+      "capturedAt": "2026-11-16T02:14:52.628952+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/emergency-contacts.png",
+          "alt": "Current contact list with fictional contacts"
+        },
+        {
+          "src": "/internal/app-showcase/media/emergency-contact-editor.png",
+          "alt": "Current swipe-to-edit contact modal for fictional Jamie; unsaved"
+        }
+      ]
     },
     {
       "id": "trail-discovery",
@@ -253,15 +374,15 @@
       "title": "Find a trail",
       "description": "Browse trails and narrow choices by region or distance.",
       "flow": [
-        "Open Home",
-        "Browse hiking trails",
-        "Adjust region or radius",
-        "Open a trail"
+        "Open Home with All selected",
+        "Review grid view",
+        "Change to list view",
+        "Open first trail details"
       ],
       "source": "device",
-      "capture": "trail-discovery.mp4 (15–20 sec): Show the current Home trail list. Change the region or distance filter. Open a matching trail.",
+      "capture": "trail-discovery.mp4 (20 sec): Current Home All-filter grid → list view → first trail detail. Fictional route cards, no device GPS.",
       "captureFile": "trail-discovery.mp4",
-      "notes": "User-supplied screen recording, presented in an iPhone 15 Pro Max mockup. Converted to a browser-compatible MP4 without trimming; original preview used only as the video poster. App build not supplied.",
+      "notes": "Reviewed 20-second current-widget Home All-filter grid/list and first-trail-detail preview plus matching grid screenshot. The current discovery UI recording is supplied with fictional route cards and no device GPS.",
       "points": [
         {
           "label": "Browse routes",
@@ -276,16 +397,30 @@
         "screenshots": [],
         "recording": {
           "file": "trail-discovery.mp4",
-          "duration": "15–20 sec",
+          "duration": "20 sec",
           "steps": [
-            "Show the current Home trail list.",
-            "Change the region or distance filter.",
-            "Open a matching trail."
+            "Open current Home with All selected.",
+            "Review the fictional route cards in grid view.",
+            "Change to list view and open the first trail detail."
           ]
-        }
+        },
+        "setup": "Use fictional route cards and no device GPS; do not claim a live nearby-location filter."
       },
-      "poster": "/internal/app-showcase/media/trail-discovery.jpeg",
-      "video": "/internal/app-showcase/media/trail-discovery.mp4"
+      "previousCapture": {
+        "video": "/internal/app-showcase/media/trail-discovery.mp4",
+        "poster": "/internal/app-showcase/media/trail-discovery.jpeg"
+      },
+      "video": "/internal/app-showcase/media/trail-discovery.mp4",
+      "poster": "/internal/app-showcase/media/trail-discovery.png",
+      "capturedAt": "2026-11-16T02:52:56.502723+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · fictional route cards; no device GPS"
+      },
+      "image": "/internal/app-showcase/media/trail-discovery.png"
     },
     {
       "id": "trail-detail",
@@ -301,7 +436,7 @@
       "source": "device",
       "capture": "trail-detail.png: Trail hero: loaded photo, distance, elevation, time and difficulty. trail-detail-checkpoints.png: Trail details with the route and ordered checkpoint section. Let trail photos and map data finish loading.",
       "captureFile": "trail-detail.png",
-      "notes": "User-supplied screenshots 3 and 4, in attachment order, mapped to Know the route as corrected by the user on 7 October 2026. Presented in an iPhone 15 Pro Max mockup. App build not supplied.",
+      "notes": "Reviewed current-device screenshots from selected public trails: the Penang Hill Heritage Trail overview and the Pisang Falls Loop checkpoint flow. Both requested screenshots are supplied.",
       "points": [
         {
           "label": "Trail imagery",
@@ -329,11 +464,31 @@
         ],
         "setup": "Let trail photos and map data finish loading."
       },
-      "image": "/internal/app-showcase/media/route-preview.png",
+      "previousCapture": {
+        "image": "/internal/app-showcase/media/route-preview.png",
+        "images": [
+          {
+            "src": "/internal/app-showcase/media/enhanced-preview.png",
+            "alt": "Know the route: map, checkpoint flow and conditions"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-16T02:04:42.082653+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": false,
+        "note": "Current app UI"
+      },
       "images": [
         {
-          "src": "/internal/app-showcase/media/enhanced-preview.png",
-          "alt": "Know the route: map, checkpoint flow and conditions"
+          "src": "/internal/app-showcase/media/trail-detail.png",
+          "alt": "Penang Hill Heritage Trail overview with loaded trail imagery"
+        },
+        {
+          "src": "/internal/app-showcase/media/trail-detail-checkpoints.png",
+          "alt": "Pisang Falls Loop ordered checkpoint flow"
         }
       ]
     },
@@ -351,7 +506,7 @@
       "source": "device",
       "capture": "route-preview.png: Trail overview and normal route map.",
       "captureFile": "route-preview.png",
-      "notes": "User-supplied recording 1, mapped to this feature as corrected by the user on 7 October 2026. Converted to MP4 without trimming; poster extracted from the recording. Presented in an iPhone 15 Pro Max mockup. App build not supplied.",
+      "notes": "Reviewed current-device map screenshot and 25-second recording showing the public Pisang Falls route map changing to an animated first-person preview. Both planned captures are supplied.",
       "points": [
         {
           "label": "Route & checkpoints",
@@ -380,8 +535,21 @@
           ]
         }
       },
-      "video": "/internal/app-showcase/media/trail-detail.mp4",
-      "poster": "/internal/app-showcase/media/trail-detail-poster.jpeg"
+      "previousCapture": {
+        "video": "/internal/app-showcase/media/trail-detail.mp4",
+        "poster": "/internal/app-showcase/media/trail-detail-poster.jpeg"
+      },
+      "image": "/internal/app-showcase/media/route-preview.png",
+      "capturedAt": "2026-11-16T02:03:54.549072+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": false,
+        "note": "Current app UI"
+      },
+      "video": "/internal/app-showcase/media/route-preview.mp4",
+      "poster": "/internal/app-showcase/media/route-preview.png"
     },
     {
       "id": "enhanced-preview",
@@ -397,7 +565,7 @@
       "source": "device",
       "capture": "enhanced-preview.png: Route map, checkpoint flow and conditions.",
       "captureFile": "enhanced-preview.png",
-      "notes": "User-supplied recording 2, mapped to this feature as corrected by the user on 7 October 2026. Converted to MP4 without trimming; poster extracted from the recording. Presented in an iPhone 15 Pro Max mockup. App build not supplied.",
+      "notes": "Reviewed current-device screenshot and 12-second recording of the moving public Pisang Falls route preview. The screenshot capture plan is complete; the recording adds a view of the interaction.",
       "points": [
         {
           "label": "Route map",
@@ -420,8 +588,21 @@
           }
         ]
       },
-      "video": "/internal/app-showcase/media/trail-detail-tour.mp4",
-      "poster": "/internal/app-showcase/media/trail-detail-tour-poster.jpeg"
+      "previousCapture": {
+        "video": "/internal/app-showcase/media/trail-detail-tour.mp4",
+        "poster": "/internal/app-showcase/media/trail-detail-tour-poster.jpeg"
+      },
+      "image": "/internal/app-showcase/media/enhanced-preview.png",
+      "video": "/internal/app-showcase/media/enhanced-preview.mp4",
+      "poster": "/internal/app-showcase/media/enhanced-preview.png",
+      "capturedAt": "2026-11-16T02:02:33.874021+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": false,
+        "note": "Current app UI"
+      }
     },
     {
       "id": "trail-forecast",
@@ -437,7 +618,7 @@
       "source": "device",
       "capture": "trail-forecast.mp4 (20–25 sec): Open Conditions and Safety. Switch day and chart metric. Select an hour on the chart. Show daylight times and weather cautions.",
       "captureFile": "trail-forecast.mp4",
-      "notes": "User-supplied screen recording, wired on 7 October 2026. Converted to MP4 without trimming; poster extracted from the recording. Presented in an iPhone 15 Pro Max mockup. App build not supplied.",
+      "notes": "Reviewed current-device public trail forecast screenshot and 20-second recording showing the selected day changing and temperature, rain and wind views. The requested recording is supplied.",
       "points": [
         {
           "label": "Days & hourly conditions",
@@ -465,8 +646,21 @@
           ]
         }
       },
-      "video": "/internal/app-showcase/media/trail-forecast.mp4",
-      "poster": "/internal/app-showcase/media/trail-forecast-poster.jpeg"
+      "previousCapture": {
+        "video": "/internal/app-showcase/media/trail-forecast.mp4",
+        "poster": "/internal/app-showcase/media/trail-forecast-poster.jpeg"
+      },
+      "capturedAt": "2026-11-16T02:05:16.485147+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": false,
+        "note": "Current app UI"
+      },
+      "image": "/internal/app-showcase/media/weather.png",
+      "poster": "/internal/app-showcase/media/weather.png",
+      "video": "/internal/app-showcase/media/trail-forecast.mp4"
     },
     {
       "id": "hazard-report",
@@ -480,9 +674,9 @@
         "Read what to do"
       ],
       "source": "device",
-      "capture": "hazard-report-list.png: Reported trail hazards with categories and location context. hazard-report.png: Prepared report: trail, category, location, severity and sample text. Prepare a demo report and leave it unsubmitted.",
+      "capture": "hazard-report-list.png: Current report-history empty state. hazard-report.png: Prepared Fast River Crossing form, not submitted. No live caution was created.",
       "captureFile": "hazard-report-list.png",
-      "notes": "Two user-supplied screenshots, water crossing followed by steep terrain, wired on 7 October 2026. Displayed side by side in iPhone 15 Pro Max mockups. App build not supplied.",
+      "notes": "Reviewed latest prepared Fast River Crossing form and current report-history empty state. Both current report-flow screenshots are supplied. There is no active caution or submitted report, and no draft was published.",
       "points": [
         {
           "label": "Mapped cautions",
@@ -497,20 +691,40 @@
         "screenshots": [
           {
             "file": "hazard-report-list.png",
-            "show": "Reported trail hazards with categories and location context."
+            "show": "Current report-history empty state."
           },
           {
             "file": "hazard-report.png",
-            "show": "Prepared report: trail, category, location, severity and sample text."
+            "show": "Prepared Fast River Crossing report form with fictional draft details; not submitted."
           }
         ],
         "setup": "Prepare a demo report and leave it unsubmitted."
       },
-      "image": "/internal/app-showcase/media/trail-caution-water.jpeg",
+      "previousCapture": {
+        "image": "/internal/app-showcase/media/trail-caution-water.jpeg",
+        "images": [
+          {
+            "src": "/internal/app-showcase/media/trail-caution-terrain.jpeg",
+            "alt": "Steep terrain area caution"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-16T02:38:25.409825+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
       "images": [
         {
-          "src": "/internal/app-showcase/media/trail-caution-terrain.jpeg",
-          "alt": "Steep terrain area caution"
+          "src": "/internal/app-showcase/media/hazard-report.png",
+          "alt": "Current prepared Fast River Crossing report form; not submitted"
+        },
+        {
+          "src": "/internal/app-showcase/media/hazard-report-list.png",
+          "alt": "Current report-history empty state; no active report"
         }
       ]
     },
@@ -520,15 +734,15 @@
       "title": "Your next hike",
       "description": "See departure timing, current difficulty, forecast and preparation progress together.",
       "flow": [
-        "Open Home",
-        "Review Next Hike",
-        "Open forecast",
-        "Open preparation"
+        "Open current Home preview",
+        "Swipe upcoming plans",
+        "Review the selected plan",
+        "Open its preparation checklist"
       ],
-      "source": "needed",
-      "capture": "upcoming-home.mp4 (15–20 sec): Show the full current Home screen. Focus the Next Hike card: date, countdown and return. Show trail difficulty and the forecast. Open preparation from the card. Use a planned demo hike. Keep the entire Home screen visible.",
+      "source": "device",
+      "capture": "upcoming-home.mp4 (25 sec): Clean current Home All-filter carousel: fictional Valley Nature Walk (18 November) → Forest Ridge Trail (17 November) → matching first-plan preparation/extras. No live GPS or real hike started.",
       "captureFile": "upcoming-home.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed clean replacement recording and current Home screenshot with All retained. The clip shows fictional Valley Nature Walk (18 November), Forest Ridge Trail (17 November), and the correct first-plan preparation/extras. There is no location-unavailable snackbar in this replacement. No live GPS tracking or real hike start occurred.",
       "points": [
         {
           "label": "Departure & return",
@@ -551,32 +765,42 @@
         "screenshots": [],
         "recording": {
           "file": "upcoming-home.mp4",
-          "duration": "15–20 sec",
+          "duration": "25 sec",
           "steps": [
-            "Show the full current Home screen.",
-            "Focus the Next Hike card: date, countdown and return.",
-            "Show trail difficulty and the forecast.",
-            "Open preparation from the card."
+            "Show the clean current Home layout with All retained and fictional upcoming plans.",
+            "Swipe Valley Nature Walk and Forest Ridge Trail cards.",
+            "Open the matching first-plan preparation checklist and extras."
           ]
         },
-        "setup": "Use a planned demo hike. Keep the entire Home screen visible."
-      }
+        "setup": "Use fictional local plans in the isolated current-widget preview. No live GPS or real hike start."
+      },
+      "capturedAt": "2026-11-16T02:54:23.727823+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · fictional plans; no live GPS or hike start"
+      },
+      "image": "/internal/app-showcase/media/plan-home.png",
+      "video": "/internal/app-showcase/media/upcoming-home.mp4",
+      "poster": "/internal/app-showcase/media/plan-home.png"
     },
     {
       "id": "create-hike",
       "chapter": "prepare",
       "title": "Plan your way",
-      "description": "Choose your hiking mode and select a route for the outing.",
+      "description": "Choose your hiking mode, set departure timing and review personal reminders for a selected route.",
       "flow": [
-        "Choose Create Hike",
-        "Select Solo or Team",
-        "Select trail",
-        "Continue to checkpoints"
+        "Start with a selected route",
+        "Choose Solo or Team",
+        "Set departure timing",
+        "Review personal reminders"
       ],
-      "source": "needed",
-      "capture": "create-hike.mp4 (15–20 sec): Open Create Hike. Show the Solo and Team choices. Select a mode and trail. Stop at the checkpoint planning screen. Use a draft plan.",
+      "source": "device",
+      "capture": "create-hike.mp4 (26 sec): Show Solo/Team mode for a selected demo route, timing, Schedule Time and personal reminders. Stop before saving the plan.",
       "captureFile": "create-hike.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 26-second recording of the current wizard with a selected fictional route: Solo/Team mode, timing, Schedule Time and personal reminders. No plan was saved. The required current-wizard recording is supplied.",
       "points": [
         {
           "label": "Solo or team",
@@ -591,16 +815,27 @@
         "screenshots": [],
         "recording": {
           "file": "create-hike.mp4",
-          "duration": "15–20 sec",
+          "duration": "26 sec",
           "steps": [
-            "Open Create Hike.",
-            "Show the Solo and Team choices.",
-            "Select a mode and trail.",
-            "Stop at the checkpoint planning screen."
+            "Open the wizard with a selected demo route.",
+            "Show Solo and Team choices.",
+            "Continue to timing and select Schedule Time.",
+            "Review personal departure reminders; stop before saving a plan."
           ]
         },
         "setup": "Use a draft plan."
-      }
+      },
+      "capturedAt": "2026-11-16T02:13:45.466327+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "image": "/internal/app-showcase/media/create-session.png",
+      "video": "/internal/app-showcase/media/create-hike.mp4",
+      "poster": "/internal/app-showcase/media/create-session.png"
     },
     {
       "id": "checkpoints",
@@ -613,10 +848,10 @@
         "Add or select a stop",
         "Review itinerary"
       ],
-      "source": "needed",
-      "capture": "checkpoints.mp4 (15–20 sec): Open the checkpoint timeline. Select or add a stop using the map picker. Return to the itinerary and show its position. Use a demo draft route.",
+      "source": "device",
+      "capture": "checkpoints.mp4 (22 sec): Loaded trail map → checkpoint timeline → current edit-mode reorder handles. Separate checkpoint-editor.png. No plan saved.",
       "captureFile": "checkpoints.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 22-second current-widget map/timeline/edit-mode recording and matching screenshots. The current itinerary-controls recording is supplied with fictional draft data. No plan was saved and no completed reorder or new stop is claimed.",
       "points": [
         {
           "label": "Checkpoint order",
@@ -631,15 +866,35 @@
         "screenshots": [],
         "recording": {
           "file": "checkpoints.mp4",
-          "duration": "15–20 sec",
+          "duration": "22 sec",
           "steps": [
-            "Open the checkpoint timeline.",
-            "Select or add a stop using the map picker.",
-            "Return to the itinerary and show its position."
+            "Show the loaded current trail map.",
+            "Review the checkpoint timeline.",
+            "Open edit mode and show reorder handles; do not save a plan."
           ]
         },
         "setup": "Use a demo draft route."
-      }
+      },
+      "poster": "/internal/app-showcase/media/checkpoints.png",
+      "capturedAt": "2026-11-16T02:46:58.269440+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · fictional checkpoint draft; no plan saved"
+      },
+      "video": "/internal/app-showcase/media/checkpoints.mp4",
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/checkpoints.png",
+          "alt": "Current loaded trail map and checkpoint planning screen"
+        },
+        {
+          "src": "/internal/app-showcase/media/checkpoint-editor.png",
+          "alt": "Current checkpoint edit mode and reorder handles"
+        }
+      ]
     },
     {
       "id": "schedule-reminders",
@@ -652,10 +907,10 @@
         "Review duration",
         "Choose reminders"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "schedule-timing.png: Timing screen: start-now/scheduled choice, date, time and duration. schedule-reminders.png: Check-in and preparation reminder settings with their preview. Use a demo draft; avoid sending team invitations.",
       "captureFile": "schedule-timing.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget timing and personal departure-reminder screenshots with fictional draft data. Both planned screenshots are supplied. No hike was saved and no invitations were sent.",
       "points": [
         {
           "label": "Now or later",
@@ -682,7 +937,25 @@
           }
         ],
         "setup": "Use a demo draft; avoid sending team invitations."
-      }
+      },
+      "capturedAt": "2026-11-16T02:12:28.558643+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/schedule-timing.png",
+          "alt": "Schedule Time selected with departure date, time and arrival fields"
+        },
+        {
+          "src": "/internal/app-showcase/media/schedule-reminders.png",
+          "alt": "Personal departure-reminder controls and timeline"
+        }
+      ]
     },
     {
       "id": "hike-safety-settings",
@@ -695,10 +968,10 @@
         "Adjust detection options",
         "Review route alerts"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "hike-safety-settings.png: Hike safety settings: live sharing, fall and stillness options. hike-route-alerts.png: Route-deviation alerts, sensitivity and rest controls. Use the current safety screen in a demo draft.",
       "captureFile": "hike-safety-settings.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed both current-widget safety screenshots, including rest, footprint-interval and path-deviation controls. Both required screenshots are supplied with fictional local choices; no real monitoring or alert was started.",
       "points": [
         {
           "label": "Live sharing",
@@ -725,7 +998,25 @@
           }
         ],
         "setup": "Use the current safety screen in a demo draft."
-      }
+      },
+      "capturedAt": "2026-11-16T02:10:09.577672+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/hike-safety-settings.png",
+          "alt": "Current hike safety choices with fictional local draft state"
+        },
+        {
+          "src": "/internal/app-showcase/media/hike-route-alerts.png",
+          "alt": "Current rest, footprint interval and path-deviation controls"
+        }
+      ]
     },
     {
       "id": "required-gear",
@@ -738,10 +1029,10 @@
         "Choose Yes, packed or Not yet",
         "Continue guide"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "required-gear.mp4 (15–20 sec): Open Get ready to hike. Show a required item and its reason. Choose Yes, packed or Not yet. Continue through a second item. Use a demo plan.",
       "captureFile": "required-gear.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget gear reference/checklist screenshots and 22-second packing recording showing four items packed, optional extras and battery information. The required packing recording is supplied using fictional local draft data.",
       "points": [
         {
           "label": "Required route gear",
@@ -765,6 +1056,69 @@
           ]
         },
         "setup": "Use a demo plan."
+      },
+      "capturedAt": "2026-11-16T02:25:03.583777+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/required-gear.png",
+          "alt": "Current Gears required reference catalog"
+        },
+        {
+          "src": "/internal/app-showcase/media/preparation-review.png",
+          "alt": "Current preparation checklist with fictional required gear choices"
+        }
+      ],
+      "video": "/internal/app-showcase/media/required-gear.mp4",
+      "poster": "/internal/app-showcase/media/preparation-review.png"
+    },
+    {
+      "id": "hike-basics",
+      "chapter": "prepare",
+      "title": "Start with the basics",
+      "description": "Read the current hiking basics guide before heading out.",
+      "flow": [
+        "Open hiking basics",
+        "Read preparation guidance",
+        "Return to your plan"
+      ],
+      "source": "device",
+      "capture": "hike-basics.png: Current hiking basics guide with its preparation guidance.",
+      "captureFile": "hike-basics.png",
+      "notes": "Reviewed connected-device capture of current production widgets with isolated fictional data. No production account, sharing or alert action was performed.",
+      "points": [
+        {
+          "label": "Prepare before departure",
+          "detail": "Browse the hiking basics guide while planning your outing."
+        },
+        {
+          "label": "Keep guidance accessible",
+          "detail": "Read the guide in the app before opening the next planning step."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "hike-basics.png",
+            "show": "Current hiking basics guide with its preparation guidance."
+          }
+        ],
+        "setup": "Use the isolated no-dispatch capture app with fictional data."
+      },
+      "image": "/internal/app-showcase/media/hike-basics.png",
+      "capturedAt": "2026-11-16T02:08:21.678908+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
       }
     },
     {
@@ -778,10 +1132,10 @@
         "Read final review",
         "Resolve missing required items"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "preparation-review.mp4 (25–30 sec): Show optional gear choices. Review contacts, battery, sharing and conditions. Show final review with a missing required item. Resolve it and show the ready-to-start state. Use a demo plan; stop before starting a real hike.",
       "captureFile": "preparation-review.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget preparation screenshot and recording showing all eight required items packed, optional extras and battery. The required review recording is supplied with fictional local draft data. No hike was started.",
       "points": [
         {
           "label": "Optional gear",
@@ -813,7 +1167,18 @@
           ]
         },
         "setup": "Use a demo plan; stop before starting a real hike."
-      }
+      },
+      "capturedAt": "2026-11-16T02:34:06.967127+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "image": "/internal/app-showcase/media/preparation-review.png",
+      "video": "/internal/app-showcase/media/preparation-review.mp4",
+      "poster": "/internal/app-showcase/media/preparation-review.png"
     },
     {
       "id": "team-launch",
@@ -870,10 +1235,10 @@
         "Review hike progress",
         "Inspect safety health"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "active-tracking.mp4 (15–20 sec): Show the current full-map active Home. Keep the elapsed time and status strip visible. Show recorded movement on the map. Open the safety-health status. Use a controlled demo walk or simulated demo movement.",
       "captureFile": "active-tracking.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget loaded-map screenshot and 20-second recording showing map zoom and recenter controls, then safety and Shared With information. The required active-UI recording is supplied with fictional route/team data; no real hike or safety dispatch was started. The supplementary fullscreen active-map screenshot shows the current team overlay with the same fixed fictional Gombak coordinates.",
       "points": [
         {
           "label": "Route & elapsed time",
@@ -901,33 +1266,71 @@
           ]
         },
         "setup": "Use a controlled demo walk or simulated demo movement."
-      }
+      },
+      "capturedAt": "2026-11-16T02:21:36.764856+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "poster": "/internal/app-showcase/media/active-team-hike.png",
+      "video": "/internal/app-showcase/media/active-tracking.mp4",
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/active-team-hike.png",
+          "alt": "Current active-hike overview with a fictional route and team"
+        },
+        {
+          "src": "/internal/app-showcase/media/active-fullscreen.png",
+          "alt": "Current fullscreen active map and team overlay with fixed fictional Gombak coordinates"
+        }
+      ]
     },
     {
       "id": "check-ins-pins",
       "chapter": "hike",
-      "title": "Check in & pin",
-      "description": "Record a check-in or mark a point worth returning to.",
+      "title": "Your route, recorded",
+      "description": "Review the automatic GPS point count and the route saved with your hike.",
       "flow": [
-        "Open active hike",
-        "Choose Check In",
-        "Choose Pin",
-        "Review saved status"
+        "Open the active hike",
+        "Review GPS point count",
+        "Open recorded hike history",
+        "Inspect the saved route"
       ],
-      "source": "needed",
-      "capture": "check-ins-pins.mp4 (15–20 sec): Open an active demo hike. Tap Check In and show confirmation. Pin a location and show its saved marker. Use a test location in an isolated demo hike.",
+      "source": "device",
+      "capture": "Approved active-tracking.mp4 reused as check-ins-pins.mp4 requirement via declared alias, plus separate hike-analysis-demo.png saved-route view. Current automatic-GPS display and route history only; no manual pins or continuous transition.",
       "captureFile": "check-ins-pins.mp4",
       "points": [
         {
-          "label": "Record a check-in",
-          "detail": "Save a check-in during your hike."
+          "label": "Automatic GPS points",
+          "detail": "The active hike displays the GPS points recorded for the session."
         },
         {
-          "label": "Mark a place",
-          "detail": "Pin a point worth returning to."
+          "label": "Saved route history",
+          "detail": "Review the recorded route and available safety history after the hike."
         }
       ],
       "capturePlan": {
+        "screenshots": [
+          {
+            "file": "hike-analysis-demo.png",
+            "show": "Current saved-route history overview with fictional stored points."
+          }
+        ],
+        "recording": {
+          "file": "check-ins-pins.mp4",
+          "duration": "20 sec",
+          "steps": [
+            "Show the current active map and displayed GPS point count.",
+            "Review current active-map controls using fictional route data."
+          ]
+        },
+        "setup": "Reuse the approved active-tracking recording and separate approved saved-route screenshot. No manual pins, live movement or continuous session transition claimed."
+      },
+      "notes": "Reviewed assets are reused directly: active-tracking.mp4 visibly includes the current GPS Points count and map; hike-analysis-demo.png shows the saved route with four points. These are separate fictional active/history examples, not one continuous recorded hike. No manual pin/check-in control, live GPS movement or new capture is implied.",
+      "supersededCapturePlan": {
         "screenshots": [],
         "recording": {
           "file": "check-ins-pins.mp4",
@@ -940,38 +1343,76 @@
         },
         "setup": "Use a test location in an isolated demo hike."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "video": "/internal/app-showcase/media/active-tracking.mp4",
+      "poster": "/internal/app-showcase/media/active-team-hike.png",
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/active-team-hike.png",
+          "alt": "Current active UI showing two fictional GPS points"
+        },
+        {
+          "src": "/internal/app-showcase/media/hike-analysis-demo.png",
+          "alt": "Current saved-route overview with four fictional stored route points"
+        }
+      ],
+      "capturedAt": "2026-11-16T02:21:36.764856+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · separate fictional active/history examples"
+      },
+      "captureCoverage": {
+        "aliases": {
+          "check-ins-pins.mp4": "active-tracking.mp4"
+        },
+        "note": "Approved recording visibly shows GPS Points 2; the separate history screenshot shows four stored route points. Reuse the source assets without duplicating media."
+      }
     },
     {
       "id": "team-tools",
       "chapter": "hike",
       "title": "Keep your team in view",
-      "description": "Review teammate positions, check-ins and route or separation notices.",
+      "description": "Review the active team roster, its status and the current team chat or safety-ping controls.",
       "flow": [
-        "Open team hike",
-        "Open Team Tools",
-        "Review roster status",
-        "Inspect teammate on map"
+        "Review Team live status",
+        "Review current Ping controls",
+        "Open team locations",
+        "Inspect recorded positions"
       ],
-      "source": "needed",
-      "capture": "team-tools.mp4 (20–25 sec): Open Team Tools with at least two participants. Show roster status and check-in timestamps. Select a teammate on the map. Show a seeded route or separation notice. Use controlled demo participants and seeded notices.",
+      "source": "device",
+      "capture": "team-tools.mp4 (18 sec): Review the current roster/Ping entry points and separate team-location map. Use fictional participants; no real ping or message.",
       "captureFile": "team-tools.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 18-second current-widget recording of the fictional active roster and separate loaded team-location map. No pings were sent. The current roster/map capture plan is supplied; the fullscreen Team tools sheet is another supported entry point, not a claim of an action performed in this clip.",
       "points": [
         {
-          "label": "Teammate positions",
-          "detail": "Review where teammates are on the map."
+          "label": "Team live status",
+          "detail": "Review the current team phase, roster and displayed response information."
         },
         {
-          "label": "Team check-ins",
-          "detail": "See participant check-ins and timestamps."
+          "label": "Chat & safety ping",
+          "detail": "The active Team tools sheet offers team chat and safety-ping entry points."
         },
         {
-          "label": "Route & separation notices",
-          "detail": "Review route or teammate-separation notices."
+          "label": "Team-location map",
+          "detail": "The separate team-location screen displays the team’s latest recorded fixes."
         }
       ],
       "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "team-tools.mp4",
+          "duration": "18 sec",
+          "steps": [
+            "Review Team live status and its fictional roster.",
+            "Show the current Ping entry points without sending a message.",
+            "Review the separate current team-location map with loaded tiles."
+          ]
+        },
+        "setup": "Use the isolated current-widget demo with fictional participants; no real messages or pings."
+      },
+      "supersededCapturePlan": {
         "screenshots": [],
         "recording": {
           "file": "team-tools.mp4",
@@ -984,46 +1425,107 @@
           ]
         },
         "setup": "Use controlled demo participants and seeded notices."
+      },
+      "video": "/internal/app-showcase/media/team-tools.mp4",
+      "poster": "/internal/app-showcase/media/team-locations.png",
+      "capturedAt": "2026-11-16T02:24:12.502802+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
       }
+    },
+    {
+      "id": "team-locations",
+      "chapter": "hike",
+      "title": "Keep the team in view",
+      "description": "Review the team-location screen and each hiker’s recorded-position status.",
+      "flow": [
+        "Open team locations",
+        "Review recorded positions",
+        "Check roster status"
+      ],
+      "source": "device",
+      "capture": "team-locations.png: Current team locations screen with loaded map and fictional roster.",
+      "captureFile": "team-locations.png",
+      "points": [
+        {
+          "label": "Team location status",
+          "detail": "Review the team roster and each member’s latest recorded-position state."
+        },
+        {
+          "label": "Recorded-position map",
+          "detail": "Review the team’s latest recorded positions using the map and roster legend."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "team-locations.png",
+            "show": "Current team locations screen with loaded map and fictional roster."
+          }
+        ],
+        "setup": "Use the isolated current-widget demo with fictional roster and locations."
+      },
+      "capturedAt": "2026-11-16T02:24:39.421961+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "image": "/internal/app-showcase/media/team-locations.png",
+      "notes": "Reviewed latest current-widget team-location screenshot with loaded map tiles and a fictional fixed roster and positions. The requested map screenshot is supplied. This is separate from Team Hike Launch."
     },
     {
       "id": "active-weather-sharing",
       "chapter": "hike",
-      "title": "Conditions & sharing",
-      "description": "Review weather along the hike and manage a location link for trusted people.",
+      "title": "Forecast & sharing previews",
+      "description": "Review the trail forecast and the independent location-sharing controls.",
       "flow": [
-        "Open active weather",
-        "Review route conditions",
-        "Open Location sharing",
-        "Review link controls"
+        "Review forecast UI",
+        "Review sharing-off state",
+        "Review seeded sharing-on state"
       ],
-      "source": "needed",
-      "capture": "active-weather-sharing.mp4 (20–25 sec): Open active-hike weather and route conditions. Open Location sharing. Show demo link controls. Stop the demo sharing session. Use a test location and a demo sharing link.",
+      "source": "device",
+      "capture": "active-weather-sharing.mp4 (24 sec): Separate current forecast, sharing-off and seeded sharing-on views. Fixed fictional sample locations; no real publish, send or stop.",
       "captureFile": "active-weather-sharing.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 24-second current-widget recording of separate forecast, sharing-off and seeded sharing-on views with loaded fixed Penang sample maps. These are independent UI previews; no real sharing link was published, sent or stopped and no continuous active-session lifecycle is claimed.",
       "points": [
         {
-          "label": "Weather along the hike",
-          "detail": "Review conditions while hiking."
+          "label": "Trail forecast",
+          "detail": "Review the current forecast interface."
         },
         {
-          "label": "Trusted location link",
-          "detail": "Manage a location link for trusted people."
+          "label": "Sharing controls",
+          "detail": "Inspect off and seeded-on location-sharing states without publishing a link."
         }
       ],
       "capturePlan": {
         "screenshots": [],
         "recording": {
           "file": "active-weather-sharing.mp4",
-          "duration": "20–25 sec",
+          "duration": "24 sec",
           "steps": [
-            "Open active-hike weather and route conditions.",
-            "Open Location sharing.",
-            "Show demo link controls.",
-            "Stop the demo sharing session."
+            "Show the current forecast UI.",
+            "Show the independent sharing-off preview.",
+            "Show the seeded sharing-on preview with loaded fixed sample map."
           ]
         },
-        "setup": "Use a test location and a demo sharing link."
+        "setup": "Separate isolated UI states; no live GPS, real share creation, sending or stopping."
+      },
+      "video": "/internal/app-showcase/media/active-weather-sharing.mp4",
+      "poster": "/internal/app-showcase/media/location-sharing-active.png",
+      "capturedAt": "2026-11-16T02:49:27.971626+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · separate seeded states; no real sharing"
       }
     },
     {
@@ -1037,10 +1539,10 @@
         "Review contact readiness",
         "Inspect alert status"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "sos-center.png: Idle SOS page: all three modes, guidance, contacts and status. Keep the SOS page idle.",
       "captureFile": "sos-center.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed latest real-app SOS overview captured online with DemoAccount. The idle controls screenshot is supplied. No alert was triggered.",
       "points": [
         {
           "label": "Manual SOS",
@@ -1063,7 +1565,16 @@
           }
         ],
         "setup": "Keep the SOS page idle."
-      }
+      },
+      "capturedAt": "2026-11-16T02:17:49.708807+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": false,
+        "note": "Demo account · current app UI"
+      },
+      "image": "/internal/app-showcase/media/sos-center.png"
     },
     {
       "id": "sos-countdown",
@@ -1076,10 +1587,10 @@
         "Review countdown",
         "Cancel SOS"
       ],
-      "source": "needed",
-      "capture": "sos-countdown.mp4 (10–15 sec): Open the isolated SOS demo. Tap Manual SOS. Show the countdown near five seconds. Cancel and show the idle state. Use an isolated SOS demo with real contact dispatch disabled.",
+      "source": "device",
+      "capture": "sos-countdown.mp4 (12 sec): Manual ten-second countdown cancelled with Back before expiry. Isolated demo; no alert, alarm or dispatch.",
       "captureFile": "sos-countdown.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 12-second manual ten-second-countdown demonstration, cancelled using Back before expiry. No alert, alarm or contact dispatch occurred. The isolated countdown/cancellation recording is supplied.",
       "points": [
         {
           "label": "Manual countdown",
@@ -1094,15 +1605,67 @@
         "screenshots": [],
         "recording": {
           "file": "sos-countdown.mp4",
-          "duration": "10–15 sec",
+          "duration": "12 sec",
           "steps": [
-            "Open the isolated SOS demo.",
-            "Tap Manual SOS.",
-            "Show the countdown near five seconds.",
-            "Cancel and show the idle state."
+            "Open the isolated manual SOS countdown.",
+            "Review the ten-second countdown.",
+            "Cancel using Back before expiry; no alert or alarm."
           ]
         },
         "setup": "Use an isolated SOS demo with real contact dispatch disabled."
+      },
+      "video": "/internal/app-showcase/media/sos-countdown.mp4",
+      "poster": "/internal/app-showcase/media/sos-center.png",
+      "capturedAt": "2026-11-16T02:41:17.566579+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated countdown; no alert or alarm"
+      }
+    },
+    {
+      "id": "sos-status",
+      "chapter": "safety",
+      "title": "See alert status",
+      "description": "Inspect the current SOS status screen and cancellation controls using an isolated demonstration.",
+      "flow": [
+        "Open isolated safety demo",
+        "Inspect sample status",
+        "Review cancellation control"
+      ],
+      "source": "device",
+      "capture": "sos-status.png: Current SOS submitted-status screen with fictional local demonstration text.",
+      "captureFile": "sos-status.png",
+      "notes": "Reviewed connected-device capture of current production widgets with isolated fictional data. No production account, sharing or alert action was performed.",
+      "points": [
+        {
+          "label": "Read the status",
+          "detail": "The status screen explains the displayed alert state."
+        },
+        {
+          "label": "Keep cancellation accessible",
+          "detail": "Review the cancellation control. This local demonstration sends no messages and creates no production alert."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "sos-status.png",
+            "show": "Current SOS submitted-status screen with fictional local demonstration text."
+          }
+        ],
+        "setup": "Use the isolated no-dispatch capture app with fictional data."
+      },
+      "image": "/internal/app-showcase/media/sos-status.png",
+      "capturedAt": "2026-11-16T02:08:24.080237+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
       }
     },
     {
@@ -1116,10 +1679,10 @@
         "Review demo status",
         "Return to safety screen"
       ],
-      "source": "needed",
-      "capture": "duress-demo.mp4 (15–20 sec): Start from the final home-screen page with the widget. Tap the demo Duress action. Show the app opening and duress status. Show the sample contact result. Use an isolated no-dispatch build with fictional contacts. Label the result as a demo.",
+      "source": "device",
+      "capture": "duress-demo.mp4 (12 sec): Current response-only duress screen in the isolated demo. No dispatch, alarm, close action or production alert.",
       "captureFile": "duress-demo.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed normalized 12-second recording of the current response-only duress screen with fictional local state. No close action, dispatch, alarm, contact message or production alert occurred. The current response-screen recording is supplied.",
       "points": [
         {
           "label": "Discreet interface",
@@ -1134,59 +1697,91 @@
         "screenshots": [],
         "recording": {
           "file": "duress-demo.mp4",
-          "duration": "15–20 sec",
+          "duration": "12 sec",
           "steps": [
-            "Start from the final home-screen page with the widget.",
-            "Tap the demo Duress action.",
-            "Show the app opening and duress status.",
-            "Show the sample contact result."
+            "Show the current response-only duress screen in the isolated demo.",
+            "Review the displayed status and cancellation control.",
+            "Keep the screen open; no dispatch, alarm or close action."
           ]
         },
         "setup": "Use an isolated no-dispatch build with fictional contacts. Label the result as a demo."
-      }
+      },
+      "capturedAt": "2026-11-16T02:34:20.702495+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "image": "/internal/app-showcase/media/duress-demo.png",
+      "poster": "/internal/app-showcase/media/duress-demo.png",
+      "video": "/internal/app-showcase/media/duress-demo.mp4"
     },
     {
       "id": "sos-queue-notes",
       "chapter": "safety",
       "title": "Know the alert status",
-      "description": "Review queued alerts, per-contact outcomes and optional emergency message notes.",
+      "description": "Review the current queue state, alert receipt examples and custom message-note preview.",
       "flow": [
-        "Open SOS status",
-        "Inspect queued detail",
-        "Review contact outcomes",
-        "Open message-note settings"
+        "Open queue overview",
+        "Review empty queue state",
+        "Inspect fictional alert receipts",
+        "Open unsaved message-note preview"
       ],
-      "source": "needed",
-      "capture": "sos-queue-notes.png: Seeded queued or partial alert with per-contact outcomes. sos-notes.png: Emergency message-note settings with fictional text. Use seeded alert data in an isolated demo.",
+      "source": "device",
+      "capture": "sos-queue-notes.png: Empty read-only alert queue. sos-notes.png: Unsaved custom-note editor and WhatsApp preview. Additional sos-events.png: Fictional receipt-list example. No real queued/delivered message.",
       "captureFile": "sos-queue-notes.png",
       "points": [
         {
-          "label": "Queued alerts",
-          "detail": "Review alerts waiting to be sent."
+          "label": "Queue status",
+          "detail": "Review the current queue, including its empty state."
         },
         {
-          "label": "Each contact's outcome",
-          "detail": "See the result for each emergency contact."
+          "label": "Receipt examples",
+          "detail": "Inspect the receipt-list presentation using fictional contact confirmations."
         },
         {
-          "label": "Message notes",
-          "detail": "Add optional notes to the emergency message."
+          "label": "Message-note preview",
+          "detail": "Review custom-note text and its message preview before saving."
         }
       ],
       "capturePlan": {
         "screenshots": [
           {
             "file": "sos-queue-notes.png",
-            "show": "Seeded queued or partial alert with per-contact outcomes."
+            "show": "Current read-only queue overview in its empty state."
           },
           {
             "file": "sos-notes.png",
-            "show": "Emergency message-note settings with fictional text."
+            "show": "Unsaved custom-note editor and WhatsApp preview with fictional text/phone."
           }
         ],
         "setup": "Use seeded alert data in an isolated demo."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "notes": "Reviewed current-widget empty queue, unsaved note/WhatsApp preview and fictional receipt-list screenshots. No queued dispatch or real contact delivery is demonstrated. The note was not saved and no message was sent.",
+      "capturedAt": "2026-11-16T02:36:29.537739+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · fictional receipts and unsaved note preview"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/sos-queue-notes.png",
+          "alt": "Current read-only alert queue in its empty state"
+        },
+        {
+          "src": "/internal/app-showcase/media/sos-notes.png",
+          "alt": "Current unsaved custom-note editor and WhatsApp preview with fictional data"
+        },
+        {
+          "src": "/internal/app-showcase/media/sos-events.png",
+          "alt": "Current alert receipt list with fictional three-contact confirmations"
+        }
+      ]
     },
     {
       "id": "physical-button",
@@ -1199,10 +1794,10 @@
         "Confirm physical ownership",
         "Review readiness"
       ],
-      "source": "needed",
-      "capture": "physical-button.mp4 (20–30 sec): Open Paired SOS button and Add button. Discover the test button. Complete physical ownership confirmation. Show paired status and monitoring readiness. Use your test hardware; keep device secrets and identifiers out of view.",
+      "source": "device",
+      "capture": "physical-button.mp4 (25 sec): Current production pairing sheet from instructions through dummy discovery, secure-connection UI and simulated success. Persistent SIMULATED HARDWARE banner; ownership event simulated. No BLE writes or SOS.",
       "captureFile": "physical-button.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed user-authorized 25-second recording of the actual current production pairing sheet with dummy discovery and simulated ownership/success events. Its persistent SIMULATED HARDWARE banner remains visible. No hardware was actually paired, no BLE writes occurred and no SOS was dispatched. The earlier real-app scan is included separately and detected no button. This demonstrates the current pairing UI, not a successful physical hardware test or the entire Paired page. A supplementary paired-card component screenshot is also supplied; it is a component preview, not the full Paired page.",
       "points": [
         {
           "label": "Find the button",
@@ -1221,16 +1816,47 @@
         "screenshots": [],
         "recording": {
           "file": "physical-button.mp4",
-          "duration": "20–30 sec",
+          "duration": "25 sec",
           "steps": [
-            "Open Paired SOS button and Add button.",
-            "Discover the test button.",
-            "Complete physical ownership confirmation.",
-            "Show paired status and monitoring readiness."
+            "Show current production pairing instructions in the isolated demo.",
+            "Show dummy discovery under the persistent SIMULATED HARDWARE banner.",
+            "Advance through the secure-connection UI using a simulated ownership response.",
+            "Show the simulated success widget."
           ]
         },
-        "setup": "Use your test hardware; keep device secrets and identifiers out of view."
-      }
+        "setup": "User-authorized dummy-signal simulation of the current pairing widget. Ownership response is simulated; no BLE writes, real pairing or SOS dispatch."
+      },
+      "capturedAt": "2026-11-16T02:31:32.083913+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · SIMULATED HARDWARE; no BLE writes or SOS"
+      },
+      "video": "/internal/app-showcase/media/physical-button.mp4",
+      "poster": "/internal/app-showcase/media/physical-button-success.png",
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/physical-button-setup.png",
+          "alt": "Current real-app SOS button setup instructions"
+        },
+        {
+          "src": "/internal/app-showcase/media/physical-button-success.png",
+          "alt": "Current pairing success widget with SIMULATED HARDWARE banner"
+        },
+        {
+          "src": "/internal/app-showcase/media/physical-button-paired.png",
+          "alt": "Current paired-button card component with SIMULATED HARDWARE banner"
+        }
+      ],
+      "videos": [
+        {
+          "src": "/internal/app-showcase/media/physical-button-scan.mp4",
+          "poster": "/internal/app-showcase/media/physical-button-setup.png",
+          "alt": "Actual Bluetooth search; no hardware was detected"
+        }
+      ]
     },
     {
       "id": "button-test-logs",
@@ -1243,10 +1869,10 @@
         "Press test button",
         "Review test result or log"
       ],
-      "source": "needed",
-      "capture": "button-test-logs.mp4 (15–20 sec): Open the paired button's test mode. Show Test mode active. Press during the armed test window. Show Button press detected and its event history. Use authenticated test mode, with emergency dispatch disabled.",
+      "source": "device",
+      "capture": "button-test-logs.mp4 (20 sec): Current paired-card Test action, explicit simulated signal/no-SOS message and simulated ButtonDebugging event row. No real hardware test or SOS.",
       "captureFile": "button-test-logs.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 20-second recording of the current paired-card Test control, the explicit simulated-signal/no-SOS message and an actual ButtonDebugging sample received row marked simulated. This is a user-authorized dummy-signal UI demonstration, not a real hardware or authenticated end-to-end test. No BLE write or SOS occurred.",
       "points": [
         {
           "label": "Armed test mode",
@@ -1261,15 +1887,24 @@
         "screenshots": [],
         "recording": {
           "file": "button-test-logs.mp4",
-          "duration": "15–20 sec",
+          "duration": "20 sec",
           "steps": [
-            "Open the paired button's test mode.",
-            "Show Test mode active.",
-            "Press during the armed test window.",
-            "Show Button press detected and its event history."
+            "Open the current paired-card component preview with its simulation banner.",
+            "Tap Test and show the explicit simulated signal received / no SOS message.",
+            "Review the current ButtonDebugging received-event row marked simulated."
           ]
         },
-        "setup": "Use authenticated test mode, with emergency dispatch disabled."
+        "setup": "User-authorized simulated hardware response, using current production widgets. No real BLE write, armed hardware test or SOS dispatch."
+      },
+      "video": "/internal/app-showcase/media/button-test-logs.mp4",
+      "poster": "/internal/app-showcase/media/physical-button-paired.png",
+      "capturedAt": "2026-11-16T02:34:55.420707+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · SIMULATED test signal; no SOS sent"
       }
     },
     {
@@ -1283,10 +1918,10 @@
         "Open map",
         "Review timestamp and context"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "nearby-help.png: Seeded nearby incident list with time and context. nearby-help-map.png: Selected demo incident on the map. Use seeded incidents; avoid publishing a live incident.",
       "captureFile": "nearby-help.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current nearby-SOS detector-radius map with loaded tiles and a fictional fixed Penang sample coordinate. This is approximate detector context, not an exact/live SOS or GPS location. The incident-list screenshot remains pending.",
       "points": [
         {
           "label": "Reported incidents",
@@ -1305,42 +1940,91 @@
           },
           {
             "file": "nearby-help-map.png",
-            "show": "Selected demo incident on the map."
+            "show": "Current nearby SOS detector-radius map for a fictional event with a fixed sample detector coordinate."
           }
         ],
         "setup": "Use seeded incidents; avoid publishing a live incident."
+      },
+      "image": "/internal/app-showcase/media/nearby-help-map.png",
+      "capturedAt": "2026-11-16T02:32:27.101640+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · fictional event; fixed sample location, no GPS"
       }
     },
     {
       "id": "first-aid-gear",
       "chapter": "safety",
       "title": "Guidance within reach",
-      "description": "Browse first-aid topics, offline tutorial media and the standalone gear checklist.",
+      "description": "Browse the current first-aid categories, written guidance and scenario action sheets, then review the gear reference.",
       "flow": [
         "Open First-Aid Guide",
-        "Choose topic",
-        "Review steps and saved video",
-        "Open Gear Checklist"
+        "Choose category",
+        "Review steps and scenario guidance",
+        "Open Gears required"
       ],
-      "source": "needed",
-      "capture": "first-aid-gear.mp4 (20–25 sec): Open First-Aid Guide and choose a topic. Show its steps and saved tutorial controls. Open an offline tutorial. Show the standalone Gear Checklist. Keep emergency-call controls inactive.",
+      "source": "device",
+      "capture": "first-aid-gear.mp4 (25 sec): First-Aid index → Bleeding category → Bleeding wound scenario Action 1. required-gear.png: Separate gear reference. Additional first-aid-steps.png: Scenario Action 2. No call/SOS and no continuous gear transition claimed.",
       "captureFile": "first-aid-gear.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 25-second current-widget recording from the First-Aid index through the Bleeding category to the Bleeding wound scenario Action 1 sheet. A separate reviewed Action 2 screenshot and Gears required catalog screenshot are also supplied. The gear reference is separate; no continuous video transition to gear is claimed. No call or SOS control was activated.",
       "points": [
         {
-          "label": "First-aid topics",
-          "detail": "Browse practical first-aid topics and steps."
+          "label": "First-aid categories",
+          "detail": "Browse the current guidance categories."
         },
         {
-          "label": "Offline tutorials",
-          "detail": "Open saved tutorial media."
+          "label": "Steps & scenarios",
+          "detail": "Review written steps and the available scenario action sheets."
         },
         {
-          "label": "Gear checklist",
-          "detail": "Review the standalone gear checklist."
+          "label": "Gear reference",
+          "detail": "Browse the current Gears required reference catalog."
         }
       ],
       "capturePlan": {
+        "screenshots": [
+          {
+            "file": "required-gear.png",
+            "show": "Separate current Gears required reference catalog."
+          }
+        ],
+        "recording": {
+          "file": "first-aid-gear.mp4",
+          "duration": "25 sec",
+          "steps": [
+            "Open the current First-Aid Guide index.",
+            "Open the Bleeding category.",
+            "Review the Bleeding wound scenario Action 1 sheet without calling or activating SOS."
+          ]
+        },
+        "setup": "Use current written/scenario guidance; present gear as a separate reference screenshot. No emergency calls, SOS or retired tutorial-video playback."
+      },
+      "capturedAt": "2026-11-16T02:40:06.680922+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/first-aid.png",
+          "alt": "Current First-Aid Guide category index"
+        },
+        {
+          "src": "/internal/app-showcase/media/required-gear.png",
+          "alt": "Current Gears required reference catalog"
+        },
+        {
+          "src": "/internal/app-showcase/media/first-aid-steps.png",
+          "alt": "Current Bleeding wound scenario Action 2 sheet"
+        }
+      ],
+      "supersededCapturePlan": {
         "screenshots": [],
         "recording": {
           "file": "first-aid-gear.mp4",
@@ -1353,7 +2037,9 @@
           ]
         },
         "setup": "Keep emergency-call controls inactive."
-      }
+      },
+      "video": "/internal/app-showcase/media/first-aid-gear.mp4",
+      "poster": "/internal/app-showcase/media/first-aid.png"
     },
     {
       "id": "find-hikers",
@@ -1366,10 +2052,10 @@
         "Open demo profile",
         "Review hiking experience"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "find-hikers.png: Find Hikers list with demo profiles. hiker-public-profile.png: Demo public profile with hiking experience and visible details. Use fictional or consenting profiles.",
       "captureFile": "find-hikers.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget Find hikers list and public-profile sheet with fictional local profiles. Both planned screenshots are supplied; no real buddy request was sent.",
       "points": [
         {
           "label": "Discover hikers",
@@ -1392,7 +2078,25 @@
           }
         ],
         "setup": "Use fictional or consenting profiles."
-      }
+      },
+      "capturedAt": "2026-11-16T02:16:10.844856+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/find-hikers.png",
+          "alt": "Current Find hikers list with fictional hikers and cities"
+        },
+        {
+          "src": "/internal/app-showcase/media/hiker-public-profile.png",
+          "alt": "Current public hiker profile sheet for fictional Jamie Demo"
+        }
+      ]
     },
     {
       "id": "join-group",
@@ -1449,7 +2153,7 @@
         "Open buddy requests",
         "Review a demo request"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "stories-buddies.png: Stories feed with sample hike posts and connection controls. buddy-requests.png: Buddy request list and a controlled request review. Use demo stories and requests.",
       "captureFile": "stories-buddies.png",
       "points": [
@@ -1479,7 +2183,33 @@
         ],
         "setup": "Use demo stories and requests."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "notes": "Reviewed current-widget stories and buddy-request screenshots, plus a supplementary 16-second recording moving from stories to Find hikers and a fictional public-profile sheet. Both required screenshots are supplied; no social mutation occurred.",
+      "capturedAt": "2026-11-16T02:27:35.890777+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/community.png",
+          "alt": "Current stories feed with fictional hiking posts"
+        },
+        {
+          "src": "/internal/app-showcase/media/buddy-requests.png",
+          "alt": "Current buddy requests list with fictional profiles"
+        }
+      ],
+      "captureCoverage": {
+        "aliases": {
+          "stories-buddies.png": "community.png"
+        },
+        "note": "The reviewed community.png is the planned stories-feed view under an accepted filename."
+      },
+      "video": "/internal/app-showcase/media/community.mp4",
+      "poster": "/internal/app-showcase/media/community.png"
     },
     {
       "id": "chat",
@@ -1492,8 +2222,8 @@
         "Open attachment options",
         "Review mute or pin controls"
       ],
-      "source": "needed",
-      "capture": "chat.mp4 (15–20 sec): Show a demo direct chat and group chat. Open the attachment choices. Show mute and conversation controls. Return to the sample conversation. Use consented demo conversations; leave messages and attachments unsent.",
+      "source": "device",
+      "capture": "chat.mp4 (15 sec): Current fictional conversation and blank composer. No message or attachment sent.",
       "captureFile": "chat.mp4",
       "points": [
         {
@@ -1513,61 +2243,77 @@
         "screenshots": [],
         "recording": {
           "file": "chat.mp4",
-          "duration": "15–20 sec",
+          "duration": "15 sec",
           "steps": [
-            "Show a demo direct chat and group chat.",
-            "Open the attachment choices.",
-            "Show mute and conversation controls.",
-            "Return to the sample conversation."
+            "Show the current fictional conversation.",
+            "Review the blank composer.",
+            "Leave messages and attachments unsent."
           ]
         },
         "setup": "Use consented demo conversations; leave messages and attachments unsent."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "notes": "Reviewed 15-second current-widget fictional conversation and blank-composer recording. The conversation UI recording is supplied; no message or attachment was sent.",
+      "capturedAt": "2026-11-16T02:44:41.495769+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · fictional conversation; no sends"
+      },
+      "image": "/internal/app-showcase/media/chat.png",
+      "poster": "/internal/app-showcase/media/chat.png",
+      "video": "/internal/app-showcase/media/chat.mp4"
     },
     {
       "id": "finish-rating",
       "chapter": "reflect",
-      "title": "Finish & rate",
-      "description": "End a session, confirm the team outcome and share route difficulty feedback.",
+      "title": "Review your route rating",
+      "description": "Review the current star-rating and route-difficulty choices for a completed hike.",
       "flow": [
-        "Choose End hike",
-        "Review finish confirmation",
-        "Review summary",
-        "Rate route in demo"
+        "Open current rating dialog",
+        "Choose four stars",
+        "Choose Moderate difficulty",
+        "Leave without saving"
       ],
-      "source": "needed",
-      "capture": "finish-rating.mp4 (15–20 sec): End an isolated demo hike. Show finish confirmation and team outcome. Show the completed summary. Open route difficulty feedback. Use an isolated test hike; avoid changing real ratings.",
+      "source": "device",
+      "capture": "finish-rating.mp4 (15 sec): Current rating dialog with four stars and Moderate selected. No Save, end-hike action or submitted rating.",
       "captureFile": "finish-rating.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed 15-second current rating-dialog recording selecting four stars and Moderate. No Save was pressed, no hike was ended and no rating was submitted. This is a rating-controls preview, not a completed finish/session workflow.",
       "points": [
         {
-          "label": "End the session",
-          "detail": "Finish the hike with confirmation."
+          "label": "Star rating",
+          "detail": "Review the current route-rating choices."
         },
         {
-          "label": "Team outcome",
-          "detail": "Review how the team's outing ended."
-        },
-        {
-          "label": "Difficulty feedback",
-          "detail": "Share feedback on the route's difficulty."
+          "label": "Difficulty choice",
+          "detail": "Choose a perceived route difficulty before deciding whether to save."
         }
       ],
       "capturePlan": {
         "screenshots": [],
         "recording": {
           "file": "finish-rating.mp4",
-          "duration": "15–20 sec",
+          "duration": "15 sec",
           "steps": [
-            "End an isolated demo hike.",
-            "Show finish confirmation and team outcome.",
-            "Show the completed summary.",
-            "Open route difficulty feedback."
+            "Open the current rating dialog in the isolated demo.",
+            "Select four stars and Moderate difficulty.",
+            "Stop without Save or ending a hike."
           ]
         },
-        "setup": "Use an isolated test hike; avoid changing real ratings."
-      }
+        "setup": "Use fictional history and do not save a rating or end a real hike."
+      },
+      "capturedAt": "2026-11-16T02:48:25.180733+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · rating choices only; no Save or hike end"
+      },
+      "image": "/internal/app-showcase/media/route-rating.png",
+      "poster": "/internal/app-showcase/media/route-rating.png",
+      "video": "/internal/app-showcase/media/finish-rating.mp4"
     },
     {
       "id": "hike-history",
@@ -1580,10 +2326,10 @@
         "Open a saved outing",
         "Review expired plans"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "hike-history.png: Populated Completed hikes tab with saved route details. hike-history-expired.png: Expired plans tab with a sample expired outing. Use populated demo history.",
       "captureFile": "hike-history.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget Completed and Expired tabs with fictional Forest Ridge records. Both planned screenshots are supplied; no real hike history or plan was changed.",
       "points": [
         {
           "label": "Completed hikes",
@@ -1610,7 +2356,31 @@
           }
         ],
         "setup": "Use populated demo history."
-      }
+      },
+      "capturedAt": "2026-11-16T02:10:15.945938+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "captureCoverage": {
+        "aliases": {
+          "hike-history.png": "hike-history-demo.png"
+        },
+        "note": "The reviewed completed-list capture uses the accepted hike-history-demo.png filename; the separate current Expired tab screenshot is also supplied."
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/hike-history-demo.png",
+          "alt": "Current completed-history tab with a fictional Forest Ridge hike"
+        },
+        {
+          "src": "/internal/app-showcase/media/hike-history-expired.png",
+          "alt": "Current Expired tab with a fictional Forest Ridge plan"
+        }
+      ]
     },
     {
       "id": "hike-analysis",
@@ -1623,10 +2393,10 @@
         "Open analysis",
         "Review safety timeline"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "hike-analysis.mp4 (20–25 sec): Open a completed demo hike. Show distance and pace analysis. Show checkpoint progress and safety events. Open the original plan.",
       "captureFile": "hike-analysis.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget screenshot and 20-second recording moving from the fictional history overview to Analysis and Safety. The required recording is supplied; route and safety data is local demonstration content.",
       "points": [
         {
           "label": "Distance & pace",
@@ -1657,7 +2427,18 @@
             "Open the original plan."
           ]
         }
-      }
+      },
+      "capturedAt": "2026-11-16T02:11:27.516349+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "image": "/internal/app-showcase/media/hike-analysis-demo.png",
+      "poster": "/internal/app-showcase/media/hike-analysis-demo.png",
+      "video": "/internal/app-showcase/media/hike-analysis.mp4"
     },
     {
       "id": "team-replay-share",
@@ -1710,10 +2491,10 @@
         "Open level roadmap",
         "Review leaderboard"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "achievements.mp4 (15–20 sec): Open Achievements and change its status view. Show hiking level and the level roadmap. Open the leaderboard and change its period. Use demo or consenting leaderboard entries.",
       "captureFile": "achievements.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-device DemoAccount achievements screenshot and recording showing the overview, earned badges and scrolling. The required recording is supplied.",
       "points": [
         {
           "label": "Achievements",
@@ -1740,7 +2521,18 @@
           ]
         },
         "setup": "Use demo or consenting leaderboard entries."
-      }
+      },
+      "capturedAt": "2026-11-16T02:06:57.533292+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": false,
+        "note": "Demo account · current app UI"
+      },
+      "image": "/internal/app-showcase/media/achievements.png",
+      "poster": "/internal/app-showcase/media/achievements.png",
+      "video": "/internal/app-showcase/media/achievements.mp4"
     },
     {
       "id": "profile-settings",
@@ -1753,7 +2545,7 @@
         "Open App Settings",
         "Review notification history"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "profile-settings.png: Profile details using a fictional account. profile-qr.png: Profile QR screen for that demo account. app-settings.png: Appearance, language and notification controls. notification-history.png: Notification history with demo content. Use a fictional account and demo notifications.",
       "captureFile": "profile-settings.png",
       "points": [
@@ -1791,38 +2583,229 @@
         ],
         "setup": "Use a fictional account and demo notifications."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "notes": "The current profile details, App Settings and Notifications screenshots are supplied through isolated widget demos; a real-app DemoAccount overview is also included. Profile QR remains pending.",
+      "capturedAt": "2026-11-16T02:14:55.036590+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · demo-account overview and isolated profile/settings previews"
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/profile-settings.png",
+          "alt": "Current signed-in DemoAccount profile overview"
+        },
+        {
+          "src": "/internal/app-showcase/media/profile-details.png",
+          "alt": "Current profile details form with fictional local data"
+        },
+        {
+          "src": "/internal/app-showcase/media/app-settings.png",
+          "alt": "Current app settings screen in the isolated widget demo"
+        },
+        {
+          "src": "/internal/app-showcase/media/notification-history.png",
+          "alt": "Current Notifications screen with five fictional entries"
+        }
+      ],
+      "captureCoverage": {
+        "aliases": {
+          "profile-settings.png": "profile-details.png"
+        },
+        "note": "The reviewed profile-details.png supplies the required details view; the real demo-account overview is supplementary. Profile QR and notification history remain pending."
+      }
+    },
+    {
+      "id": "account-closure",
+      "chapter": "settings",
+      "title": "Control your account",
+      "description": "Review account-deletion information and confirmation controls.",
+      "flow": [
+        "Open account controls",
+        "Review deletion information",
+        "Leave without deleting"
+      ],
+      "source": "device",
+      "capture": "account-closure.png: Current account-deletion confirmation dialog in an isolated demo.",
+      "captureFile": "account-closure.png",
+      "notes": "Reviewed connected-device capture of current production widgets with isolated fictional data. No production account, sharing or alert action was performed.",
+      "points": [
+        {
+          "label": "Review the consequences",
+          "detail": "Read the account-deletion explanation before making a decision."
+        },
+        {
+          "label": "Confirm deliberately",
+          "detail": "The dialog requires a deliberate confirmation. This capture leaves the fictional account unchanged."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "account-closure.png",
+            "show": "Current account-deletion confirmation dialog in an isolated demo."
+          }
+        ],
+        "setup": "Use the isolated no-dispatch capture app with fictional data."
+      },
+      "image": "/internal/app-showcase/media/account-closure.png",
+      "capturedAt": "2026-11-16T02:08:14.047497+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      }
+    },
+    {
+      "id": "location-sharing",
+      "chapter": "settings",
+      "title": "Choose when to share",
+      "description": "Review location-sharing controls and a sample active sharing state.",
+      "flow": [
+        "Open Location sharing",
+        "Review sharing controls",
+        "Inspect sample active state"
+      ],
+      "source": "device",
+      "capture": "location-sharing.png: Location-sharing page before starting a sharing session. location-sharing-active.png: Sample active location-sharing state with fictional public-location data.",
+      "captureFile": "location-sharing.png",
+      "notes": "Reviewed latest sharing-off and seeded sharing-on screenshots with loaded fixed Penang sample maps. Both screenshot states are supplied. These fictional independent previews do not use device GPS and do not publish, send or stop a real sharing link.",
+      "points": [
+        {
+          "label": "Start on your terms",
+          "detail": "Review sharing duration and controls before starting."
+        },
+        {
+          "label": "Keep sharing in view",
+          "detail": "An active-state screen keeps its status and stop controls visible. The example uses a fictional sharing session."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "location-sharing.png",
+            "show": "Location-sharing page before starting a sharing session."
+          },
+          {
+            "file": "location-sharing-active.png",
+            "show": "Sample active location-sharing state with fictional public-location data."
+          }
+        ],
+        "setup": "Use the isolated no-dispatch capture app with fictional data."
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/location-sharing.png",
+          "alt": "Location-sharing page before starting a sharing session."
+        },
+        {
+          "src": "/internal/app-showcase/media/location-sharing-active.png",
+          "alt": "Sample active location-sharing state with fictional public-location data."
+        }
+      ],
+      "capturedAt": "2026-11-16T02:49:21.512670+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      }
+    },
+    {
+      "id": "help-center",
+      "chapter": "settings",
+      "title": "Find the right guidance",
+      "description": "Use the current Help Center to find app and hiking guidance.",
+      "flow": [
+        "Open Help Center",
+        "Browse guidance topics",
+        "Choose a guide"
+      ],
+      "source": "device",
+      "capture": "help-center.png: Current Help Center overview and guidance sections.",
+      "captureFile": "help-center.png",
+      "notes": "Reviewed connected-device capture of current production widgets with isolated fictional data. No production account, sharing or alert action was performed.",
+      "points": [
+        {
+          "label": "Browse help topics",
+          "detail": "Find the current guidance sections from one Help Center."
+        },
+        {
+          "label": "Open useful resources",
+          "detail": "Use the relevant guide for the part of the app you are exploring."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "help-center.png",
+            "show": "Current Help Center overview and guidance sections."
+          }
+        ],
+        "setup": "Use the isolated no-dispatch capture app with fictional data."
+      },
+      "image": "/internal/app-showcase/media/help-center.png",
+      "capturedAt": "2026-11-16T02:08:19.765678+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      }
     },
     {
       "id": "offline-resources",
       "chapter": "settings",
-      "title": "Ready for limited coverage",
-      "description": "Manage the Malaysia offline map, cached guidance and app storage.",
+      "title": "Guidance when coverage is limited",
+      "description": "Read the hiking, first-aid and gear reference guides when coverage is limited.",
       "flow": [
-        "Open App Settings",
-        "Review offline map",
-        "Inspect cache status",
-        "Open downloaded guidance"
+        "Open Help Center",
+        "Read hiking guidance",
+        "Open First-Aid Guide",
+        "Browse Gears required"
       ],
-      "source": "needed",
-      "capture": "offline-resources.mp4 (15–20 sec): Show Malaysia offline map download status. Show cached guidance and storage usage. Turn off connectivity for the demo. Open an already downloaded guide. Download the demo resources first.",
-      "captureFile": "offline-resources.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "source": "device",
+      "capture": "help-center.png, first-aid.png, required-gear.png: Current local guidance indexes in the isolated no-network demo.",
+      "captureFile": "help-center.png",
+      "notes": "Current source has local Help, First-Aid and Gear guidance; it has no standalone Malaysia-map downloader or storage-management page. The obsolete download/storage capture plan is preserved separately for provenance. These current guide screens were reviewed in the isolated app with Dart networking disabled.",
       "points": [
         {
-          "label": "Malaysia offline map",
-          "detail": "Manage the downloaded Malaysia map."
+          "label": "Hiking guidance",
+          "detail": "Use the Help Center to find planning and hiking guidance."
         },
         {
-          "label": "Cached guidance",
-          "detail": "Open guidance saved for offline use."
+          "label": "First-aid reference",
+          "detail": "Browse the app’s first-aid reference topics."
         },
         {
-          "label": "App storage",
-          "detail": "Review offline downloads and storage use."
+          "label": "Gear reference",
+          "detail": "Review the current Gears required catalog before departure."
         }
       ],
       "capturePlan": {
+        "screenshots": [
+          {
+            "file": "help-center.png",
+            "show": "Current Help Center and hiking guidance links."
+          },
+          {
+            "file": "first-aid.png",
+            "show": "Current First-Aid Guide index."
+          },
+          {
+            "file": "required-gear.png",
+            "show": "Current Gears required reference catalog."
+          }
+        ],
+        "setup": "Use current local guides with networking disabled."
+      },
+      "supersededCapturePlan": {
         "screenshots": [],
         "recording": {
           "file": "offline-resources.mp4",
@@ -1835,47 +2818,79 @@
           ]
         },
         "setup": "Download the demo resources first."
-      }
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/help-center.png",
+          "alt": "Current local Help Center guidance"
+        },
+        {
+          "src": "/internal/app-showcase/media/first-aid.png",
+          "alt": "Current local First-Aid Guide index"
+        },
+        {
+          "src": "/internal/app-showcase/media/required-gear.png",
+          "alt": "Current local Gears required catalog"
+        }
+      ],
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated no-network demo"
+      },
+      "capturedAt": "2026-11-16T02:08:19.765678+08:00",
+      "captureBuild": "1.1.0"
     },
     {
       "id": "feedback",
       "chapter": "settings",
       "title": "Show the issue",
-      "description": "Capture a screen, mark the issue and review feedback before sending.",
+      "description": "Review a feedback draft and choose its category before sending.",
       "flow": [
-        "Open Send feedback",
-        "Capture and mark a screen",
-        "Review message and image",
-        "View My feedback"
+        "Open draft review",
+        "Inspect draft content",
+        "Review category choices",
+        "Leave without sending"
       ],
-      "source": "needed",
-      "capture": "feedback.mp4 (15–20 sec): Open Send feedback. Capture a harmless screen and draw an annotation. Review the message and image. Show a seeded My feedback status. Use harmless demo text; stop before submitting feedback.",
+      "source": "device",
+      "capture": "feedback.mp4 (15 sec): Current draft review and category toggles only. No attachment, send or discard.",
       "captureFile": "feedback.mp4",
       "points": [
         {
-          "label": "Capture & annotate",
-          "detail": "Capture a screen and mark the issue."
+          "label": "Draft review",
+          "detail": "Review the current feedback draft before deciding whether to send it."
         },
         {
-          "label": "Review before sending",
-          "detail": "Review your message and image before sending feedback."
+          "label": "Category choices",
+          "detail": "Choose the category that best fits the issue."
         }
       ],
       "capturePlan": {
         "screenshots": [],
         "recording": {
           "file": "feedback.mp4",
-          "duration": "15–20 sec",
+          "duration": "15 sec",
           "steps": [
-            "Open Send feedback.",
-            "Capture a harmless screen and draw an annotation.",
-            "Review the message and image.",
-            "Show a seeded My feedback status."
+            "Open the current feedback draft-review interface.",
+            "Review the category choices and draft.",
+            "Stop without attaching, sending or discarding."
           ]
         },
         "setup": "Use harmless demo text; stop before submitting feedback."
       },
-      "notes": "Awaiting a new capture for this internal showcase."
+      "notes": "Reviewed 15-second current-widget draft-review/category-toggle recording. This capture does not demonstrate annotation or attachment. No feedback was sent or discarded.",
+      "capturedAt": "2026-11-16T02:44:58.993797+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · draft review only; no send or attachment"
+      },
+      "image": "/internal/app-showcase/media/feedback.png",
+      "poster": "/internal/app-showcase/media/feedback.png",
+      "video": "/internal/app-showcase/media/feedback.mp4"
     },
     {
       "id": "admin-overview",
@@ -1888,10 +2903,10 @@
         "Choose collection",
         "Inspect a demo record"
       ],
-      "source": "needed",
-      "capture": "admin-overview.png: Current mobile Admin overview with all management areas. admin-collection.png: A collection view with demo records and visible status. Use a demo administrator dataset.",
+      "source": "device",
+      "capture": "admin-overview.png: Current mobile Admin analytics overview. admin-collection.png: A collection view with demo records and visible status. Use a demo administrator dataset.",
       "captureFile": "admin-overview.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget Admin analytics overview with fictional aggregate counts. The overview screenshot is supplied; the collection-view screenshot remains pending.",
       "points": [
         {
           "label": "Trails & safety reports",
@@ -1910,7 +2925,7 @@
         "screenshots": [
           {
             "file": "admin-overview.png",
-            "show": "Current mobile Admin overview with all management areas."
+            "show": "Current mobile Admin analytics overview with reporting period, current activity and period performance."
           },
           {
             "file": "admin-collection.png",
@@ -1918,7 +2933,16 @@
           }
         ],
         "setup": "Use a demo administrator dataset."
-      }
+      },
+      "capturedAt": "2026-11-16T02:16:34.687145+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · isolated demo; fictional data"
+      },
+      "image": "/internal/app-showcase/media/admin-overview.png"
     },
     {
       "id": "admin-trails-moderation",
@@ -1978,10 +3002,10 @@
         "Open Button Debugging",
         "Review sanitized session"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "admin-feedback.png: Sanitized feedback inbox with statuses. admin-diagnostics.png: Button Debugging screen with decoded demo events. admin-diagnostics-status.png: Cloud and local diagnostics summary with secrets removed. Use sanitized demo diagnostics.",
       "captureFile": "admin-feedback.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Reviewed current-widget fictional feedback inbox and Button Debugging screenshot with a SIMULATED test event. Both current default-screen captures are supplied; cloud/local Data diagnostics remains unavailable in the default build.",
       "points": [
         {
           "label": "User feedback",
@@ -2011,8 +3035,36 @@
             "show": "Cloud and local diagnostics summary with secrets removed."
           }
         ],
-        "setup": "Use sanitized demo diagnostics."
-      }
+        "setup": "Use sanitized demo feedback and Button Debugging. Data diagnostics is available only in an internal build with HC_SHOW_DATA_DIAGNOSTICS enabled; it is hidden in the current default UI."
+      },
+      "capturedAt": "2026-11-16T02:32:21.098977+08:00",
+      "captureBuild": "1.1.0",
+      "captureMeta": {
+        "device": "Android · realme Note 50",
+        "date": "16 November 2026",
+        "demo": true,
+        "note": "Current UI · fictional feedback and SIMULATED button diagnostics"
+      },
+      "captureAvailability": {
+        "status": "partial",
+        "reason": "Data diagnostics is hidden in the default build",
+        "files": {
+          "admin-diagnostics-status.png": {
+            "status": "unavailable",
+            "reason": "Data diagnostics is hidden unless HC_SHOW_DATA_DIAGNOSTICS is explicitly enabled."
+          }
+        }
+      },
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/admin-feedback.png",
+          "alt": "Current feedback inbox with fictional records"
+        },
+        {
+          "src": "/internal/app-showcase/media/admin-diagnostics.png",
+          "alt": "Current Button Debugging screen with explicitly simulated test event"
+        }
+      ]
     },
     {
       "id": "native-widgets",
@@ -2028,7 +3080,7 @@
       "source": "needed",
       "capture": "native-widgets.mp4 (20–25 sec): Start on your final home-screen page with the small widget. Add the large HikerCircle widget. Show the current upcoming or active hike status. Show an active Live Activity and open the app from it. Use a demo hike. Show safety entry points without activating production SOS.",
       "captureFile": "native-widgets.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Needs configured launcher widget/live test state; picker fallback/static previews not accepted. The inspected Android picker showed SOS app-icon fallbacks and old static sample dates, so it is not used as evidence of the newest live widget appearance. No widget was added and the launcher layout was not changed.",
       "points": [
         {
           "label": "Home-screen widgets",
@@ -2055,23 +3107,23 @@
             "Show an active Live Activity and open the app from it."
           ]
         },
-        "setup": "Use a demo hike. Show safety entry points without activating production SOS."
+        "setup": "Needs configured launcher widget/live test state; picker fallback/static previews not accepted. Use a demo hike without activating production SOS."
       }
     },
     {
       "id": "original-sos",
       "chapter": "archive",
       "title": "The first safety design",
-      "description": "An archived view records the early emergency-control design.",
+      "description": "A preserved historical screenshot records the early emergency-control design.",
       "flow": [
         "View original layout",
         "Compare emergency modes",
         "Review contact area"
       ],
-      "source": "needed",
-      "capture": "original-sos.png: New full-screen capture of the original safety layout, including modes and contacts. Restore the original milestone build and include its date with the file. Keep this labelled as historical.",
-      "captureFile": "original-sos.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "source": "archive",
+      "capture": "Preserved Foundation-era SOS image from the existing website archive. Original capture date and build are unknown.",
+      "captureFile": "01-foundation-first-sos-iphone.png",
+      "notes": "Reuses the actual preserved Foundation image already used by the website. This is intentionally historical; it was not captured from the connected device in November 2026. The original build/date are unknown. No duplicate asset or reconstructed screenshot is supplied.",
       "points": [
         {
           "label": "Early emergency controls",
@@ -2079,10 +3131,14 @@
         },
         {
           "label": "Product archive",
-          "detail": "Show the early design with its build date."
+          "detail": "Compare the preserved early design with the current app. The original capture date and build are unknown."
         }
       ],
       "capturePlan": {
+        "screenshots": [],
+        "setup": "Historical reference only. Do not present this image as current UI or a new device capture."
+      },
+      "supersededCapturePlan": {
         "screenshots": [
           {
             "file": "original-sos.png",
@@ -2090,8 +3146,16 @@
           }
         ],
         "setup": "Restore the original milestone build and include its date with the file. Keep this labelled as historical."
-      }
+      },
+      "image": "/site-assets/evolution/01-foundation-first-sos-iphone.png",
+      "captureMeta": {
+        "archive": true,
+        "device": "Preserved original screenshot",
+        "date": "Capture date unknown",
+        "note": "Historical SOS layout; not current UI"
+      },
+      "archiveAttribution": "Existing HikerCircle Foundation milestone asset: /site-assets/evolution/01-foundation-first-sos-iphone.png. Original capture date, device and app build were not supplied."
     }
   ],
-  "mediaPolicy": "fresh-captures-only"
+  "mediaPolicy": "current-device-captures-with-explicitly-labelled-historical-archive"
 }

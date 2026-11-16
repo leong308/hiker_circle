@@ -26,7 +26,7 @@ function moduleForField(field) {
   const name = field.split('.')[0];
   if (ACCOUNT_FIELDS.includes(name)) return null;
   if (RETIRED_FIELDS.includes(name)) throw new Error(`Retired user field: ${name}`);
-  if (/^(profile|requiresOnboarding|onboarding)/.test(name)) return 'profile';
+  if (/^(profile|requiresOnboarding|onboarding|privacyConsent)/.test(name)) return 'profile';
   if (/^(boundApp|previousBoundApp|deviceRebind|deviceRebound|fcmTokenByAppId|lastFcmTokenUpdated|lastSignedInAt)/.test(name)) return 'devices';
   if (/^(password|initialPassword|safetyQuestions|mfa|lastMfa|lastPassword|lastFirebaseAuthenticated|loginFailed|loginCooldown)/.test(name)) return 'security';
   if (/^(preferredTimeZone|groupChat|pinnedChats|autoShareLiveLocation)/.test(name)) return 'preferences';

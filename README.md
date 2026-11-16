@@ -77,9 +77,17 @@ project. Do not add providers, debug-token registration, token-refresh retries,
 or callable attestation enforcement. Keep the existing account checks and
 database rules in place.
 
-New users see a consent notice after completing onboarding. It explains the
+Before a sign-up phone number is submitted, a consent notice explains the
 information used by the app and links to the Privacy Policy. Acceptance is
-saved locally first and synced to the account when connected.
+saved locally first and synced after authentication. Login does not show this
+popup, and setup does not ask for consent again.
+
+Account deletion is under Profile → Help Center → Delete HikerCircle account.
+After two confirmations, it deletes the main `users/{uid}` document and Firebase
+Authentication user, then signs out. Location records, trail history,
+subcollections and uploads remain. Registering again creates fresh sign-in
+settings; credentials and verification sessions from the previous account
+cannot be used for the new registration.
 
 ## iOS signing and passkeys
 

@@ -1,7 +1,8 @@
 const {runOtpChecks, createOtpReadinessCheck, withOtpTiming} = require('./otp_delivery_performance');
-const {isAdminUser, createAdminAuthorization} = require('./admin_authorization');
+const {isAdminUser, isSuperAdminUser, createAdminAuthorization} = require('./admin_authorization');
 // Firebase entry points connect mobile session security, hiking, community, messaging, recovery, and scheduled maintenance.
 const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
+const {belongsToAccount, createSignupAccountIfMissing} = require('./account_registration');
 const { validateSoloHikeDistance } = require('./solo_hike_policy');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onCall: firebaseOnCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
@@ -162,6 +163,29 @@ exports.activateMobileSession = onAuthenticationCall(
     return result;
   });
 exports.endMobileSession = onAuthenticationCall({}, request => mobileSessionSecurity.end(request));
+
+// Development deletion removes the account document and Firebase Auth identity.
+// Subcollections, locations, hiking history, uploads and other records remain.
+exports.deleteHikerCircleAccount = onCall({region: 'us-central1'}, async request => {
+  if (request.data?.confirmation !== 'DELETE') {
+    throw new HttpsError('invalid-argument', 'Confirm account deletion first.');
+  }
+  const uid = request.auth.uid;
+  const account = await getFirestore().collection('users').doc(uid).get();
+  if (isSuperAdminUser(account.data())) {
+    throw new HttpsError('permission-denied', 'Account deletion is unavailable for superadmins.');
+  }
+  try {
+    await getAuth().deleteUser(uid);
+  } catch (error) {
+    if (error.code !== 'auth/user-not-found') throw error;
+  }
+  await getFirestore().runTransaction(async transaction => {
+    transaction.delete(getFirestore().collection('users').doc(uid));
+    mobileSessionSecurity.revokeInTransaction(transaction, uid, 'account-deleted');
+  });
+  return {deleted: true};
+});
 
 const adminUsers = require('./admin_users').createAdminUsers({database: getFirestore,
   authorization: adminAuthorization, HttpsError, username: canonicalUsername, timestamp: () => FieldValue.serverTimestamp()});
@@ -7857,16 +7881,19 @@ async function readUsableMfaSession(token, { enrollmentOnly = false } = {}) {
   ) {
     throw new HttpsError('internal', 'The verification session is corrupted.');
   }
-  return { reference, snapshot, session, phoneNumber, userId };
+  const account = await admin.firestore().collection('users').doc(userId).get();
+  if (!belongsToAccount(account, session)
+    || account.data()?.accountDisabled === true || account.data()?.status === 'disabled') {
+    throw new HttpsError('deadline-exceeded', 'This verification session belongs to a previous account. Start registration or login again.');
+  }
+  return { reference, snapshot, session, phoneNumber, userId, account };
 }
 
 async function factorDocumentsForUser(userId) {
-  const snapshot = await admin.firestore()
-    .collection('users')
-    .doc(userId)
-    .collection('authFactors')
-    .get();
-  return snapshot.docs.filter((document) => document.data()?.enabled !== false);
+  const reference = admin.firestore().collection('users').doc(userId);
+  const [account, snapshot] = await Promise.all([reference.get(), reference.collection('authFactors').get()]);
+  return snapshot.docs.filter(document => document.data()?.enabled !== false
+    && belongsToAccount(account, document.data()));
 }
 
 async function decrementMfaChallengeAttempt(reference) {
@@ -7936,6 +7963,9 @@ async function createMfaCustomToken({ userId, phoneNumber, method, loginSession 
   if (!userSnapshot.exists || user.accountDisabled === true || user.status === 'disabled') {
     throw new HttpsError('permission-denied', 'This account is unavailable or disabled.');
   }
+  if (!belongsToAccount(userSnapshot, loginSession)) {
+    throw new HttpsError('deadline-exceeded', 'This login belongs to a previous account. Start again.');
+  }
   const sessionClaims = await mobileSessionSecurity.createCandidate({
     uid: userId, phoneNumber, method,
     reauthSessionId: loginSession.loginIntent === 'reauth' ? String(loginSession.reauthSessionId || '') : '',
@@ -7986,9 +8016,15 @@ async function persistEnrolledFactor({
     ]);
     const currentFactor = reads[0];
     const currentUser = reads[1];
-    const freshFactors = reads[2].docs.filter(document => document.data()?.enabled !== false);
+    if (!currentUser.exists || currentUser.data()?.accountDisabled === true
+      || currentUser.data()?.status === 'disabled') {
+      throw new HttpsError('permission-denied', 'This account is unavailable or disabled.');
+    }
+    const freshFactors = reads[2].docs.filter(document => document.data()?.enabled !== false
+      && belongsToAccount(currentUser, document.data()));
     nextMethods = [...new Set([...factorMethods(freshFactors), factor.type])].sort();
-    if (currentFactor.exists && currentFactor.data()?.enabled !== false) {
+    if (currentFactor.exists && currentFactor.data()?.enabled !== false
+      && belongsToAccount(currentUser, currentFactor.data())) {
       throw new HttpsError('already-exists', 'This security method is already bound.');
     }
     if (context.sessionReference) {
@@ -7998,6 +8034,7 @@ async function persistEnrolledFactor({
         !sessionSnapshot.exists
         || session.consumed === true
         || Date.now() > Number(session.expiresAtMillis || 0)
+        || !belongsToAccount(currentUser, session)
       ) {
         throw new HttpsError('deadline-exceeded', 'The verification session has expired.');
       }
@@ -8311,7 +8348,8 @@ exports.verifyTotpLogin = onAuthenticationCall(
       ) {
         return { error: 'expired' };
       }
-      if (!factorSnapshot.exists || factor.enabled === false || factor.type !== 'totp') {
+      if (!factorSnapshot.exists || factor.enabled === false || factor.type !== 'totp'
+        || !belongsToAccount(resolved.account, factor)) {
         return { error: 'missing' };
       }
       const attemptsRemaining = Number(session.attemptsRemaining || 0);
@@ -8642,6 +8680,7 @@ exports.verifyGreenApiLoginCode = onAuthenticationCall(
         return {
           phoneNumber: String(challenge.phoneNumber || ''),
           intent,
+          createdAt: challenge.createdAt,
           passwordVerified: challenge.passwordVerified === true,
         };
       }
@@ -8657,9 +8696,16 @@ exports.verifyGreenApiLoginCode = onAuthenticationCall(
       throw new HttpsError('internal', 'Invalid phone number on record.');
     }
     const userId = userDocumentIdForPhone(phoneNumber);
+    if (verification.intent === 'sign_up') {
+      await createSignupAccountIfMissing({db: admin.firestore(), auth: getAuth(), uid: userId,
+        phoneNumber, HttpsError, timestamp: () => FieldValue.serverTimestamp()});
+    }
     const userSnapshot = await readUser(admin.firestore().collection('users').doc(userId), ["profile","security"]);
     if (verification.intent === 'sign_in' && !userSnapshot.exists) {
       throw new HttpsError('not-found', 'This account no longer exists.');
+    }
+    if (verification.intent !== 'sign_up' && !belongsToAccount(userSnapshot, verification)) {
+      throw new HttpsError('deadline-exceeded', 'This WhatsApp request belongs to a previous account. Request a new code.');
     }
     if (verification.intent === 'sign_up' && userSnapshot.exists
       && !isIncompleteRegistration(userSnapshot.data())) {
@@ -9073,6 +9119,11 @@ async function readUsablePasswordResetSession(resetToken, recoveryMethod = '') {
   if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
     throw new HttpsError('internal', 'The password reset session is corrupted.');
   }
+  const account = await admin.firestore().collection('users').doc(userId).get();
+  if (!belongsToAccount(account, session)
+    || account.data()?.accountDisabled === true || account.data()?.status === 'disabled') {
+    throw new HttpsError('deadline-exceeded', 'This recovery session belongs to a previous account. Start again.');
+  }
   const recoveryMethods = Array.isArray(session.recoveryMethods)
     ? session.recoveryMethods.map((method) => String(method || ''))
     : [];
@@ -9082,7 +9133,7 @@ async function readUsablePasswordResetSession(resetToken, recoveryMethod = '') {
       'This security method is not bound to the account.'
     );
   }
-  return { reference, snapshot, session, phoneNumber, userId, recoveryMethods };
+  return { reference, snapshot, session, phoneNumber, userId, recoveryMethods, account };
 }
 
 exports.checkSafetyAnswer = onAuthenticationCall(
@@ -9125,6 +9176,10 @@ exports.checkSafetyAnswer = onAuthenticationCall(
       const userId = userDocumentIdForPhone(phoneNumber);
       const userSnapshot = await readUser(admin.firestore().collection('users').doc(userId), ["security"], transaction);
       const user = userSnapshot.data() || {};
+      if (!belongsToAccount(userSnapshot, session)
+        || user.accountDisabled === true || user.status === 'disabled') {
+        return {errorCode: 'deadline-exceeded', errorMessage: 'This recovery session has expired. Start again.'};
+      }
       const questions = user.safetyQuestions;
       if (!questions) {
         return { errorCode: 'failed-precondition', errorMessage: 'Safety questions not found.' };
@@ -9205,6 +9260,7 @@ exports.verifyPasswordResetTotp = onAuthenticationCall(
         || !factorSnapshot.exists
         || factor.enabled === false
         || factor.type !== 'totp'
+        || !belongsToAccount(resolved.account, factor)
       ) {
         return { error: 'missing' };
       }
@@ -9464,6 +9520,11 @@ exports.resetPassword = onAuthenticationCall(
       }
       const userId = userDocumentIdForPhone(phoneNumber);
 
+      const account = await transaction.get(admin.firestore().collection('users').doc(userId));
+      if (!belongsToAccount(account, session)
+        || account.data()?.accountDisabled === true || account.data()?.status === 'disabled') {
+        return {errorCode: 'deadline-exceeded', errorMessage: 'This recovery session has expired. Start again.'};
+      }
       const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
       updateUser(transaction, admin.firestore().collection('users').doc(userId), { passwordHash });
       mobileSessionSecurity.revokeInTransaction(transaction, userId, 'password-reset');

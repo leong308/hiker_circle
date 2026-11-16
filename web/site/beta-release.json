@@ -1,9 +1,9 @@
 {
-  "url": "https://firebasestorage.googleapis.com/v0/b/hiker-circle.firebasestorage.app/o/releases%2Fandroid%2Fbeta%2Fhikercircle-1.1.0-beta.1-a5040ab80699.apk?alt=media&token=a910bff5-17c1-4b9a-bf2e-75800a6ad963",
-  "sha256": "a5040ab80699deb3a83ebe1da2e63f0559a05dd0fc0bce1685d8f43fdf7874f1",
-  "sizeBytes": 168790303,
-  "version": "1.1.0-beta.1",
-  "build": 3,
+  "url": "https://firebasestorage.googleapis.com/v0/b/hiker-circle.firebasestorage.app/o/releases%2Fandroid%2Fbeta%2Fhikercircle-1.1.0-beta.2-a518c0b6ab8d.apk?alt=media&token=1758a4c4-82d1-476a-a936-816c3ea54260",
+  "sha256": "a518c0b6ab8d3ee1f1acbee0cb9fcce7f4bd004c37b7411e9d7640fc9f633a4c",
+  "sizeBytes": 200035890,
+  "version": "1.1.0-beta.2",
+  "build": 6,
   "minAndroid": "7.0",
-  "published": "2026-09-09"
+  "published": "2026-11-16"
 }

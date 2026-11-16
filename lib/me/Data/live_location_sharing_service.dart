@@ -126,25 +126,24 @@ class LiveLocationSharingService extends ChangeNotifier {
   /// Returns contact notification status.
   String? get contactNotificationStatus {
     if (_isNotifyingContacts) {
-      return 'Sending live location to your saved SOS contacts…';
+      return 'Notifying SOS contacts…';
     }
     if (_contactNotificationError != null) return _contactNotificationError;
     final result = _contactNotificationResult;
     if (result == null) return null;
     if (result.contactCount == 0) {
-      return 'No saved SOS contacts to notify. Your live location is active.';
+      return 'No SOS contacts to notify.';
     }
     if (result.sentCount == result.contactCount) {
-      return 'Live location sent to all ${result.contactCount} saved SOS contacts.';
+      return '${result.contactCount} SOS contacts notified.';
     }
     final details = <String>[
-      '${result.sentCount} of ${result.contactCount} SOS contacts sent',
+      '${result.sentCount}/${result.contactCount} SOS contacts notified',
       if (result.failedCount > 0) '${result.failedCount} failed',
-      if (result.uncertainCount > 0)
-        '${result.uncertainCount} awaiting delivery confirmation',
-      if (result.inProgressCount > 0) '${result.inProgressCount} still sending',
+      if (result.uncertainCount > 0) '${result.uncertainCount} unconfirmed',
+      if (result.inProgressCount > 0) '${result.inProgressCount} sending',
     ];
-    return '${details.join('; ')}. Your live location remains active.';
+    return details.join(' · ');
   }
 
   /// Changes synchronously when the user requests a stop. This stays monotonic

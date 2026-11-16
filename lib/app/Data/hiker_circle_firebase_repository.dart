@@ -51,7 +51,7 @@ import 'firebase_bootstrap.dart';
 import 'hike_completion_request.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
-import '../../onboarding/Data/privacy_consent_repository.dart';
+import '../../authentication/Data/privacy_consent_repository.dart';
 
 part 'community_post_repository.dart';
 part 'mobile_read_repository.dart';

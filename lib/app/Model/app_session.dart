@@ -15,7 +15,6 @@ class AppSession {
     this.username = '',
     this.requiresOnboarding = false,
     this.isOnboardingProfileComplete = false,
-    this.requiresPrivacyConsent = false,
     this.photoURL,
     this.photoBytes,
   }) : createdAt = createdAt ?? signedInAt,
@@ -30,7 +29,6 @@ class AppSession {
   final String username;
   final bool requiresOnboarding;
   final bool isOnboardingProfileComplete;
-  final bool requiresPrivacyConsent;
   final String? photoURL;
   final Uint8List? photoBytes;
 
@@ -45,7 +43,6 @@ class AppSession {
     String? username,
     bool? requiresOnboarding,
     bool? isOnboardingProfileComplete,
-    bool? requiresPrivacyConsent,
     String? photoURL,
     Uint8List? photoBytes,
   }) {
@@ -60,8 +57,6 @@ class AppSession {
       requiresOnboarding: requiresOnboarding ?? this.requiresOnboarding,
       isOnboardingProfileComplete:
           isOnboardingProfileComplete ?? this.isOnboardingProfileComplete,
-      requiresPrivacyConsent:
-          requiresPrivacyConsent ?? this.requiresPrivacyConsent,
       photoURL: photoURL ?? this.photoURL,
       photoBytes: photoBytes ?? this.photoBytes,
     );

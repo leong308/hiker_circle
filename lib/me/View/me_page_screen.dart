@@ -380,7 +380,11 @@ class _MePageState extends State<MePage> {
   void _openHelpCenter() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => HelpCenterPage(isAdmin: widget.session.isAdmin),
+        builder: (context) => HelpCenterPage(
+          isAdmin: widget.session.isAdmin,
+          isSuperAdmin: widget.session.isSuperAdmin,
+          ownerPhoneNumber: widget.session.phoneNumber,
+        ),
       ),
     );
   }

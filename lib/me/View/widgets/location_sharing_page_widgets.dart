@@ -11,11 +11,7 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
-    child: PageHeader(
-      title: 'Location Sharing',
-      subtitle: 'Live GPS position with map pin',
-      onBack: onBack,
-    ),
+    child: PageHeader(title: 'Live Location', onBack: onBack),
   );
 }
 

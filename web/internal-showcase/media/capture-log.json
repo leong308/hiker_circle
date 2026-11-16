@@ -1,0 +1,1162 @@
+[
+  {
+    "file": "route-preview.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:01:59.860080+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current production app; public Pisang Falls Loop route"
+  },
+  {
+    "file": "enhanced-preview.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:02:33.874021+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current production app; first-person preview of public Pisang Falls Loop"
+  },
+  {
+    "file": "enhanced-preview.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:02:48.307964+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current production app; animated first-person public route preview"
+  },
+  {
+    "file": "route-preview.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:03:54.549072+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app: public route map then first-person preview; no hike started"
+  },
+  {
+    "file": "trail-detail-checkpoints.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:04:29.897696+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app public trail route and ordered checkpoint flow"
+  },
+  {
+    "file": "trail-detail.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:04:42.082653+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current production app; public Penang Hill Heritage Trail details with loaded photo"
+  },
+  {
+    "file": "weather.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:04:55.320842+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app; public trail weather forecast"
+  },
+  {
+    "file": "trail-forecast.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:05:16.485147+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app: public trail forecast day and temperature/rain/wind tabs"
+  },
+  {
+    "file": "profile-settings.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:06:25.041967+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app; signed-in DemoAccount profile overview"
+  },
+  {
+    "file": "achievements.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:06:38.767176+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app; DemoAccount achievements"
+  },
+  {
+    "file": "achievements.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:06:57.533292+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app DemoAccount achievements: overview, earned badges and scroll"
+  },
+  {
+    "file": "signup-privacy.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:08:12.080529+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current signup consent dialog; fictional offline demonstration"
+  },
+  {
+    "file": "account-closure.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:08:14.047497+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated offline demonstration; no real alerts, links or account changes"
+  },
+  {
+    "file": "help-center.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:08:19.765678+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated offline demonstration; no real alerts, links or account changes"
+  },
+  {
+    "file": "hike-basics.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:08:21.678908+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated offline demonstration; no real alerts, links or account changes"
+  },
+  {
+    "file": "sos-status.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:08:24.080237+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated offline demonstration; no real alerts, links or account changes"
+  },
+  {
+    "file": "duress-demo.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:08:26.472174+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated offline demonstration; no real alerts, links or account changes"
+  },
+  {
+    "file": "preparation-review.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:09:31.026799+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; offline fictional hike/account data; no real operation"
+  },
+  {
+    "file": "create-session.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:09:35.079981+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; offline fictional hike/account data; no real operation"
+  },
+  {
+    "file": "app-settings.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:09:39.142642+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; offline fictional hike/account data; no real operation"
+  },
+  {
+    "file": "hike-safety-settings.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:10:09.577672+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; offline fictional hiking data"
+  },
+  {
+    "file": "required-gear.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:10:11.845937+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; offline fictional hiking data"
+  },
+  {
+    "file": "first-aid.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:10:13.874496+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; offline fictional hiking data"
+  },
+  {
+    "file": "hike-history-demo.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:10:15.945938+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; offline fictional hiking data"
+  },
+  {
+    "file": "hike-analysis-demo.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:10:17.975355+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; offline fictional hiking data"
+  },
+  {
+    "file": "hike-analysis.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:11:27.516349+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current history detail widget; fictional route, analysis and safety data"
+  },
+  {
+    "file": "schedule-timing.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:12:28.558643+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current scheduling step with departure date/time and arrival window; fictional plan"
+  },
+  {
+    "file": "schedule-reminders.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:12:49.557307+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current personal departure reminder controls and timeline; local demonstration"
+  },
+  {
+    "file": "create-hike.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:13:45.466327+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current session wizard: mode, timing, scheduling and personal reminders; no plan saved"
+  },
+  {
+    "file": "sign-in.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:14:43.144818+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current phone login widget; empty credential fields; no authentication performed"
+  },
+  {
+    "file": "login-security.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:14:47.959151+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; fictional local account/contact/community details; mutations disabled"
+  },
+  {
+    "file": "emergency-contacts.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:14:52.628952+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; fictional local account/contact/community details; mutations disabled"
+  },
+  {
+    "file": "profile-details.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:14:55.036590+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; fictional local account/contact/community details; mutations disabled"
+  },
+  {
+    "file": "community.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:14:57.445617+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; fictional local account/contact/community details; mutations disabled"
+  },
+  {
+    "file": "buddy-requests.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:14:59.813593+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; fictional local account/contact/community details; mutations disabled"
+  },
+  {
+    "file": "find-hikers.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:16:10.844856+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current Find hikers list; fictional hikers and cities"
+  },
+  {
+    "file": "hiker-public-profile.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:16:27.870898+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current public hiker profile sheet; fictional Jamie Demo"
+  },
+  {
+    "file": "chat.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:16:30.206158+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated fictional demo data; no messages or alerts sent"
+  },
+  {
+    "file": "feedback.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:16:32.454566+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated fictional demo data; no messages or alerts sent"
+  },
+  {
+    "file": "admin-overview.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:16:34.687145+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated fictional demo data; no messages or alerts sent"
+  },
+  {
+    "file": "admin-feedback.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:16:36.966055+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated fictional demo data; no messages or alerts sent"
+  },
+  {
+    "file": "route-rating.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:16:43.871595+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widget; isolated fictional demo data; no messages or alerts sent"
+  },
+  {
+    "file": "sos-center.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:17:49.708807+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app SOS controls online; demonstration account; no alert triggered"
+  },
+  {
+    "file": "physical-button-setup.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:18:26.317245+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app guided physical SOS button setup instructions"
+  },
+  {
+    "file": "physical-button-scan.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:20:08.829504+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle",
+    "version": "versionName=1.1.0",
+    "data": "connected app session",
+    "note": "Current app Bluetooth setup scan; pairing not yet completed"
+  },
+  {
+    "file": "active-team-hike.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:21:15.425191+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current active team UI with loaded map tiles; fictional trail/team locations"
+  },
+  {
+    "file": "active-tracking.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:21:36.764856+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current active hiking UI: map zoom/recenter and safety section; fictional route only"
+  },
+  {
+    "file": "team-status.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:23:53.451081+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current team live status roster; fictional participants"
+  },
+  {
+    "file": "team-tools.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:24:12.502802+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current team roster and separate team-locations demo; fictional positions; no pings sent"
+  },
+  {
+    "file": "team-locations.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:24:39.421961+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current team location map with loaded tiles; fixed fictional positions"
+  },
+  {
+    "file": "required-gear.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:25:03.583777+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current required packing checklist; tap packed items and review optional extras; no hike started"
+  },
+  {
+    "file": "community.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:27:35.890777+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current stories, fictional hiker list and public profile; no posts, requests or messages sent"
+  },
+  {
+    "file": "physical-button-success.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:31:21.524210+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "SIMULATED hardware; actual production pairing success screen; no real pairing"
+  },
+  {
+    "file": "physical-button.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:31:32.083913+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "SIMULATED hardware: current pairing sheet, dummy discovery and confirmation; no BLE writes or SOS messages"
+  },
+  {
+    "file": "physical-button-paired.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:32:18.945862+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widgets; fictional local events, sample coordinates and simulated hardware; no outbound mutations"
+  },
+  {
+    "file": "admin-diagnostics.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:32:21.098977+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widgets; fictional local events, sample coordinates and simulated hardware; no outbound mutations"
+  },
+  {
+    "file": "notification-history.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:32:23.347190+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widgets; fictional local events, sample coordinates and simulated hardware; no outbound mutations"
+  },
+  {
+    "file": "nearby-help-map.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:32:27.101640+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widgets; fictional local events, sample coordinates and simulated hardware; no outbound mutations"
+  },
+  {
+    "file": "active-fullscreen.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:32:33.209294+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widgets; fictional local events, sample coordinates and simulated hardware; no outbound mutations"
+  },
+  {
+    "file": "sos-history.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:32:35.455771+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current production widgets; fictional local events, sample coordinates and simulated hardware; no outbound mutations"
+  },
+  {
+    "file": "preparation-review.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:34:06.967127+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current final review; pack all required items and inspect extras/battery; no hike started"
+  },
+  {
+    "file": "duress-demo.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:34:20.702495+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current simulated silent duress response; no dispatch, no alarm and no real contacts"
+  },
+  {
+    "file": "button-test-logs.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:34:55.420707+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "SIMULATED button test receipt in component preview then current local diagnostics; no real hardware signal or SOS"
+  },
+  {
+    "file": "sos-queue-notes.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:36:29.537739+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current read-only SOS queue empty state; no dispatches queued"
+  },
+  {
+    "file": "sos-notes.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:36:55.957227+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current emergency-message editor and WhatsApp preview; fictional local notes and phone; not saved or sent"
+  },
+  {
+    "file": "sos-events.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:37:16.809132+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current SOS event receipt list; fictional simulated contact confirmations, no messages sent"
+  },
+  {
+    "file": "hike-route-alerts.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:37:20.171429+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current lower hike safety settings; fictional hike configuration"
+  },
+  {
+    "file": "hike-history-expired.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:37:41.670479+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current expired hike tab; local demo empty state"
+  },
+  {
+    "file": "hazard-report.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:38:25.409825+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current prepared Water / Fast river crossing caution form; no report submitted"
+  },
+  {
+    "file": "hazard-report-list.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:38:27.107757+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current caution history view; fictional demo account, no reports submitted"
+  },
+  {
+    "file": "emergency-contact-editor.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:38:30.656292+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current swipe-to-edit contact form; fictional Jamie Demo; no changes saved"
+  },
+  {
+    "file": "first-aid-gear.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:40:06.680922+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current first-aid category and local scenario guidance; no emergency call",
+    "requestedSeconds": 25,
+    "videoNormalization": {
+      "file": "first-aid-gear.mp4",
+      "requestedSeconds": 25,
+      "before": {
+        "durationSeconds": 27.459033,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "90000/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 27.458333,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 0.0,
+      "original": "tmp/website-capture-20261116/raw/first-aid-gear.mp4",
+      "originalSha256": "c25c16105c07695b2adb88f6128af42e4b8aaae90954e42d23128e7e6a5c1aa4",
+      "outputSha256": "e35d7f44a8ffc780a59c889c912e8e81530d7311750fb355fa1c54749475a128",
+      "treatment": "Preserved full footage; no tail added"
+    }
+  },
+  {
+    "file": "first-aid-steps.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:40:09.693250+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current bundled first-aid scenario action sheet; no emergency call or SOS action"
+  },
+  {
+    "file": "sos-countdown.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:41:17.566579+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current 10-second manual countdown canceled before expiry; local demo, no alert or alarm",
+    "requestedSeconds": 12,
+    "videoNormalization": {
+      "file": "sos-countdown.mp4",
+      "requestedSeconds": 12,
+      "before": {
+        "durationSeconds": 7.314578,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "90000/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 12.0,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 4.685422,
+      "original": "tmp/website-capture-20261116/raw/sos-countdown.mp4",
+      "originalSha256": "3293b9570da1d240ac0ae95a96591d1bb61704973a52f2eb54e2ed5e6afd9ae5",
+      "outputSha256": "9b38facdf4f5e0768adbb281664787aa294866279d4c9a44c9130201555c8f23",
+      "treatment": "Held the final actual frame"
+    }
+  },
+  {
+    "file": "sign-in.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:41:36.226104+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current account-access overview then Home UI preview; credentials and authentication omitted; local demonstration",
+    "requestedSeconds": 16,
+    "videoNormalization": {
+      "file": "sign-in.mp4",
+      "requestedSeconds": 16,
+      "before": {
+        "durationSeconds": 15.814522,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "90000/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 15.833333,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 0.0,
+      "original": "tmp/website-capture-20261116/raw/sign-in.mp4",
+      "originalSha256": "a8e06829c1b3acd4050d6a10a2c86a0241cfd747654948b8a41325f3799565d3",
+      "outputSha256": "914505f543a0907688f47f95ecf60167ba97817884db9702763fb276f5ff76d7",
+      "treatment": "Preserved full footage; no tail added"
+    }
+  },
+  {
+    "file": "chat.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:44:41.495769+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current group chat with fictional local history and blank composer; no messages sent",
+    "requestedSeconds": 15,
+    "videoNormalization": {
+      "file": "chat.mp4",
+      "requestedSeconds": 15,
+      "before": {
+        "durationSeconds": 14.949833,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "88/3",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 14.958333,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 0.0,
+      "original": "tmp/website-capture-20261116/raw/chat.mp4",
+      "originalSha256": "b806b44941301cc11b90737fd92e0009265745e826e85318d69834aa6160ff66",
+      "outputSha256": "bb25daa47106d71deb85a0722261b593234f0c357a4a0085f696e150d5f5dc61",
+      "treatment": "Preserved full footage; no tail added"
+    }
+  },
+  {
+    "file": "feedback.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:44:58.993797+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current feedback review draft and categories; no feedback sent or discarded",
+    "requestedSeconds": 15,
+    "videoNormalization": {
+      "file": "feedback.mp4",
+      "requestedSeconds": 15,
+      "before": {
+        "durationSeconds": 11.561878,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "60000/1001",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 15.0,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 3.438122,
+      "original": "tmp/website-capture-20261116/raw/feedback.mp4",
+      "originalSha256": "19604049b76b76f4b0f4e66a6053e9efa62bd563541e06e1a068317dbff59460",
+      "outputSha256": "3b074404144bbf39f3e9f34ac4f646a6726be421360e7ac2ed0430c26fe8b30f",
+      "treatment": "Held the final actual frame"
+    }
+  },
+  {
+    "file": "checkpoints.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:46:33.911260+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current trail selection with loaded route map and fictional checkpoint timeline"
+  },
+  {
+    "file": "checkpoints.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:46:58.269440+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current trail map and editable checkpoint timeline preview; fictional public route, no plan saved",
+    "requestedSeconds": 22,
+    "videoNormalization": {
+      "file": "checkpoints.mp4",
+      "requestedSeconds": 22,
+      "before": {
+        "durationSeconds": 21.9763,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "60/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 21.958333,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 0.0,
+      "original": "tmp/website-capture-20261116/raw/checkpoints.mp4",
+      "originalSha256": "c71be6ea7cce3cf470743f62534d25a1c65d0aae2bd8b3195127a79b57916a8d",
+      "outputSha256": "dfdf8eb15e39d4f57c7332896842427eeb7e4bf9ece82233f2a28caffcd7d16d",
+      "treatment": "Preserved full footage; no tail added"
+    }
+  },
+  {
+    "file": "checkpoint-editor.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:48:07.447524+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current checkpoint edit mode with reorder handles; fictional route, no plan saved"
+  },
+  {
+    "file": "finish-rating.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:48:25.180733+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current completed-route rating dialog; choose4stars andModerate; rating not saved and no hike finished",
+    "requestedSeconds": 15,
+    "videoNormalization": {
+      "file": "finish-rating.mp4",
+      "requestedSeconds": 15,
+      "before": {
+        "durationSeconds": 7.469689,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "90000/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 15.0,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 7.530311,
+      "original": "tmp/website-capture-20261116/raw/finish-rating.mp4",
+      "originalSha256": "68b3ce0950dab84c35a0f039f3bd035db39b133bfc167d72a30f7cf2f5232caa",
+      "outputSha256": "8e689d625c19c4ffe87010a0d8de4951f2751e65fa74f0a81f81b6a6e6f87de0",
+      "treatment": "Held the final actual frame"
+    }
+  },
+  {
+    "file": "location-sharing.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:49:14.847447+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current sharing-off controls with loaded map; fixed public Penang sample; no link activated"
+  },
+  {
+    "file": "location-sharing-active.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:49:21.512670+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current sharing-on seeded demo state, loaded fixed sample map; example.invalid link; no real sharing"
+  },
+  {
+    "file": "active-weather-sharing.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:49:27.971626+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current forecast and separate sharing-state UI previews; fixed sample coordinates; no real share created, sent or stopped",
+    "requestedSeconds": 24,
+    "videoNormalization": {
+      "file": "active-weather-sharing.mp4",
+      "requestedSeconds": 24,
+      "before": {
+        "durationSeconds": 13.7194,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "60/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 24.0,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 10.2806,
+      "original": "tmp/website-capture-20261116/raw/active-weather-sharing.mp4",
+      "originalSha256": "a62821d1529dfd4dbda3acf3e77914e63904fd352d989aed9321c29b0665ae6d",
+      "outputSha256": "06b54aaf5c3e321c1f33dec66149687389904ddf49c0ab8c8b3454153ac23408",
+      "treatment": "Held the final actual frame"
+    }
+  },
+  {
+    "file": "trail-discovery.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:52:34.507198+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current Home trail grid with All selected; fictional route cards, no device location"
+  },
+  {
+    "file": "trail-discovery.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:52:56.502723+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current Home trail grid/list and route detail preview; fictional routes, no user location",
+    "requestedSeconds": 20,
+    "videoNormalization": {
+      "file": "trail-discovery.mp4",
+      "requestedSeconds": 20,
+      "before": {
+        "durationSeconds": 19.968622,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "60/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 19.958333,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 0.0,
+      "original": "tmp/website-capture-20261116/raw/trail-discovery.mp4",
+      "originalSha256": "e8760aab4f7e79880ba1fa57067c5ce21d3d3f75b91187679b2ac9de636e71ac",
+      "outputSha256": "85200d8437e8d239459eab2e08b0598384c78239ce4ecdffdac3922a936e8f6b",
+      "treatment": "Preserved full footage; no tail added"
+    }
+  },
+  {
+    "file": "plan-home.png",
+    "kind": "image",
+    "capturedAt": "2026-11-16T02:53:55.872942+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current upcoming Home UI with All trail filter; fictional upcoming plans"
+  },
+  {
+    "file": "upcoming-home.mp4",
+    "kind": "video",
+    "capturedAt": "2026-11-16T02:54:23.727823+08:00",
+    "device": "RMX3834",
+    "package": "com.leongziqi.hikercircle.showcase",
+    "version": "versionName=1.1.0",
+    "data": "isolated production-widget demo; fictional data",
+    "note": "Current clean upcoming carousel\u2192correct final preparation; fictional plans, no real location or hike started",
+    "requestedSeconds": 25,
+    "videoNormalization": {
+      "file": "upcoming-home.mp4",
+      "requestedSeconds": 25,
+      "before": {
+        "durationSeconds": 26.150678,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "60/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "after": {
+        "durationSeconds": 26.166667,
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "frameRate": "24/1",
+        "width": 720,
+        "height": 1600,
+        "audioStreams": 0
+      },
+      "heldFinalFrameSeconds": 0.0,
+      "original": "tmp/website-capture-20261116/raw/upcoming-home--44e1e66d758e.mp4",
+      "originalSha256": "44e1e66d758e58f523669d3ee4034eff6a2f6c2583fb67f03cb802c4c304cc3e",
+      "outputSha256": "325b34558e02fec4a2e65ff4a72e65a6e30c9c50d29ea069f7c1146611fc5557",
+      "treatment": "Preserved full footage; no tail added"
+    }
+  }
+]

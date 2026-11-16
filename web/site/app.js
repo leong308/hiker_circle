@@ -72,11 +72,12 @@
         heading: "The first safety experience.",
         description: "",
         screenshot: {
+          provenance: "Historical design · May 2026",
           src: "/site-assets/evolution/01-foundation-first-sos-iphone.png",
           alt: "The original HikerCircle SOS interface from 28 May 2026, shown in an iPhone portrait layout",
           badge: "Original interface · 28 May 2026",
           title: "Safety was part of the idea from day one.",
-          caption: "The early SOS centre already brought manual and duress alerts, emergency context, queued delivery, and trusted contacts into one calm experience.",
+          caption: "A preserved reference of the original SOS design. Its capture date is unrecorded; the design belongs to the May 2026 foundation milestone.",
         },
       },
     },
@@ -95,14 +96,23 @@
       motion: ["From idea to hiking plan", "Move from home to a trail, preview its route, then invite or view a teammate."],
       media: {
         heading: "A companion takes shape.",
-        description: "",
-        motion: {
-          src: "/site-assets/evolution/02-companion-device-20260907.mp4",
-          poster: "/site-assets/evolution/02-companion-device-20260907.jpg",
-          badge: "Product story · 11 June 2026",
-          title: "From finding a trail to planning your hike.",
-          caption: "Explore Bukit Jambul, take a closer look at the route, and choose how you want to hike.",
+        description: "Current trail discovery and route tools, captured on 16 November 2026.",
+        screenshot: {
+          src: "/internal/app-showcase/media/trail-detail.png",
+          alt: "Current HikerCircle public Penang Hill Heritage Trail page with loaded trail photograph and route information",
+          badge: "Device capture · 16 Nov 2026",
+          provenance: "Device capture · 16 Nov 2026",
+          title: "Get to know the trail.",
+          caption: "Explore the public Penang Hill Heritage Trail and review its route information before planning a hike."
         },
+        motion: {
+          src: "/internal/app-showcase/media/trail-discovery.mp4",
+          poster: "/internal/app-showcase/media/trail-discovery.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Find a trail that fits.",
+          caption: "Browse the current Home grid and list, then open fictional trail details in an isolated connected-device demonstration."
+        }
       },
     },
     {
@@ -122,18 +132,20 @@
         heading: "Safety moves beyond the open app.",
         description: "",
         screenshot: {
-          src: "/site-assets/evolution/03-active-safety-surfaces-iphone.png",
-          alt: "HikerCircle home-screen safety widget and active hike Live Activity in an iPhone presentation",
-          badge: "At-a-glance safety · 14 June 2026",
-          title: "Important actions stay within reach.",
-          caption: "The SOS widget and active-hike Live Activity kept safety controls and hike progress visible from the iPhone home and lock screens.",
+          src: "/internal/app-showcase/media/sos-status.png",
+          alt: "Current HikerCircle full-screen manual SOS response in an isolated device demo",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "A clearer safety response.",
+          caption: "The current SOS response interface is shown with fictional contacts in an isolated device demo. No emergency message is sent.",
         },
         motion: {
-          src: "/site-assets/evolution/03-safety-device-20260907.mp4",
-          poster: "/site-assets/evolution/03-safety-device-20260907.jpg",
-          badge: "Active response · 14 June 2026",
-          title: "Safety begins before the trail.",
-          caption: "Add SOS Actions to your home screen and reach Duress with a tap. This demonstration uses sample contacts to show a successful silent alert.",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          src: "/internal/app-showcase/media/active-tracking.mp4",
+          poster: "/internal/app-showcase/media/active-team-hike.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          title: "Keep your hike and safety tools together.",
+          caption: "Zoom and recenter the current active-hike map, then open safety and sharing controls. This isolated device demonstration uses a fictional route and team.",
         },
       },
     },
@@ -154,18 +166,20 @@
         heading: "A hike becomes a shared promise.",
         description: "",
         screenshot: {
-          src: "/site-assets/evolution/04-coordination-team-launch-iphone.jpeg",
-          alt: "HikerCircle team hike launch screen showing two hikers ready to start together on an iPhone",
-          badge: "Team coordination · 18 June 2026",
-          title: "Everyone starts on the same page.",
-          caption: "Readiness checks, a shared countdown, and a clear team view turned a plan into a coordinated departure.",
+          src: "/internal/app-showcase/media/preparation-review.png",
+          alt: "Current HikerCircle preparation checklist for a fictional hike in an isolated device demo",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Get ready before departure.",
+          caption: "Review the current preparation checklist before setting off. This connected-device demonstration uses fictional hiking data."
         },
         motion: {
-          src: "/site-assets/evolution/04-coordination-team-flow-iphone.mp4?v=20260903-real-device-media",
-          poster: "/site-assets/evolution/04-coordination-team-flow-poster-iphone.jpeg?v=20260903-real-device-media",
-          badge: "Shared journey · 18 June 2026",
-          title: "From getting ready to moving together.",
-          caption: "From choosing a team hike to checking the real route and starting together, the flow keeps the trail, safety settings, and group view in one place.",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          src: "/internal/app-showcase/media/team-tools.mp4",
+          poster: "/internal/app-showcase/media/team-locations.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          title: "See who is on the hike.",
+          caption: "Review the current team roster and Team locations map with fictional hikers in an isolated device demo. No real pings or invitations are sent.",
         },
       },
     },
@@ -186,18 +200,20 @@
         heading: "Every adventure leaves something behind.",
         description: "Revisit past hikes and see how each outing adds to your progress.",
         screenshot: {
-          src: "/site-assets/evolution/05-achievements-device-20260908.png",
-          alt: "HikerCircle achievements screen showing earned badges and progress toward the next hiking level",
-          badge: "Your hiking journey",
-          title: "Small steps become milestones.",
-          caption: "Earned badges and progress toward your next level give every adventure something to build on.",
+          src: "/internal/app-showcase/media/hike-history-demo.png",
+          alt: "Current HikerCircle hike history with fictional saved hikes in an isolated device demo",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "A record to return to.",
+          caption: "The current history view brings saved hikes together. This connected-device demonstration uses fictional hiking records.",
         },
         motion: {
-          src: "/site-assets/evolution/05-history-device-20260908.mp4",
-          poster: "/site-assets/evolution/05-history-device-20260908.jpg",
-          badge: "Recorded in the app",
-          title: "Look back. Keep going.",
-          caption: "Browse saved solo and group hikes, then open Achievements to see your hiking progress.",
+          provenance: "Demo account · 16 Nov 2026",
+          src: "/internal/app-showcase/media/achievements.mp4",
+          poster: "/internal/app-showcase/media/achievements.png",
+          badge: "Demo account · 16 Nov 2026",
+          title: "See your progress add up.",
+          caption: "Browse the current demo account’s achievements overview, earned badges and progress details.",
         },
       },
     },
@@ -218,18 +234,20 @@
         heading: "Safety within physical reach.",
         description: "A dedicated SOS button brings an emergency control closer when your phone is packed away.",
         screenshot: {
-          src: "/site-assets/evolution/06-button-setup-device-20260908.png",
-          alt: "HikerCircle physical SOS button setup screen with readiness checks and a lost-button warning setting",
-          badge: "Physical SOS button",
-          title: "Get connected. Stay prepared.",
-          caption: "Guided setup, readiness checks, and a lost-button warning help you prepare your SOS button before heading out.",
+          src: "/internal/app-showcase/media/physical-button-setup.png",
+          alt: "Current HikerCircle guided physical SOS button setup instructions in the main app",
+          badge: "Current app · demo account · 16 Nov 2026",
+          provenance: "Current app · demo account · 16 Nov 2026",
+          title: "Prepare your physical SOS button.",
+          caption: "Read the current guided setup instructions before pairing a compatible physical button. Captured in the main app with a demo account."
         },
         motion: {
-          src: "/site-assets/evolution/06-button-pairing-device-20260908.mp4",
-          poster: "/site-assets/evolution/06-button-paired-device-20260908.png",
-          badge: "Recorded in the app",
-          title: "Add your SOS button, step by step.",
-          caption: "Follow a real setup: discover the nearby button, confirm its name, connect securely, and confirm ownership with a physical press.",
+          provenance: "Current UI · simulated hardware · 16 Nov 2026",
+          src: "/internal/app-showcase/media/physical-button.mp4",
+          poster: "/internal/app-showcase/media/physical-button-success.png",
+          badge: "Current UI · simulated hardware · 16 Nov 2026",
+          title: "Pair a button, step by step.",
+          caption: "Simulated discovery, confirmation and success demonstrate the current pairing flow. The device recording keeps a SIMULATED HARDWARE banner visible and does not pair real hardware or send an SOS.",
         },
       },
     },
@@ -250,18 +268,20 @@
         heading: "Prepare for the unexpected.",
         description: "Set up your safety checks before heading onto the trail.",
         screenshot: {
-          src: "/site-assets/evolution/07-safety-settings-device-20260908.png",
-          alt: "HikerCircle pre-hike safety settings in dark mode, including fall and stillness detection, sensor sensitivity and a warning response window",
-          badge: "Before you set off",
+          src: "/internal/app-showcase/media/hike-safety-settings.png",
+          alt: "Current pre-hike safety settings in HikerCircle, shown in an isolated device demo",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
           title: "Make safety part of your preparation.",
-          caption: "Review location sharing, fall and stillness detection, and route-deviation alerts before starting your hike.",
+          caption: "Review the current pre-hike safety settings using fictional hiking data in an isolated device demo.",
         },
         motion: {
-          src: "/site-assets/evolution/07-safety-device-20260908.mp4",
-          poster: "/site-assets/evolution/07-safety-settings-device-20260908.png",
-          badge: "Recorded in the app",
-          title: "A closer look at your safety controls.",
-          caption: "Adjust sensor sensitivity and review the warning window and rest settings in the pre-hike safety flow.",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          src: "/internal/app-showcase/media/required-gear.mp4",
+          poster: "/internal/app-showcase/media/required-gear.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          title: "Review what you will carry.",
+          caption: "Tick required gear items and review extras and battery guidance for a fictional hike in an isolated device demonstration.",
         },
       },
     },
@@ -282,18 +302,20 @@
         heading: "Look back. Take more forward.",
         description: "Revisit the details of a completed hike and the plan that shaped your day.",
         screenshot: {
-          src: "/site-assets/evolution/08-hike-summary-device-20260908.png",
-          alt: "Bukit Bendera completed hike summary in HikerCircle dark mode",
-          badge: "Your hike, remembered",
-          title: "More than a finish time.",
-          caption: "Distance, duration and average pace give your completed hike a useful record.",
+          src: "/internal/app-showcase/media/hike-analysis-demo.png",
+          alt: "Current HikerCircle hike analysis with fictional saved hiking data in an isolated device demo",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Look back at the details.",
+          caption: "Review the current hike-analysis view using fictional saved hiking data in an isolated device demo.",
         },
         motion: {
-          src: "/site-assets/evolution/08-hike-summary-device-20260908.mp4",
-          poster: "/site-assets/evolution/08-hike-summary-device-20260908.png",
-          badge: "Recorded in the app",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          src: "/internal/app-showcase/media/hike-analysis.mp4",
+          poster: "/internal/app-showcase/media/hike-analysis-demo.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
           title: "Revisit the details of your day.",
-          caption: "Explore a saved hike summary, then review its original plan and checkpoint timeline.",
+          caption: "Explore the current overview, analysis and safety views for a fictional saved hike in an isolated device demonstration.",
         },
       },
     },
@@ -314,18 +336,20 @@
         heading: "Find your hiking people.",
         description: "Discover fellow hikers and learn a little about them before connecting.",
         screenshot: {
-          src: "/site-assets/evolution/09-discover-device-20260908.png",
-          alt: "HikerCircle community discovery screen with the Find hikers view",
-          badge: "Better together",
-          title: "A new adventure starts with people.",
-          caption: "Browse hikers in the community and explore potential hiking buddies.",
+          src: "/internal/app-showcase/media/find-hikers.png",
+          alt: "Current HikerCircle Find Hikers view with fictional profiles in an isolated device demo",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Find your hiking people.",
+          caption: "The current hiker-discovery view is shown with fictional profiles in an isolated connected-device demonstration."
         },
         motion: {
-          src: "/site-assets/evolution/09-community-device-20260908.mp4",
-          poster: "/site-assets/evolution/09-discover-device-20260908.png",
-          badge: "Recorded in the app",
-          title: "Meet the person behind the profile.",
-          caption: "Open a public hiker profile, review their area and hiking level, then return to community stories.",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          src: "/internal/app-showcase/media/community.mp4",
+          poster: "/internal/app-showcase/media/community.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          title: "Meet the people behind the stories.",
+          caption: "Move from the current stories feed to Find Hikers and a fictional public profile in an isolated device demo. No real requests, posts or messages are sent.",
         },
       },
     },
@@ -346,11 +370,12 @@
         heading: "Confidence starts with your account.",
         description: "Review your sign-in protection in one clear place.",
         screenshot: {
-          src: "/site-assets/evolution/10-security-device-20260908.png",
-          alt: "HikerCircle login security overview showing a bound mobile passkey and Authenticator app in dark mode",
-          badge: "Account protection",
+          src: "/internal/app-showcase/media/login-security.png",
+          alt: "Current HikerCircle login-security overview with fictional Authenticator and passkey labels in an isolated device demo",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
           title: "Your security choices, together.",
-          caption: "The login security overview brings your passkey and Authenticator methods together without exposing verification codes or device credentials.",
+          caption: "Review the current login-security layout with fictional method labels. This isolated demonstration exposes no setup secret or verification code.",
         },
       },
     },
@@ -369,21 +394,23 @@
       motion: ["Plan, prepare, share", "Choose a verified trail, save first-aid guidance, then activate an optional live-location link."],
       media: {
         heading: "Know more before you go.",
-        description: "Explore a verified trail with the context to plan your next adventure.",
+        description: "Current public trail details and route preview, captured on 16 November 2026.",
         screenshot: {
-          src: "/site-assets/evolution/11-trail-device-20260908.png",
-          alt: "Bukit Jambul verified trail in HikerCircle with photography, distance, elevation and a route preview",
-          badge: "Explore HikerCircle today",
+          src: "/internal/app-showcase/media/trail-detail.png",
+          alt: "Current HikerCircle Penang Hill Heritage Trail details with trail photograph and hiking information",
+          badge: "Device capture · 16 Nov 2026",
+          provenance: "Device capture · 16 Nov 2026",
           title: "A clearer picture of the trail.",
-          caption: "Trail photography, distance, elevation and typical time help you understand what lies ahead.",
+          caption: "Trail photography and route information help you understand what lies ahead."
         },
         motion: {
-          src: "/site-assets/evolution/11-trail-device-20260908.mp4",
-          poster: "/site-assets/evolution/11-trail-device-20260908.png",
-          badge: "Recorded in the app",
+          src: "/internal/app-showcase/media/route-preview.mp4",
+          poster: "/internal/app-showcase/media/route-preview.png",
+          badge: "Device capture · 16 Nov 2026",
+          provenance: "Device capture · 16 Nov 2026",
           title: "Explore before you set off.",
-          caption: "Browse Bukit Jambul's route map and checkpoints, then review weather conditions and reported hazards—all within the trail page.",
-        },
+          caption: "Review the public Pisang Falls Loop route map and its first-person preview before departure."
+        }
       },
     },
     {
@@ -402,22 +429,24 @@
       shot: ["Your next adventure, in focus", "Show the expanded trail forecast and the achievement level roadmap in dark mode."],
       motion: ["Choose a day. Follow the trail.", "Browse forecast days and hourly charts, then explore the animated route and highlight a checkpoint on the map."],
       media: {
-        heading: "Choose a day. Follow the trail.",
-        description: "A closer look at the weather and route tools that make planning more informed.",
+        heading: "Choose your weather window.",
+        description: "Current trail-weather tools, captured on 16 November 2026.",
         screenshot: {
-          src: "/site-assets/evolution/12-weather-device-20260908.png",
-          alt: "HikerCircle expanded trail forecast with selectable days, temperature chart, rain chance, UV, sunrise and sunset in dark mode",
-          badge: "Your weather window",
+          src: "/internal/app-showcase/media/weather.png",
+          alt: "Current HikerCircle trail forecast with selectable forecast days and hourly weather chart",
+          badge: "Device capture · 16 Nov 2026",
+          provenance: "Device capture · 16 Nov 2026",
           title: "See more of the day ahead.",
-          caption: "Compare forecast days and review hourly conditions, daylight and weather guidance before setting off.",
+          caption: "Compare forecast days and review hourly conditions before setting off."
         },
         motion: {
-          src: "/site-assets/evolution/12-weather-route-device-20260908.mp4",
-          poster: "/site-assets/evolution/12-weather-device-20260908.png",
-          badge: "Recorded in the app",
-          title: "From forecast to checkpoint.",
-          caption: "Switch forecast days and chart views, then select a checkpoint to highlight its position on the animated route map.",
-        },
+          src: "/internal/app-showcase/media/trail-forecast.mp4",
+          poster: "/internal/app-showcase/media/weather.png",
+          badge: "Device capture · 16 Nov 2026",
+          provenance: "Device capture · 16 Nov 2026",
+          title: "Compare days and conditions.",
+          caption: "Switch forecast days and review the temperature, rain and wind chart views for a public trail."
+        }
       },
     },
     {
@@ -435,24 +464,109 @@
       motion: ["Your upcoming hikes, at a glance", "Swipe between two upcoming hikes on Home; open weather and preparation for one."],
       media: {
         heading: "Two ways to look ahead.",
-        description: "Phone-screen recordings for these two experiences are being prepared.",
-        videoPlaceholders: true,
+        description: "Current first-person route preview and upcoming-hike preparation, captured on 16 November 2026.",
+        screenshot: {
+          src: "/internal/app-showcase/media/enhanced-preview.png",
+          alt: "Current first-person preview of the public Pisang Falls Loop route in HikerCircle",
+          badge: "Device capture · 16 Nov 2026",
+          provenance: "Device capture · 16 Nov 2026",
+          title: "See the route from the trail.",
+          caption: "Follow the first-person view of a public trail before you decide to set off."
+        },
+        motion: {
+          src: "/internal/app-showcase/media/upcoming-home.mp4",
+          poster: "/internal/app-showcase/media/plan-home.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Your next plans, at a glance.",
+          caption: "Move between two fictional upcoming hikes, then review the selected plan’s preparation and extras. This isolated connected-device demonstration does not start a hike or use a real location."
+        }
+      },
+    },
+    {
+      id: "prepared-response",
+      date: "26 October 2026",
+      era: "Ready for the real trail",
+      title: "Prepare together. Respond with confidence.",
+      lead: "Preparation, trail cautions and emergency feedback come together more clearly, helping hikers understand what to pack, what has changed and what happens after an alert.",
+      features: [
+        ["Pack for the route ahead", "Categorised required gear, battery guidance and a clearer final review help each hiker prepare before departure."],
+        ["Take changing conditions seriously", "Classified hazard alerts link back to the affected trail, with another check before starting and a way to cancel an unsafe plan."],
+        ["Follow the emergency response", "The full-screen SOS experience shows delivery progress and queued updates. Silencing the local alarm does not stop emergency-message delivery."],
+        ["Keep the team in step", "Readiness and launch checks help a team start from a current, shared plan rather than an outdated countdown."],
+      ],
+      shot: ["Ready before the first step", "Show the current final preparation review and required-gear guidance."],
+      motion: ["Review the plan before departure", "Open an upcoming hike, review required gear and trail cautions, then return without starting a real hike or sending an SOS."],
+      media: {
+        heading: "Prepare with a clearer picture.",
+        description: "Current preparation controls, captured on a connected device using fictional hiking data on 16 November 2026.",
+        screenshot: {
+          src: "/internal/app-showcase/media/required-gear.png",
+          alt: "Current HikerCircle required-gear guidance with fictional hiking data in an isolated device demo",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Pack for the route ahead.",
+          caption: "The current required-gear view groups preparation guidance for a fictional hike. This is an isolated device demonstration.",
+        },
+        motion: {
+          src: "/internal/app-showcase/media/preparation-review.mp4",
+          poster: "/internal/app-showcase/media/preparation-review.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Review everything before you go.",
+          caption: "Check all eight packed items, then review extras and battery guidance in the current preparation flow. This isolated device demo uses fictional hiking data and does not start a hike.",
+        },
+      },
+    },
+    {
+      id: "privacy-control",
+      date: "16 November 2026",
+      era: "Your account, your choices",
+      title: "More control. Clearer choices.",
+      lead: "The latest account experience makes privacy choices more explicit, from reviewing information use before signing up to understanding a live-location link or closing an account.",
+      features: [
+        ["Review before you register", "A privacy notice explains the requested information, providers and overseas processing before a new phone number is submitted for registration."],
+        ["Choose when to share", "Live-location sharing has its own activation and stop controls, with a reminder that anyone holding an active link can open it."],
+        ["Understand account closure", "Two confirmations explain that closing an account removes its main account record and sign-in, while location records, hike history, uploaded files and other saved data remain."],
+        ["Find the explanation when needed", "The Privacy Policy and Help Center keep account and privacy guidance within reach from the app."],
+      ],
+      shot: ["Your privacy choices, together", "Show the current account, privacy and live-location controls without exposing personal details or an active sharing link."],
+      motion: ["Review your account choices", "Open the privacy and account controls, review the account-closure notice, then cancel without deleting the account or activating a sharing link."],
+      media: {
+        heading: "Clear choices at every step.",
+        description: "Current privacy controls, captured on a connected device using an isolated demo on 16 November 2026.",
+        screenshot: {
+          src: "/internal/app-showcase/media/signup-privacy.png",
+          alt: "Current HikerCircle privacy notice before registration, shown in an isolated device demonstration",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Review before you register.",
+          caption: "The current notice explains information use before a phone number is submitted for registration. This isolated demonstration does not create an account.",
+        },
+        motion: {
+          src: "/internal/app-showcase/media/active-weather-sharing.mp4",
+          poster: "/internal/app-showcase/media/location-sharing.png",
+          badge: "Current UI · device demo · 16 Nov 2026",
+          provenance: "Current UI · device demo · 16 Nov 2026",
+          title: "Choose when to share.",
+          caption: "Review the forecast, then compare separate sharing-off and demonstration sharing-on views on a sample Penang map. No real sharing link is created or activated.",
+        },
       },
     },
     {
       id: "future",
-      date: "Coming soon",
+      date: "Future direction",
       era: "The next horizon",
       title: "The circle reaches farther",
-      lead: "The team is exploring how HikerCircle could extend safety beyond the phone and beyond reliable mobile coverage. These ideas are a direction under consideration, not a guaranteed release plan.",
+      lead: "What if essential trail tools could reach your wrist, a nearby hiker, or a radio network beyond mobile coverage? Explore three directions from the project’s final report.",
       concept: true,
       features: [
-        ["Safety from the wrist", "Smartwatch check-ins and alerts could keep essential actions close while both hands stay free."],
-        ["Longer reach on remote trails", "LoRa gateways could help selected trail areas carry small safety messages over greater distances."],
-        ["A circle that carries the message", "A mesh between nearby hikers could help pass check-ins or alerts when direct mobile coverage fades."],
+        ["A smartwatch companion", "Hike progress, warnings and SOS confirmation could move to a compatible watch."],
+        ["Nearby Bluetooth support", "Private SOS forwarding and offline team readiness could extend the app’s existing Bluetooth tools."],
+        ["A LoRa trail network", "Portable radio nodes could relay short SOS messages and coordinates towards a connected gateway."],
       ],
-      shot: ["A possible connected trail kit", "Reserve this space for future watch, LoRa gateway, and trail-network concept mockups."],
-      motion: ["How a message could travel", "Visualise an alert moving from a watch to nearby hikers, a gateway, and finally a trusted contact."],
+      shot: ["A possible connected trail kit", "An illustrated exploration of the smartwatch, Bluetooth and LoRa recommendations."],
+      motion: ["Explore the connections", "Compare three proposals and what changes when a connection is unavailable."],
     },
   ];
 
@@ -655,7 +769,7 @@
     const footer = milestoneDialog.querySelector(".milestone-dialog-footer");
     if (footer) footer.hidden = Boolean(story.concept);
 
-    setMilestoneText("[data-milestone-count]", `Milestone ${number} of ${milestoneStories.length}`);
+    setMilestoneText("[data-milestone-count]", story.concept ? "Future recommendations" : `Milestone ${number} of ${milestoneStories.length}`);
     setMilestoneText("[data-milestone-date]", story.date);
     setMilestoneText("[data-milestone-era]", story.era);
     setMilestoneText("[data-milestone-title]", story.title);
@@ -692,6 +806,12 @@
     setMilestoneText("[data-milestone-media-heading]", story.concept ? "Beyond the phone. Still within the circle." : media?.heading || "Prepared for the real product story.");
     const futureLab = milestoneDialog.querySelector("[data-future-lab]");
     if (futureLab) futureLab.hidden = !story.concept;
+    const futureArt = milestoneDialog.querySelector("[data-future-art]");
+    if (futureArt) futureArt.hidden = !story.concept;
+    const achievements = milestoneDialog.querySelector(".milestone-achievements");
+    if (achievements) achievements.hidden = Boolean(story.concept);
+    const mediaHeading = milestoneDialog.querySelector(".milestone-media > .milestone-section-heading");
+    if (mediaHeading) mediaHeading.hidden = Boolean(story.concept);
     if (mediaGrid) mediaGrid.hidden = Boolean(story.concept);
     if (story.concept) resetFutureConcept();
     if (mediaDescription) {
@@ -699,10 +819,10 @@
       mediaDescription.textContent = description || "";
       mediaDescription.hidden = !description;
     }
-    setMilestoneText("[data-milestone-media-badge]", screenshot?.badge || "");
+    setMilestoneText("[data-milestone-media-badge]", screenshot?.provenance || screenshot?.badge || "");
     setMilestoneText("[data-milestone-media-caption-title]", screenshot?.title || "");
     setMilestoneText("[data-milestone-media-caption]", screenshot?.caption || "");
-    setMilestoneText("[data-milestone-motion-badge]", motion?.badge || "");
+    setMilestoneText("[data-milestone-motion-badge]", motion?.provenance || motion?.badge || "");
     setMilestoneText("[data-milestone-motion-caption-title]", motion?.title || "");
     setMilestoneText("[data-milestone-motion-caption]", motion?.caption || "");
     mediaGrid?.classList.toggle("has-single-media", hasRealMedia && hasScreenshot !== hasMotion);
@@ -764,7 +884,10 @@
     }
 
     const conceptNote = milestoneDialog.querySelector("[data-milestone-concept]");
-    if (conceptNote) conceptNote.hidden = !story.concept;
+    if (conceptNote) {
+      conceptNote.hidden = !story.concept;
+      conceptNote.textContent = "Research concepts · not included in the beta";
+    }
     milestoneDialog.classList.toggle("is-concept", Boolean(story.concept));
     if (milestonePrevious) {
       milestonePrevious.disabled = activeMilestoneIndex === 0;
@@ -778,10 +901,39 @@
   };
 
   const futureSteps = [
-    ["THE WATCH", "A check-in within reach.", "A possible smartwatch companion could offer a quick check-in and a clear acknowledgement, without reaching into your pack. Compatible phone or radio hardware may still be needed."],
-    ["THE MESH", "A little help from hikers nearby.", "Compatible devices could relay a small safety message from one nearby hiker to another. This would depend on willing participants, radio range and enough devices along the route—not just people being on the same trail."],
-    ["THE GATEWAY", "A bridge beyond the trail.", "A proposed LoRa gateway could receive small radio messages and pass them onward when it has an internet connection. Placement, terrain, power and local requirements would all shape where this could work."],
-    ["YOUR CIRCLE", "Confirmation, not guesswork.", "The goal would be to let chosen contacts receive a check-in and return a clear delivery acknowledgement. Reaching a relay is not the same as reaching a person, and neither guarantees emergency assistance."],
+    {
+      id: "watch", kicker: "01 / SMARTWATCH", tag: "On your wrist",
+      title: "Progress at a glance. Safety within reach.",
+      copy: "A proposed watch companion could show hike progress, warnings and SOS confirmation. A compatible GPS watch could also record footprints while reducing reliance on the phone’s battery.",
+      capabilities: ["Hike progress and warnings on the wrist", "A deliberate SOS confirmation step", "GPS footprint recording on supported watches"],
+      nodes: [["watch", "Your watch", "Progress at a glance"], ["route", "GPS footprints", "A record of your path"], ["shield", "SOS controls", "Confirm an action"]],
+      scene: "Three proposed watch capabilities. This is an illustration, not a working watch app.",
+      toggle: "Show phone disconnected",
+      outcome: ["A companion to the phone", "The watch, phone and backend would need a tested connection for actions that send or synchronise information."],
+      offline: ["Recording is not delivery", "A GPS-equipped watch could record a route locally, but synchronisation and SOS delivery may wait for a usable connection. An on-screen confirmation would not prove a contact received it."],
+    },
+    {
+      id: "nearby", kicker: "02 / NEARBY BLUETOOTH", tag: "Help from nearby devices",
+      title: "A nearby phone could carry the next step.",
+      copy: "The report proposes letting an internet-connected HikerCircle phone privately forward an otherwise failed SOS. A second extension would let nearby teammates exchange pre-hike readiness offline and reconcile it later.",
+      capabilities: ["Private forwarding without exposing contact details to the helper", "Offline exchange of pre-hike team readiness", "Reconciliation after reconnecting to prevent duplicate records"],
+      nodes: [["phone", "Your phone", "An SOS cannot send"], ["relay", "Nearby phone", "A compatible helper"], ["cloud", "Internet connection", "Forward to the service"]],
+      scene: "A proposed SOS relay. Offline team readiness is a separate nearby exchange.",
+      toggle: "No connected helper nearby",
+      outcome: ["A possible alternate route", "A compatible nearby phone would need Bluetooth reach and its own internet connection. The relay should keep sender and recipient details private."],
+      offline: ["Relay unavailable", "Without a compatible connected helper, this route cannot forward the SOS. Nearby hikers alone do not establish connectivity or prove that help is on the way."],
+    },
+    {
+      id: "lora", kicker: "03 / LORA TRAIL NETWORK", tag: "Beyond mobile coverage",
+      title: "Small messages. A longer trail connection.",
+      copy: "Portable LoRa accessories could carry a short SOS and coordinates between radio nodes. A phone would connect to its accessory over Bluetooth; a gateway or connected phone would provide the route back to the online service.",
+      capabilities: ["Portable radio hardware carried with the phone", "Short SOS and coordinate packets across LoRa relays", "A connected gateway to pass messages onward"],
+      nodes: [["phone", "Phone + radio", "Bluetooth to an accessory"], ["relay", "LoRa relays", "Short radio messages"], ["gateway", "Connected gateway", "An internet route out"]],
+      scene: "Proposed radio path. Terrain, power and node placement would determine reach.",
+      toggle: "Show gateway offline",
+      outcome: ["The gateway is a bridge", "Radio reach alone is not internet delivery. A reachable gateway or connected phone would still be needed to forward a message to the service."],
+      offline: ["No route to the online service", "A radio packet might reach another node while the gateway remains offline. Delivery must stay unconfirmed until the system has evidence; there is no full-coverage or rescue guarantee."],
+    },
   ];
   let futureStep = 0;
   const futureButtons = [...document.querySelectorAll("[data-future-step]")];
@@ -789,21 +941,56 @@
   const renderFutureConcept = (step) => {
     futureStep = step;
     const disconnected = Boolean(futureOffline?.checked);
-    const [kicker, title, copy] = futureSteps[step];
-    futureButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(index === step)));
-    setMilestoneText("[data-future-kicker]", `${String(step + 1).padStart(2, "0")} / ${kicker}`);
-    setMilestoneText("[data-future-title]", disconnected && step >= 2 ? "No connection. No delivery claim." : title);
-    setMilestoneText("[data-future-copy]", disconnected && step >= 2 ? "Without a reachable gateway or a connection out, the message might remain waiting—or never arrive. A future design would need honest status, expiry and retry rules. Hikers would still need independent emergency plans." : copy);
-    const next = document.querySelector("[data-future-next]");
-    if (next) next.textContent = step === 3 ? "Explore again ↺" : "Follow the message →";
+    const topic = futureSteps[step];
+    futureButtons.forEach((button, index) => {
+      button.setAttribute("aria-selected", String(index === step));
+      button.tabIndex = index === step ? 0 : -1;
+    });
+    const panel = milestoneDialog?.querySelector("#future-concept-panel");
+    if (panel) {
+      panel.dataset.futureTopic = topic.id;
+      panel.setAttribute("aria-labelledby", futureButtons[step].id);
+    }
+    setMilestoneText("[data-future-kicker]", topic.kicker);
+    setMilestoneText("[data-future-tag]", topic.tag);
+    setMilestoneText("[data-future-title]", topic.title);
+    setMilestoneText("[data-future-copy]", topic.copy);
+    setMilestoneText("[data-future-scene-note]", topic.scene);
+    setMilestoneText("[data-future-offline-label]", topic.toggle);
+    const capabilities = milestoneDialog?.querySelector("[data-future-capabilities]");
+    capabilities?.replaceChildren(...topic.capabilities.map(text => {
+      const item = document.createElement("li");
+      item.textContent = text;
+      return item;
+    }));
+    milestoneDialog?.querySelectorAll("[data-future-node-icon]").forEach((icon, index) => icon.setAttribute("href", `#future-icon-${topic.nodes[index][0]}`));
+    milestoneDialog?.querySelectorAll("[data-future-node-title]").forEach((title, index) => { title.textContent = topic.nodes[index][1]; });
+    milestoneDialog?.querySelectorAll("[data-future-node-caption]").forEach((caption, index) => { caption.textContent = topic.nodes[index][2]; });
+    const outcome = disconnected ? topic.offline : topic.outcome;
+    setMilestoneText("[data-future-outcome-title]", outcome[0]);
+    setMilestoneText("[data-future-outcome-copy]", outcome[1]);
+    milestoneDialog?.querySelector(".future-outcome")?.classList.toggle("is-disconnected", disconnected);
+    milestoneDialog?.querySelector("[data-future-scene]")?.classList.toggle("is-disconnected", disconnected);
   };
   const resetFutureConcept = () => {
     if (futureOffline) futureOffline.checked = false;
     renderFutureConcept(0);
   };
-  futureButtons.forEach((button, index) => button.addEventListener("click", () => renderFutureConcept(index)));
-  document.querySelector("[data-future-next]")?.addEventListener("click", () => renderFutureConcept((futureStep + 1) % futureSteps.length));
-  futureOffline?.addEventListener("change", () => renderFutureConcept(futureOffline.checked ? 2 : futureStep));
+  futureButtons.forEach((button, index) => {
+    const select = () => {
+      if (futureOffline) futureOffline.checked = false;
+      renderFutureConcept(index);
+    };
+    button.addEventListener("click", select);
+    button.addEventListener("keydown", event => {
+      const next = { ArrowLeft: (index + futureButtons.length - 1) % futureButtons.length, ArrowRight: (index + 1) % futureButtons.length, Home: 0, End: futureButtons.length - 1 }[event.key];
+      if (next === undefined) return;
+      event.preventDefault();
+      futureButtons[next].click();
+      futureButtons[next].focus({ preventScroll: true });
+    });
+  });
+  futureOffline?.addEventListener("change", () => renderFutureConcept(futureStep));
 
   const openMilestone = (id, trigger) => {
     if (!milestoneDialog) return;
@@ -813,10 +1000,13 @@
     lastMilestoneTrigger = trigger || lastMilestoneTrigger;
     renderMilestone(index);
     milestoneDialog.hidden = false;
+    milestonePanel?.scrollTo({ top: 0, behavior: "instant" });
     document.body.classList.add("milestone-dialog-open");
     window.requestAnimationFrame(() => {
       milestoneDialog.classList.add("is-open");
-      milestoneDialog.querySelector(".milestone-dialog-close")?.focus({ preventScroll: true });
+      window.requestAnimationFrame(() => {
+        if (!milestoneDialog.hidden) milestoneDialog.querySelector(".milestone-dialog-close")?.focus({ preventScroll: true });
+      });
     });
   };
 
@@ -851,7 +1041,7 @@
     }
     if (story.media?.motion?.src) {
       slides.push({ kind: "video", ...story.media.motion });
-    } else if (story.motion) {
+    } else if (story.motion && slides.length === 0) {
       slides.push({ kind: "video-needed", title: story.motion[0], instruction: story.motion[1] });
     }
     return slides;
@@ -880,8 +1070,9 @@
 
     const triggerText = trigger.querySelector("span:first-child");
     if (triggerText) triggerText.textContent = story.concept ? "View concept" : "View media";
-    trigger.setAttribute("aria-label", `Flip ${story.title} to ${story.concept ? "view the concept" : "view its media"}`);
-    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("aria-label", story.concept ? `View concept: ${story.title}` : `Flip ${story.title} to view its media`);
+    if (story.concept) trigger.setAttribute("aria-haspopup", "dialog");
+    else trigger.setAttribute("aria-expanded", "false");
 
     const top = evolutionElement("div", "evolution-card-back-top");
     top.append(evolutionElement("span", "evolution-media-kind"), evolutionElement("span", "evolution-media-count"));
@@ -908,7 +1099,8 @@
       stage.querySelector("video")?.pause();
       slideIndex = (index + slides.length) % slides.length;
       const slide = slides[slideIndex];
-      top.firstElementChild.textContent = slide.kind === "image" ? "Screenshot" : slide.kind === "concept" ? "Exploring the future" : slide.kind === "video" ? "Screen recording" : "Video needed";
+      const kindLabel = slide.kind === "image" ? "Screenshot" : slide.kind === "concept" ? "Exploring the future" : slide.kind === "video" ? "Screen recording" : "Video needed";
+      top.firstElementChild.textContent = [kindLabel, slide.provenance].filter(Boolean).join(" · ");
       top.lastElementChild.textContent = slides.length > 1 ? `${slideIndex + 1} / ${slides.length}` : "";
       mediaTitle.textContent = slide.title || "HikerCircle in action";
       previous.hidden = slides.length < 2;
@@ -1004,6 +1196,10 @@
         event.preventDefault();
         return;
       }
+      if (story.concept) {
+        openMilestone(story.id, trigger);
+        return;
+      }
       evolutionRail?.scrollTo({
         left: card.offsetLeft - (evolutionRail.clientWidth - card.offsetWidth) / 2,
         behavior: reducedMotion ? "instant" : "smooth",
@@ -1076,11 +1272,15 @@
       return;
     }
     if (event.key !== "Tab") return;
-    const focusable = [...milestoneDialog.querySelectorAll("button:not(:disabled):not([tabindex=\"-1\"]),a[href]")];
+    const focusable = [...milestoneDialog.querySelectorAll('button:not(:disabled):not([tabindex="-1"]),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex]:not([tabindex="-1"])')]
+      .filter(element => !element.closest("[hidden],[inert]") && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden");
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    if (!milestoneDialog.contains(document.activeElement)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last.focus();
     } else if (!event.shiftKey && document.activeElement === last) {
@@ -1200,6 +1400,8 @@
       tab.setAttribute("aria-selected", String(active));
     });
     scenes.forEach((scene, itemIndex) => scene.classList.toggle("is-active", itemIndex === activeIndex));
+    const captureCaption = document.querySelector("[data-showcase-capture]");
+    if (captureCaption) captureCaption.textContent = scenes[activeIndex]?.dataset.captureCaption || "";
     if (restart) startRotation();
   };
 

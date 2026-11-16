@@ -55,8 +55,14 @@
     nav.scrollBy({ left: delta, behavior: reducedMotion ? 'auto' : 'smooth' });
   }
 
-  // New phone captures are wired here after review. Shared website and preview media are not used.
+  // Current phone captures are reviewed; only explicitly labelled archive items reuse historical media.
   function mediaFor(item) {
+    if (item.source === 'archive') {
+      const src = item.image;
+      return typeof src === 'string' && src.startsWith('/site-assets/evolution/') && !src.includes('..')
+        ? [{ kind: 'image', src, alt: item.title + ' (historical archive; capture date unknown)' }]
+        : [];
+    }
     if (item.source !== 'device') return [];
     const isNewCapture = (src) => typeof src === 'string' && src.startsWith(base + 'media/');
     const media = [];
@@ -216,6 +222,12 @@
     $('#stage-title').textContent = item.title;
     renderPoints(item);
     renderCapture(item);
+    const context = $('#capture-context');
+    const meta = item.captureMeta;
+    context.hidden = !meta || !mediaFor(item).length;
+    context.textContent = meta
+      ? [meta.device, meta.date, meta.archive ? 'Historical archive' : meta.demo ? 'Demo data' : 'App capture', meta.note].filter(Boolean).join(' · ')
+      : '';
     showMedia(0);
     $('#previous').disabled = index === 0;
     $('#next').disabled = index === slides.length - 1;

@@ -1,7 +1,7 @@
-part of '../privacy_consent_gate_feature.dart';
+part of '../signup_privacy_consent_feature.dart';
 
-class _PrivacyConsentGateViewModel extends ChangeNotifier {
-  _PrivacyConsentGateViewModel(this.repository, this.owner);
+class _SignupPrivacyConsentViewModel extends ChangeNotifier {
+  _SignupPrivacyConsentViewModel(this.repository, this.owner);
 
   final PrivacyConsentRepository repository;
   final String owner;
@@ -25,7 +25,6 @@ class _PrivacyConsentGateViewModel extends ChangeNotifier {
       final saved = await repository.load(owner);
       if (_disposed) return;
       accepted = saved != null;
-      if (accepted) _upload();
     } catch (_) {
       loadFailed = true;
     } finally {
@@ -49,19 +48,12 @@ class _PrivacyConsentGateViewModel extends ChangeNotifier {
       await repository.accept(owner, languageCode: 'en');
       if (_disposed) return;
       accepted = true;
-      _upload();
     } catch (_) {
       saveFailed = true;
     } finally {
       saving = false;
       _publish();
     }
-  }
-
-  void _upload() {
-    // The local action is authoritative for continuing. Reconnect recovery
-    // also drains this account's receipt if this network attempt fails.
-    unawaited(repository.flush(owner).catchError((Object _) {}));
   }
 
   @override

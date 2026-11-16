@@ -157,6 +157,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
     );
     _appViewModel.addListener(_refresh);
     _settingsController.addListener(_refresh);
+    AccountDeletionService.instance.addListener(_handleAccountDeletion);
     _initializeLaunch();
   }
 
@@ -168,6 +169,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   void dispose() {
     _appViewModel.removeListener(_refresh);
     _settingsController.removeListener(_refresh);
+    AccountDeletionService.instance.removeListener(_handleAccountDeletion);
     _appViewModel.dispose();
 
     _screenModel.removeListener(_renderScreenModel);
@@ -183,6 +185,10 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
         _launchLocked = false;
       }
     });
+    if (AccountDeletionService.instance.phase != AccountDeletionPhase.idle) {
+      _appViewModel.acknowledgeSecurityMessage();
+      return;
+    }
     final message = _appViewModel.securityMessage;
     if (message != null && !_showingSecurityNotice) {
       _showingSecurityNotice = true;
@@ -204,6 +210,20 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
         _showingSecurityNotice = false;
       });
     }
+  }
+
+  void _handleAccountDeletion() {
+    final deletion = AccountDeletionService.instance;
+    if (!mounted || !deletion.accepted) return;
+    _appViewModel.acknowledgeSecurityMessage();
+    if (_appViewModel.session?.phoneNumber == deletion.deletedOwner) {
+      _appViewModel.signOut();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _navigatorKey.currentState?.popUntil((route) => route.isFirst);
+      }
+    });
   }
 
   /// Builds root.
@@ -231,18 +251,11 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
             onCompleted: _appViewModel.completeOnboarding,
             firebaseBootstrapResult: widget.firebaseBootstrapResult,
           )
-        : _appViewModel.session!.requiresPrivacyConsent
-        ? PrivacyConsentGate(
-            key: ValueKey('privacy:${_appViewModel.session!.phoneNumber}'),
-            ownerPhoneNumber: _appViewModel.session!.phoneNumber,
-            homeBuilder: (_) => _buildHome(platformDeepLink),
-            onNotNow: _appViewModel.signOut,
-          )
         : _buildHome(platformDeepLink);
   }
 
   Widget _buildHome(String? platformDeepLink) {
-    // Keep a pending invitation/SOS route until the consent gate actually opens home.
+    // Keep a pending invitation/SOS route until setup actually opens home.
     if (platformDeepLink != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _pendingPlatformDeepLink == platformDeepLink) {
@@ -332,6 +345,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
         navigatorKey: _navigatorKey,
         navigatorObservers: [passwordRouteObserver],
         debugShowCheckedModeBanner: false,
+        builder: (context, child) => AccountDeletionOverlay(child: child!),
         themeMode: _settingsController.themeMode,
         theme: ThemeData(
           useMaterial3: true,

@@ -4674,7 +4674,6 @@ class LocalSessionDatabase {
       'is_super_admin': session.isSuperAdmin ? 1 : 0,
       'username': session.username,
       'requires_onboarding': session.requiresOnboarding ? 1 : 0,
-      'requires_privacy_consent': session.requiresPrivacyConsent ? 1 : 0,
       'onboarding_profile_complete': session.isOnboardingProfileComplete
           ? 1
           : 0,
@@ -4700,7 +4699,6 @@ class LocalSessionDatabase {
       isSuperAdmin: row['is_super_admin'] == 1,
       username: row['username'] as String? ?? '',
       requiresOnboarding: row['requires_onboarding'] == 1,
-      requiresPrivacyConsent: row['requires_privacy_consent'] == 1,
       isOnboardingProfileComplete: row['onboarding_profile_complete'] == 1,
       photoURL: row['photo_url'] as String?,
       photoBytes: row['photo_bytes'] is Uint8List

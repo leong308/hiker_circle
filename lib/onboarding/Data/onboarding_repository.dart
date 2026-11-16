@@ -174,7 +174,7 @@ class OnboardingRepository {
           'requiresOnboarding': false,
           'onboardingCompletedAt': FieldValue.serverTimestamp(),
           'onboardingCompletedAtLocal': now.toIso8601String(),
-          // Version 2 finishes setup before the account's one-time privacy gate.
+          // Consent is already collected before the sign-up phone request.
           'onboardingVersion': 2,
         }, SetOptions(merge: true));
       });

@@ -9,8 +9,8 @@
   <meta name="description" content="A visual tour of HikerCircle features for internal presentations.">
   <title>App showcase · HikerCircle internal</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=hc-2">
-  <link rel="stylesheet" href="/internal/app-showcase/showcase.css?v=20261002-presentation">
-  <script src="/internal/app-showcase/showcase.js?v=20261002-presentation" defer></script>
+  <link rel="stylesheet" href="/internal/app-showcase/showcase.css?v=20261116-current-captures">
+  <script src="/internal/app-showcase/showcase.js?v=20261116-current-captures" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#highlights">Skip to the showcase</a>
@@ -33,7 +33,7 @@
       <div class="stage" id="stage" tabindex="0" aria-label="Feature highlight; use left and right arrow keys to navigate">
         <div class="stage-media">
           <div class="media-glow" aria-hidden="true"></div>
-          <button id="open-image" class="phone-frame" type="button" aria-label="View screenshot full size, shown in an iPhone 15 Pro Max mockup" hidden><img id="stage-image" alt="" loading="eager"></button>
+          <button id="open-image" class="phone-frame" type="button" aria-label="View app screenshot full size" hidden><img id="stage-image" alt="" loading="eager"></button>
           <div id="image-gallery" class="image-gallery" aria-label="Feature screenshots" hidden></div>
           <div id="video-frame" class="phone-frame video-phone" hidden><video id="stage-video" controls autoplay muted playsinline preload="metadata" hidden></video></div>
           <section id="media-request" class="capture-card" aria-labelledby="request-title" hidden>
@@ -55,7 +55,8 @@
           <div class="stage-controls"><button id="previous" type="button" aria-label="Previous highlight">←</button><button id="next" type="button" aria-label="Next highlight">→</button><span>Tap a point for detail</span></div>
         </div>
       </div>
-      <p class="showcase-note">Capture in dark mode. Use full-screen portrait originals from the current build. Recording-only features do not need a separate screenshot.</p>
+      <p id="capture-context" class="showcase-note" hidden></p>
+      <p class="showcase-note">Explore full-screen app captures. Demo scenes use the current app screens with fictional data; unrecorded features show their capture brief.</p>
       <p id="load-error" class="load-error" hidden>The showcase could not load. Please refresh this page.</p>
       <noscript><p class="load-error">Enable JavaScript to view the feature highlights.</p></noscript>
     </section>

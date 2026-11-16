@@ -2,6 +2,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const {belongsToAccount} = require('./account_registration');
 
 const RECENT_VERIFICATION_MS = 10 * 60 * 1000;
 const CANDIDATE_TTL_MS = 10 * 60 * 1000;
@@ -97,7 +98,7 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
       if (state.data()?.activeSessionId === sid && value.activated === true) {
         return {replacementRequired: false, previousDeviceName: device.name, expectedPreviousSessionId: sid};
       }
-      if (!candidate.exists || value.uid !== uid || value.activated
+      if (!candidate.exists || !belongsToAccount(account, value) || value.uid !== uid || value.activated
         || Date.now() > Number(value.expiresAtMillis || 0)) fail('This login has expired. Start again.');
       if (value.device && value.device.appInstanceId !== device.appInstanceId) fail('This login belongs to another installation.');
       tx.set(candidate.ref, {device}, {merge: true});
@@ -122,7 +123,7 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
       const next = candidate.data() || {};
       const previous = state.data() || {};
       if (previous.activeSessionId === sid && next.activated === true) return {activated: true};
-      if (!candidate.exists || next.uid !== uid || next.activated || !next.device
+      if (!candidate.exists || !belongsToAccount(account, next) || next.uid !== uid || next.activated || !next.device
         || Date.now() > Number(next.expiresAtMillis || 0)) fail('This login has expired. Start again.');
       if ((previous.activeSessionId || '') !== expected) {
         throw new HttpsError('failed-precondition', 'The active device changed. Review the device warning again.',

@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/widgets/page_header_style.dart';
 import '../feedback/feedback_page.dart';
 import '../home/View/first_aid_guide_page.dart';
+import 'View/account_deletion_dialog.dart';
 import 'Model/help_center_content.dart';
 part 'View/help_center_page_screen.dart';
 

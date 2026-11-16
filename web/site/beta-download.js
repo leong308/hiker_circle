@@ -8,13 +8,22 @@
       if (!response.ok) throw new Error('Release unavailable');
       const release = await response.json();
       const url = new URL(release.url);
+      const published = new Date(`${release.published}T00:00:00Z`);
       if (url.protocol !== 'https:' || url.hostname !== 'firebasestorage.googleapis.com' ||
           !url.pathname.startsWith('/v0/b/hiker-circle.firebasestorage.app/o/releases%2Fandroid%2Fbeta%2F') ||
-          !/^[a-f0-9]{64}$/.test(release.sha256) || !Number.isFinite(release.sizeBytes) || release.sizeBytes <= 0) throw new Error('Invalid release');
+          !/^[a-f0-9]{64}$/.test(release.sha256) || !Number.isSafeInteger(release.sizeBytes) || release.sizeBytes <= 0 ||
+          typeof release.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release.version) ||
+          !Number.isSafeInteger(release.build) || release.build < 1 ||
+          typeof release.minAndroid !== 'string' || !/^\d+(?:\.\d+){0,2}$/.test(release.minAndroid) ||
+          typeof release.published !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(release.published) ||
+          Number.isNaN(published.valueOf()) || published.toISOString().slice(0, 10) !== release.published) throw new Error('Invalid release');
+      document.querySelector('[data-beta-details]').textContent = `Android ${release.minAndroid}+ · ${(release.sizeBytes / 1048576).toFixed(1)} MB`;
+      const publishedNote = document.querySelector('[data-beta-published]');
+      publishedNote.textContent = `Updated ${published.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}`;
+      publishedNote.hidden = false;
       link.href = url.href;
       link.removeAttribute('aria-disabled');
       link.textContent = 'Download Android beta ↓';
-      document.querySelector('[data-beta-size]').textContent = `${(release.sizeBytes / 1048576).toFixed(1)} MB · Direct APK download`;
     } catch (_) {
       link.textContent = 'Download temporarily unavailable';
     }

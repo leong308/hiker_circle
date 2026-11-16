@@ -257,7 +257,6 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
                               _isStartingLiveLocation ||
                               _liveLocationSharingService.isBusy,
                           isSharing: _liveLocationSharingService.isSharing,
-                          shareUrl: _liveLocationSharingService.share?.shareUrl,
                           expiresAt:
                               _liveLocationSharingService.share?.expiresAt,
                           autoShareOnHikeStart:
@@ -295,8 +294,7 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
             if (_isStartingLiveLocation)
               const GpsStartingOverlay(
                 title: 'Starting live location…',
-                message:
-                    'Getting your GPS position and activating your sharing link. This may take a few seconds.',
+                message: 'Getting your location…',
               ),
           ],
         ),
@@ -773,7 +771,7 @@ class _LocationDetails extends StatelessWidget {
         : '${_twoDigits(capturedAt.hour)}:${_twoDigits(capturedAt.minute)}:${_twoDigits(capturedAt.second)}';
     final accuracy = location?.accuracyMeters == null
         ? 'Accuracy unknown'
-        : 'Accuracy +/- ${location!.accuracyMeters!.toStringAsFixed(0)} m';
+        : '±${location!.accuracyMeters!.toStringAsFixed(0)} m';
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -817,7 +815,9 @@ class _LocationDetails extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '$accuracy - Updated $timestamp',
+                      location == null
+                          ? 'Waiting for GPS'
+                          : '$accuracy · $timestamp',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -847,7 +847,6 @@ class _LiveLocationControls extends StatelessWidget {
     required this.isActive,
     required this.isBusy,
     required this.isSharing,
-    required this.shareUrl,
     required this.expiresAt,
     required this.autoShareOnHikeStart,
     required this.isPreferenceBusy,
@@ -866,7 +865,6 @@ class _LiveLocationControls extends StatelessWidget {
   final bool isActive;
   final bool isBusy;
   final bool isSharing;
-  final String? shareUrl;
   final DateTime? expiresAt;
   final bool autoShareOnHikeStart;
   final bool isPreferenceBusy;
@@ -884,8 +882,7 @@ class _LiveLocationControls extends StatelessWidget {
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
-    final statusText = isActive ? 'Live location active' : 'Live location off';
-    final linkText = shareUrl ?? 'Firebase live link not created yet';
+    final statusText = isActive ? 'Sharing live' : 'Sharing off';
     final isDisabled = isBusy || isSharing;
 
     return ClipRRect(
@@ -932,24 +929,10 @@ class _LiveLocationControls extends StatelessWidget {
                                 letterSpacing: 0,
                               ),
                         ),
-                        const SizedBox(height: 3),
-                        Text(
-                          linkText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: _LocationColors.secondaryTextFor(
-                                  context,
-                                ),
-                                fontWeight: FontWeight.w400,
-                                letterSpacing: 0,
-                              ),
-                        ),
                         if (isActive && expiresAt != null) ...[
                           const SizedBox(height: 3),
                           Text(
-                            'Expires: ${PreferredTimeZone.formatInstant(expiresAt!, AppSettingsController.instance.preferredTimeZone)}',
+                            'Until ${PreferredTimeZone.formatInstant(expiresAt!, AppSettingsController.instance.preferredTimeZone)}',
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
                                   color: _LocationColors.secondaryTextFor(
@@ -966,7 +949,7 @@ class _LiveLocationControls extends StatelessWidget {
               const SizedBox(height: 14),
               if (!hasActiveHike) ...[
                 Text(
-                  'Activating live location outside a hike sends a WhatsApp update with your live link, phone number and original sharing start time to every saved SOS contact.',
+                  'Sends your live link to SOS contacts on WhatsApp.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: _LocationColors.secondaryTextFor(context),
                     height: 1.35,
@@ -974,7 +957,64 @@ class _LiveLocationControls extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
               ],
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: isDisabled ? null : onToggle,
+                      icon: Icon(
+                        isActive
+                            ? Icons.stop_circle_rounded
+                            : Icons.power_settings_new_rounded,
+                        size: 18,
+                      ),
+                      label: Text(isActive ? 'Stop' : 'Start'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: isActive
+                            ? _LocationColors.destructive
+                            : _LocationColors.green,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(0, 44),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: isDisabled ? null : onShare,
+                      icon: isSharing
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: HikerCircleMinorLoadingIndicator(size: 18),
+                            )
+                          : const Icon(Icons.ios_share_rounded, size: 18),
+                      label: const Text('Share link'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _LocationColors.green,
+                        minimumSize: const Size(0, 44),
+                        side: const BorderSide(color: _LocationColors.green),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (isActive) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Sharing renews the link for 24 hours.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _LocationColors.secondaryTextFor(context),
+                  ),
+                ),
+              ],
               if (contactNotificationStatus case final status?) ...[
+                const SizedBox(height: 12),
                 Semantics(
                   liveRegion: true,
                   child: Row(
@@ -1009,16 +1049,23 @@ class _LiveLocationControls extends StatelessWidget {
                     child: TextButton.icon(
                       onPressed: onRetryContactNotifications,
                       icon: const Icon(Icons.refresh_rounded, size: 17),
-                      label: const Text('Retry SOS contact notification'),
+                      label: const Text('Retry'),
                     ),
                   ),
-                const SizedBox(height: 14),
               ],
+              const SizedBox(height: 14),
+              Divider(
+                height: 1,
+                color: _LocationColors.secondaryTextFor(
+                  context,
+                ).withValues(alpha: 0.22),
+              ),
+              const SizedBox(height: 18),
               DropdownButtonFormField<Duration>(
                 key: ValueKey(updateInterval),
                 initialValue: updateInterval,
                 decoration: const InputDecoration(
-                  labelText: 'Location update interval',
+                  labelText: 'Update interval',
                   prefixIcon: Icon(Icons.timer_outlined),
                 ),
                 items: [
@@ -1034,24 +1081,6 @@ class _LiveLocationControls extends StatelessWidget {
                         if (interval != null) onUpdateIntervalChanged(interval);
                       },
               ),
-              const SizedBox(height: 7),
-              Text(
-                hasActiveHike
-                    ? 'Shared with this hike’s footprint upload interval. Each uploaded batch updates your saved route and live location together. GPS footprints follow the selected interval.'
-                    : 'The same interval is used for live location and footprint uploads during hikes. GPS footprints follow the selected interval.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _LocationColors.secondaryTextFor(context),
-                  height: 1.35,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Divider(
-                height: 1,
-                color: _LocationColors.secondaryTextFor(
-                  context,
-                ).withValues(alpha: 0.22),
-              ),
               const SizedBox(height: 14),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -1061,7 +1090,7 @@ class _LiveLocationControls extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Share automatically when a hike starts',
+                          'Share at hike start',
                           style: Theme.of(context).textTheme.titleSmall
                               ?.copyWith(
                                 color: _LocationColors.textFor(context),
@@ -1071,7 +1100,7 @@ class _LiveLocationControls extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Creates a live link after tracking starts and sends it to every saved SOS contact. This is a safety update, not an SOS alert.',
+                          'Notify SOS contacts',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
                                 color: _LocationColors.secondaryTextFor(
@@ -1089,64 +1118,6 @@ class _LiveLocationControls extends StatelessWidget {
                     value: autoShareOnHikeStart,
                     activeTrackColor: _LocationColors.green,
                     onChanged: isPreferenceBusy ? null : onAutoShareChanged,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (isActive) ...[
-                Text(
-                  'Share Live renews an active link for 24 hours before opening sharing options.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _LocationColors.secondaryTextFor(context),
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 10),
-              ],
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: isDisabled ? null : onToggle,
-                      icon: Icon(
-                        isActive
-                            ? Icons.stop_circle_rounded
-                            : Icons.power_settings_new_rounded,
-                        size: 18,
-                      ),
-                      label: Text(isActive ? 'Stop Live' : 'Activate Live'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: isActive
-                            ? _LocationColors.destructive
-                            : _LocationColors.green,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(0, 44),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: isDisabled ? null : onShare,
-                      icon: isSharing
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: HikerCircleMinorLoadingIndicator(size: 18),
-                            )
-                          : const Icon(Icons.ios_share_rounded, size: 18),
-                      label: const Text('Share Live'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: _LocationColors.green,
-                        minimumSize: const Size(0, 44),
-                        side: const BorderSide(color: _LocationColors.green),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
                   ),
                 ],
               ),

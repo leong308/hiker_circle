@@ -6,8 +6,8 @@ import '../../app/Data/local_session_database.dart';
 import '../../app/Data/user_module_paths.dart';
 import '../Model/privacy_consent_receipt.dart';
 
-/// Saves the positive action locally before allowing continuation. A network
-/// failure leaves a durable receipt for reconnect recovery, never a false decline.
+/// Records agreement locally before submitting a sign-up phone number. Upload
+/// waits until authentication and mobile-session activation are complete.
 class PrivacyConsentRepository {
   PrivacyConsentRepository({
     LocalSessionDatabase? database,
