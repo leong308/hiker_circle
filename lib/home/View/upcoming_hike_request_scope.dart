@@ -167,6 +167,10 @@ class UpcomingHikePeopleButton extends StatelessWidget {
     final host = hike.creatorPhone == viewerPhone;
     final count = host ? scope?.notifier?.counts[hike.id] ?? 0 : 0;
     final team = hike.hikeType == 'team';
+    final participants = hike.participantCount;
+    final rosterLabel =
+        team ? '$participants ${participants == 1 ? 'hiker' : 'hikers'}' : 'Solo hike';
+    final requestLabel = '$count pending join ${count == 1 ? 'request' : 'requests'}';
     final child = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -188,8 +192,7 @@ class UpcomingHikePeopleButton extends StatelessWidget {
       ],
     );
     return Semantics(
-      label:
-          '${team ? '${hike.participantCount} hikers' : 'Solo hike'}${host ? ', $count pending join requests' : ''}',
+      label: host ? '$rosterLabel, $requestLabel' : rosterLabel,
       child: Tooltip(
         message: host ? 'Join requests' : 'Hikers',
         child: TextButton(

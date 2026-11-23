@@ -10,6 +10,9 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
   bool isReadCacheReconciliationPaused(String owner) =>
       _conditionalCache.isRevalidationPausedFor(owner);
 
+  Future<void> waitForReadCacheReconciliation(String owner) =>
+      _conditionalCache.waitForRevalidation(owner);
+
   Future<void> _invalidateReadModel(String owner, String resourceType) async {
     try {
       await _conditionalCache.invalidate(

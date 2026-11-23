@@ -520,6 +520,13 @@ class _HikeHistoryCard extends StatelessWidget {
                         fontSize: 13,
                       ),
                     ),
+                    if (hike.pendingSync || hike.awaitingHistory)
+                      Text(
+                        hike.awaitingHistory
+                            ? 'Synced · Updating history'
+                            : 'Saved on this phone · Waiting to sync',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
                     const SizedBox(height: 10),
                     Row(
                       children: [

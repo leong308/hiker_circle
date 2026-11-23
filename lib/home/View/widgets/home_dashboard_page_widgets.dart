@@ -367,7 +367,12 @@ class _BestMatchesSectionState extends State<_BestMatchesSection>
             _EmptyState(
               message: _filterMode != _TrailFilterMode.state || _region == null
                   ? (_filterMode == _TrailFilterMode.nearest && location != null
-                        ? 'No driving routes found within ${_nearestRadiusKm.toInt()} km. Try a larger distance, select All, or retry Nearest.'
+                        ? nearestTrailsEmptyMessage(
+                            radiusKm: _nearestRadiusKm.toInt(),
+                            drivingDistancesKm: widget.trails.map(
+                              (trail) => _roadDistancesKm[trail.trailId],
+                            ),
+                          )
                         : 'No trails are available yet. Check again later.')
                   : 'No trails match ${_region!.state}, ${_region!.country}. Try another state.',
             )

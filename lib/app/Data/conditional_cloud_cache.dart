@@ -168,6 +168,8 @@ class ConditionalCloudCache {
       _paused(owner) ||
       (owner.isEmpty ? _batches.isNotEmpty : _batches.containsKey(owner));
 
+  Future<void> waitForRevalidation(String owner) => _waitForRevalidation(owner);
+
   bool _insidePendingWriteSequence(String owner) {
     final owners = Zone.current[_pauseOwnersZoneKey] as Set<String>?;
     return owner.isEmpty

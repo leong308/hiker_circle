@@ -361,7 +361,7 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
                     onPressed: widget.durationMinutes <= 0
                         ? null
                         : () async {
-                            final picked = await showTimePicker(
+                            final picked = await showHikeTimePicker(
                               context: context,
                               initialTime:
                                   departure ??

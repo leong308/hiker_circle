@@ -893,7 +893,7 @@ class _Bars extends StatelessWidget {
                       Text(
                         '${partial ? '≥ ' : ''}${_fmt(row['value'])}',
                         semanticsLabel:
-                            '${partial ? 'At least ' : ''}${_fmt(row['value'])} $suffix',
+                            '${partial ? 'At least ' : ''}${_fmt(row['value'])} ${AdminDashboardMetric.countUnit(_n(row['value']), suffix)}',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ],

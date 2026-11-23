@@ -357,13 +357,34 @@ class _CirclePageState extends State<CirclePage> {
     final key = _phoneKeyFor(person.phoneNumber);
     if (key.isEmpty ||
         key == _phoneKeyFor(widget.session.phoneNumber) ||
-        _buddyPhones.any((phone) => _phoneKeyFor(phone) == key) ||
-        _outgoingBuddyRequestPhones.contains(key) ||
         _busyBuddyRequestPhones.contains(key)) {
       return;
     }
     setState(() => _busyBuddyRequestPhones.add(key));
     try {
+      final relationships = await _CirclePageDataActions.loadBuddyRelationships(
+        widget.hikerCircleRepository,
+      )(session: widget.session, force: true);
+      if (!mounted) return;
+      setState(() {
+        _buddyPhones
+          ..clear()
+          ..addAll(relationships.buddyPhoneNumbers);
+        _outgoingBuddyRequestPhones
+          ..clear()
+          ..addAll(relationships.outgoingRequestPhones);
+        _screenModel.stateBuddyRequests = relationships.incomingRequests
+            .map(_buddyRequestFromFirestore)
+            .toList();
+      });
+      final status = relationships.requestStatusMessage(
+        phoneNumber: person.phoneNumber,
+        displayName: person.name,
+      );
+      if (status != null) {
+        _showCircleMessage(status);
+        return;
+      }
       await _CirclePageDataActions.sendBuddyRequest(
         widget.hikerCircleRepository,
       )(session: widget.session, buddyPhoneNumber: person.phoneNumber);

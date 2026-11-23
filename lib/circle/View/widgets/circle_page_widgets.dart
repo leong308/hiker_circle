@@ -802,6 +802,9 @@ class _CommunityPostCardState extends State<_CommunityPostCard> {
                   icon: const Icon(CupertinoIcons.chat_bubble, size: 20),
                   label: Text(
                     '${post.replies}',
+                    semanticsLabel: post.replies == 1
+                        ? 'View comments, 1 comment'
+                        : 'View comments, ${post.replies} comments',
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),

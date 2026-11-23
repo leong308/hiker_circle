@@ -1,5 +1,20 @@
 part of '../home_dashboard_page_feature.dart';
 
+/// Describes an empty nearest-trails result without treating unknown distances
+/// as confirmed out-of-range routes.
+String nearestTrailsEmptyMessage({
+  required int radiusKm,
+  required Iterable<double?> drivingDistancesKm,
+}) {
+  if (drivingDistancesKm.isEmpty) {
+    return 'No trails are available yet. Check again later.';
+  }
+  if (drivingDistancesKm.contains(null)) {
+    return 'Some driving distances are unavailable. Select All to browse trails, or retry Nearest when connected.';
+  }
+  return 'No driving routes found within $radiusKm km. Try a larger distance, select All, or retry Nearest.';
+}
+
 /// Owns the state and non-visual actions of _BestMatchesSection.
 class _BestMatchesSectionStateViewModel extends ChangeNotifier {
   /// Creates best matches section state view model.

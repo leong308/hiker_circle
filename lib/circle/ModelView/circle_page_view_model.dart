@@ -132,12 +132,19 @@ class _CirclePageStateViewModel extends ChangeNotifier {
   /// Loads buddy requests.
   Future<void> commandLoadBuddyRequests() async {
     try {
-      final requests = await readHikerCircleRepository().loadBuddyRequests(
-        session: readSession(),
-      );
+      final relationships = await readHikerCircleRepository()
+          .loadBuddyRelationships(session: readSession(), force: true);
       if (!mounted) return;
       _publish(() {
-        stateBuddyRequests = requests.map(_buddyRequestFromFirestore).toList();
+        stateBuddyRequests = relationships.incomingRequests
+            .map(_buddyRequestFromFirestore)
+            .toList();
+        stateBuddyPhones
+          ..clear()
+          ..addAll(relationships.buddyPhoneNumbers);
+        stateOutgoingBuddyRequestPhones
+          ..clear()
+          ..addAll(relationships.outgoingRequestPhones);
       });
     } catch (_) {}
   }

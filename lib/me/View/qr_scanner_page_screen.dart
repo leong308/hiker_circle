@@ -40,6 +40,9 @@ class _QrScannerPageState extends State<QrScannerPage> {
 
   String? _scannerError;
   StreamSubscription<dynamic>? _subscription;
+  Timer? _processingResetTimer;
+  int _scannerInstance = 0;
+  bool _retryingScanner = false;
 
   /// Initializes bindings and starts the screen lifecycle.
   @override
@@ -52,6 +55,10 @@ class _QrScannerPageState extends State<QrScannerPage> {
       effectShowOwnQrMessage: _showOwnQrMessage,
     )..addListener(_renderScreenModel);
 
+    _listenForQrEvents();
+  }
+
+  void _listenForQrEvents() {
     try {
       _subscription = _eventChannel.receiveBroadcastStream().listen(
         _onQrDetected,
@@ -60,6 +67,14 @@ class _QrScannerPageState extends State<QrScannerPage> {
           setState(() {
             _isProcessing = false;
             _scannerError = 'The camera scanner stopped unexpectedly.';
+          });
+        },
+        onDone: () {
+          if (!mounted || _subscription == null) return;
+          setState(() {
+            _isProcessing = false;
+            _scannerError =
+                'The camera scanner stopped. Try again to continue.';
           });
         },
       );
@@ -71,6 +86,7 @@ class _QrScannerPageState extends State<QrScannerPage> {
   /// Releases resources owned by this instance.
   @override
   void dispose() {
+    _processingResetTimer?.cancel();
     final subscription = _subscription;
     _subscription = null;
     if (subscription != null) {
@@ -88,21 +104,41 @@ class _QrScannerPageState extends State<QrScannerPage> {
 
   /// Shows own qr message.
   void _showOwnQrMessage() {
+    _showScanMessage('That is your own HikerCircle QR. No action taken.');
+  }
+
+  void _showScanMessage(String message) {
     if (!mounted) return;
+    _processingResetTimer?.cancel();
     setState(() => _isProcessing = true);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('That is your own HikerCircle QR. No action taken.'),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
-    Future.delayed(const Duration(seconds: 2), () {
+    _processingResetTimer = Timer(const Duration(seconds: 2), () {
       if (mounted) {
         setState(() => _isProcessing = false);
       }
     });
+  }
+
+  Future<void> _retryScanner() async {
+    if (_retryingScanner) return;
+    _retryingScanner = true;
+    final subscription = _subscription;
+    _subscription = null;
+    if (subscription != null) {
+      await subscription.cancel().catchError((_) {});
+    }
+    if (!mounted) return;
+    setState(() {
+      _scannerInstance++;
+      _scannerError = null;
+      _isProcessing = false;
+      _retryingScanner = false;
+    });
+    _listenForQrEvents();
   }
 
   /// Shows add buddy prompt.
@@ -113,6 +149,36 @@ class _QrScannerPageState extends State<QrScannerPage> {
   }) async {
     if (!mounted) return;
     setState(() => _isProcessing = true);
+
+    if (phoneNumber.isEmpty) {
+      _showScanMessage('This QR is missing a phone number.');
+      return;
+    }
+
+    try {
+      final relationships =
+          await _QrScannerPageDataActions.loadBuddyRelationships(
+            widget.repository,
+          )(session: widget.session, force: true).timeout(
+            const Duration(seconds: 15),
+          );
+      if (!mounted) return;
+      final statusMessage = relationships.requestStatusMessage(
+        phoneNumber: phoneNumber,
+        displayName: name,
+      );
+      if (statusMessage != null) {
+        _showScanMessage(statusMessage);
+        return;
+      }
+    } catch (_) {
+      if (mounted) {
+        _showScanMessage(
+          'Could not check this profile. Check your connection and scan again.',
+        );
+      }
+      return;
+    }
 
     bool? shouldAdd;
     try {
@@ -130,19 +196,6 @@ class _QrScannerPageState extends State<QrScannerPage> {
     if (!mounted) return;
 
     if (shouldAdd == true) {
-      if (phoneNumber.isEmpty) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            const SnackBar(
-              content: Text('This QR is missing a phone number.'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        setState(() => _isProcessing = false);
-        return;
-      }
-
       try {
         await _QrScannerPageDataActions.sendBuddyRequest(widget.repository)(
           session: widget.session,
@@ -170,7 +223,8 @@ class _QrScannerPageState extends State<QrScannerPage> {
             behavior: SnackBarBehavior.floating,
           ),
         );
-      Future.delayed(const Duration(milliseconds: 600), () {
+      _processingResetTimer?.cancel();
+      _processingResetTimer = Timer(const Duration(milliseconds: 600), () {
         if (mounted) {
           _presentShowAddBuddyPromptEffect2();
         }
@@ -193,12 +247,14 @@ class _QrScannerPageState extends State<QrScannerPage> {
         children: [
           if (defaultTargetPlatform == TargetPlatform.iOS)
             UiKitView(
+              key: ValueKey(_scannerInstance),
               viewType: 'hiker_circle/qr_scanner',
               creationParams: null,
               creationParamsCodec: const StandardMessageCodec(),
             )
           else if (defaultTargetPlatform == TargetPlatform.android)
             AndroidView(
+              key: ValueKey(_scannerInstance),
               viewType: 'hiker_circle/qr_scanner',
               creationParams: null,
               creationParamsCodec: const StandardMessageCodec(),
@@ -232,6 +288,10 @@ class _QrScannerPageState extends State<QrScannerPage> {
                           style: const TextStyle(color: Colors.white),
                         ),
                         const SizedBox(height: 14),
+                        OutlinedButton(
+                          onPressed: _retryingScanner ? null : _retryScanner,
+                          child: const Text('Try Again'),
+                        ),
                         OutlinedButton(
                           onPressed: () => Navigator.of(context).pop(),
                           child: const Text('Go Back'),

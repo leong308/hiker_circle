@@ -1871,9 +1871,7 @@ class HikeSummaryReport {
         activeHike.batteryStartedLevel ?? activeHike.batteryLevel;
     final batteryDrop = math.max(0, batteryStart - activeHike.batteryLevel);
     final movingHours = math.max(duration.inMilliseconds / 3600000, 0.1);
-    final paceMinutesPerKm = distanceKm <= 0
-        ? 0
-        : duration.inSeconds / 60 / math.max(distanceKm, 0.1);
+    final paceMinutesPerKm = _averagePaceMinutesPerKm(duration, distanceKm);
 
     return HikeSummaryReport(
       sessionId: activeHike.sessionId,
@@ -1888,8 +1886,11 @@ class HikeSummaryReport {
       batteryStartPercent: batteryStart,
       batteryEndPercent: activeHike.batteryLevel,
       insights: [
-        'Average pace: ${paceMinutesPerKm.round()} min/km across ${distanceKm.toStringAsFixed(2)} km.',
-        'Average speed: ${(duration.inSeconds > 0 ? distanceKm / (duration.inSeconds / 3600) : 0).toStringAsFixed(2)} km/h.',
+        if (paceMinutesPerKm != null)
+          'Average pace: ${paceMinutesPerKm.toStringAsFixed(1)} min/km across ${distanceKm.toStringAsFixed(2)} km.'
+        else
+          'Average pace: unavailable until distance and elapsed time are recorded.',
+        'Average speed: ${(duration.inMilliseconds > 0 ? distanceKm / (duration.inMilliseconds / Duration.millisecondsPerHour) : 0).toStringAsFixed(2)} km/h.',
         'Route recorded with automatic GPS tracking.',
         'Battery used: $batteryDrop% over ${_formatDuration(duration)} (${(batteryDrop / movingHours).toStringAsFixed(1)}% per hour).',
         if (activeHike.queuedUpdates == 0)
@@ -1947,6 +1948,21 @@ class HikeSummaryReport {
       duration.inMilliseconds > 0 && distanceKm.isFinite
       ? distanceKm / (duration.inMilliseconds / 3600000)
       : 0;
+
+  /// Uses the measured distance, including recordings shorter than 100 metres.
+  static double? _averagePaceMinutesPerKm(
+    Duration duration,
+    double distanceKm,
+  ) {
+    if (duration.inMilliseconds <= 0 ||
+        !distanceKm.isFinite ||
+        distanceKm <= 0) {
+      return null;
+    }
+    return duration.inMilliseconds /
+        Duration.millisecondsPerMinute /
+        distanceKm;
+  }
 
   /// Returns share text.
   String get shareText {

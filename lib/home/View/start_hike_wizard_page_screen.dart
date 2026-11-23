@@ -1,7 +1,7 @@
 part of '../start_hike_wizard_page_feature.dart';
 
 /// Defines the start hike wizard step choices.
-enum _StartHikeWizardStep { trail, type, timing, reminder, safety }
+enum _StartHikeWizardStep { trail, type, timing, buddies, reminder, safety }
 
 /// Displays the start hike wizard page.
 class StartHikeWizardPage extends StatefulWidget {
@@ -203,6 +203,11 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     }
     if (!mounted) return;
 
+    if ((currentStep == _StartHikeWizardStep.buddies || _isFinalStep) &&
+        !_validateImmediateTeamRoster()) {
+      return;
+    }
+
     if (currentStep == _StartHikeWizardStep.timing &&
         _isUpcomingHike &&
         _draft.departureTime.isBefore(_minimumScheduledDepartureTime())) {
@@ -302,10 +307,13 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
 
   /// Starts now and finish.
   Future<void> _startNowAndFinish() async {
-    if (_isStarting) {
+    if (_isStarting || !_validateImmediateTeamRoster()) {
       return;
     }
     final route = ModalRoute.of(context);
+    // This attempt includes user-paced safety and team preparation routes.
+    // Keep the submission guard until the attempt actually finishes; a visual
+    // progress timer cannot cancel the callback or make another submit safe.
     setState(() => _isStarting = true);
     try {
       final safetyAccepted = await _confirmPreHikeSafety();
@@ -321,6 +329,28 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
         setState(() => _isStarting = false);
       }
     }
+  }
+
+  bool _validateImmediateTeamRoster() {
+    if (!_startNow || _draft.hikeType != HikeType.team) return true;
+    final error = ImmediateTeamRoster.validationError(
+      _draft.teamBuddies,
+      ownerPhoneNumber: widget.session?.phoneNumber ?? '',
+    );
+    if (error == null) return true;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error)));
+    return false;
+  }
+
+  Future<List<TeamHikeBuddy>> _loadTeamBuddies() {
+    final repository = widget.repository;
+    final session = widget.session;
+    if (repository == null || session == null) {
+      return Future.error(StateError('Sign in to choose hiking buddies.'));
+    }
+    return repository.loadTeamHikeBuddies(session: session);
   }
 
   /// Gate starting on the current draft's safety checks and required user acknowledgements.
@@ -712,26 +742,23 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
               message: 'Scheduling your hike…',
               detail: 'Saving the route, reminders, and join settings.',
               timeout: const Duration(seconds: 30),
-              onTimeout: _handleRequestTimeout,
+              onTimeout: _handleScheduleTimeout,
             ),
           if (_isStarting)
-            GpsStartingOverlay(
+            const GpsStartingOverlay(
               title: 'Starting your hike…',
               message: 'Completing safety checks and preparing live tracking.',
-              timeout: const Duration(seconds: 30),
-              onTimeout: _handleRequestTimeout,
             ),
         ],
       ),
     );
   }
 
-  /// Handles request timeout.
-  void _handleRequestTimeout() {
+  /// Handles the scheduled-save overlay timeout.
+  void _handleScheduleTimeout() {
     if (!mounted) return;
     setState(() {
       _isScheduling = false;
-      _isStarting = false;
     });
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -827,6 +854,21 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           draft: _draft,
           trails: _trails,
           onChanged: _updateDraft,
+        );
+      case _StartHikeWizardStep.buddies:
+        return _StepCard(
+          title: 'Invite hiking buddies',
+          subtitle:
+              'Choose at least one buddy to join this hike. A team can include up to 30 hikers, including you.',
+          children: [
+            TeamHikeBuddySelection(
+              loadBuddies: _loadTeamBuddies,
+              selectedBuddies: _draft.teamBuddies,
+              canSchedule: !_draft.trail.isUnlisted,
+              onChanged: (buddies) =>
+                  _updateDraft(_draft.copyWith(teamBuddies: buddies)),
+            ),
+          ],
         );
       case _StartHikeWizardStep.reminder:
         return _StepCard(
@@ -991,9 +1033,7 @@ class _HikeTypeStep extends StatelessWidget {
           icon: Icons.groups_2_rounded,
           title: 'Team Hike',
           subtitle: 'Create a session for friends or join an existing group.',
-          onTap: () => onChanged(
-            draft.copyWith(hikeType: HikeType.team, teamBuddies: const []),
-          ),
+          onTap: () => onChanged(draft.copyWith(hikeType: HikeType.team)),
         ),
         if (isUpcomingHike && draft.hikeType == HikeType.team) ...[
           const SizedBox(height: 18),
@@ -1141,12 +1181,17 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
       children: [
         DropdownButtonFormField<String>(
           initialValue: widget.draft.trail.trailId,
+          isExpanded: true,
           decoration: const InputDecoration(labelText: 'Selected Trail'),
           items: [
             for (final trail in widget.trails)
               DropdownMenuItem<String>(
                 value: trail.trailId,
-                child: Text(trail.name, overflow: TextOverflow.ellipsis),
+                child: Text(
+                  trail.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
           ],
           onChanged: (trailId) {
@@ -1715,7 +1760,7 @@ class _TimingStep extends StatelessWidget {
     final initial = draft.departureTime.isBefore(minimum)
         ? minimum
         : draft.departureTime;
-    final picked = await showTimePicker(
+    final picked = await showHikeTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(initial),
     );

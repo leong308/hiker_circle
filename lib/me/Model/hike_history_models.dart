@@ -50,10 +50,16 @@ class HikeHistorySummary {
     required this.teamMemberCount,
     required this.coverImageUrl,
     this.teamHikeSessionId = '',
+    this.pendingSync = false,
+    this.awaitingHistory = false,
   });
 
   /// Creates hike history summary from stored map data.
-  factory HikeHistorySummary.fromMap(Map<String, dynamic> data) {
+  factory HikeHistorySummary.fromMap(
+    Map<String, dynamic> data, {
+    bool pendingSync = false,
+    bool awaitingHistory = false,
+  }) {
     return HikeHistorySummary(
       sessionId: _text(data['sessionId']),
       trailId: _text(data['trailId']),
@@ -77,6 +83,8 @@ class HikeHistorySummary {
       teamMemberCount: _integer(data['teamMemberCount']).clamp(1, 50),
       coverImageUrl: _text(data['coverImageUrl']),
       teamHikeSessionId: _text(data['teamHikeSessionId']),
+      pendingSync: pendingSync,
+      awaitingHistory: awaitingHistory,
     );
   }
 
@@ -98,6 +106,8 @@ class HikeHistorySummary {
   final int teamMemberCount;
   final String coverImageUrl;
   final String teamHikeSessionId;
+  final bool pendingSync;
+  final bool awaitingHistory;
 
   /// Returns is team.
   bool get isTeam => hikeType == 'team';

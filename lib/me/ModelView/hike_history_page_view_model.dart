@@ -52,14 +52,32 @@ class _HikeHistoryPageStateViewModel extends ChangeNotifier {
         readLoadHistory()?.call() ??
         readRepository().loadMyHikeHistory(force: true);
     _publish(() => stateHistoryFuture = future);
-    await future;
+    await future.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {
+        // The FutureBuilder owns the error state; a button discards this callback future.
+      },
+    );
   }
 
   StreamSubscription<String>? _sharedHistory;
+  StreamSubscription<String>? _completedSyncs;
   Timer? _sharedRefresh;
 
   /// Refreshes visible common history cards after another hiker's result is finalized.
   void watchSharedHistory(String phone) {
+    _completedSyncs = HikerCircleFirebaseRepository.completedHikeSyncs
+        .where((owner) => owner == phone)
+        .listen((_) async {
+          if (!mounted) return;
+          _publish(
+            () => stateHistoryFuture = readRepository().loadMyHikeHistory(
+              cacheOnly: true,
+            ),
+          );
+          await readRepository().waitForReadCacheReconciliation(phone);
+          if (mounted) await commandRefresh();
+        });
     _sharedHistory = readRepository().watchTeamHistoryChanges(phone).listen((
       _,
     ) {
@@ -89,6 +107,7 @@ class _HikeHistoryPageStateViewModel extends ChangeNotifier {
     _disposed = true;
     _sharedRefresh?.cancel();
     _sharedHistory?.cancel();
+    _completedSyncs?.cancel();
     _cacheChanges?.cancel();
     super.dispose();
   }
@@ -340,7 +359,12 @@ class _HikeHistoryDetailPageStateViewModel extends ChangeNotifier {
   Future<void> commandRefresh() async {
     final future = readRefreshDetail()(readSummary().sessionId);
     _publish(() => stateDetailFuture = future);
-    await future;
+    await future.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {
+        // Keep the failure on stateDetailFuture for the visible retry control.
+      },
+    );
   }
 
   /// Releases resources owned by this instance.

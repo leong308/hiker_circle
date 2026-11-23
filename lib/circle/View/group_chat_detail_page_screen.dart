@@ -2376,6 +2376,7 @@ class _ChatInput extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: IconButton(
+                  tooltip: 'Send message',
                   icon: const Icon(
                     Icons.send_rounded,
                     color: Colors.white,

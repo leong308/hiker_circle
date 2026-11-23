@@ -75,6 +75,32 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
 
   /// Opens detail.
   void _openDetail(HikeHistorySummary hike) {
+    if (hike.pendingSync || hike.awaitingHistory) {
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(hike.trailName),
+          content: Text(
+            [
+              hike.awaitingHistory
+                  ? 'Hike synced. Your full history is updating.'
+                  : 'Saved on this phone. Full history will be available after sync.',
+              'Started  ${_formatHistoryDate(hike.startedAt)}',
+              'Finished  ${_formatHistoryDate(hike.endedAt)}',
+              '${_formatDuration(hike.duration)} · ${hike.distanceKm.toStringAsFixed(2)} km',
+              '${hike.routePointCount} recorded GPS points',
+            ].join('\n\n'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => HikeHistoryDetailPage(

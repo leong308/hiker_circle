@@ -1357,6 +1357,7 @@ class LocalSessionDatabase {
   Future<List<LocalPendingHikeEnd>> loadPendingHikeEnds({
     required String ownerPhoneNumber,
     int limit = 20,
+    bool newestFirst = false,
   }) async {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty || limit <= 0) return const [];
@@ -1365,7 +1366,9 @@ class LocalSessionDatabase {
       'pending_hike_ends',
       where: 'owner_phone_number = ?',
       whereArgs: [owner],
-      orderBy: 'created_at ASC',
+      orderBy: newestFirst
+          ? 'COALESCE(ended_at, created_at) DESC'
+          : 'created_at ASC',
       limit: limit,
     );
     return rows.map(LocalPendingHikeEnd.fromRow).toList();
@@ -1376,6 +1379,7 @@ class LocalSessionDatabase {
     required String ownerPhoneNumber,
     required String sessionId,
     Map<String, dynamic>? expectedSummaryPayload,
+    String? completedCloudId,
   }) async {
     final database = await _openDatabase();
     return database.transaction((transaction) async {
@@ -1397,6 +1401,21 @@ class LocalSessionDatabase {
         // A rating saved while an older completion was uploading stays queued.
         return false;
       }
+      if (completedCloudId != null && completedCloudId.isNotEmpty) {
+        final preview = LocalPendingHikeEnd.fromRow(
+          rows.single,
+        ).historyPreview(ownerPhoneNumber, cloudId: completedCloudId);
+        if (preview != null) {
+          await transaction.insert('cached_entities', {
+            'owner_phone_number': ownerPhoneNumber.trim(),
+            'entity_type': acknowledgedHikeHistoryType,
+            'entity_id': completedCloudId,
+            'parent_id': '',
+            'payload_json': jsonEncode(preview),
+            'cached_at': DateTime.now().toUtc().toIso8601String(),
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      }
       return await transaction.delete(
             'pending_hike_ends',
             where: 'owner_phone_number = ? AND session_id = ?',
@@ -1404,6 +1423,23 @@ class LocalSessionDatabase {
           ) >
           0;
     });
+  }
+
+  // Keep accepted completions visible until the server's history list covers them.
+  static const acknowledgedHikeHistoryType = 'acknowledged_hike_history';
+
+  Future<void> retireAcknowledgedHikes(String owner, List<String> ids) async {
+    if (ids.isEmpty) return;
+    final database = await _openDatabase();
+    final batch = database.batch();
+    for (final id in ids) {
+      batch.delete(
+        'cached_entities',
+        where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
+        whereArgs: [owner, acknowledgedHikeHistoryType, id],
+      );
+    }
+    await batch.commit(noResult: true);
   }
 
   /// Marks pending hike end retry.
@@ -4847,6 +4883,48 @@ class LocalPendingHikeEnd {
   final DateTime updatedAt;
   final int retryCount;
   final String lastError;
+
+  Map<String, dynamic>? historyPreview(String owner, {String? cloudId}) {
+    final hike = activeHike;
+    if (hike == null) return null;
+    final finish = endedAt ?? createdAt;
+    final summary = summaryPayload?.containsKey('durationSeconds') == true
+        ? summaryPayload!
+        : HikeSummaryReport.fromActiveHike(
+            activeHike: hike,
+            endedAt: finish,
+          ).toFirestore();
+    return {
+      'sessionId':
+          cloudId ??
+          canonicalCompletedHikeSessionId(
+            owner: owner,
+            sessionId: sessionId,
+            sourceUpcomingHikeId: hike.sourceUpcomingHikeId,
+            teamSessionId: hike.teamHikeSessionId,
+          ),
+      'startedAtLocal': hike.startedAt.toUtc().toIso8601String(),
+      'endedAtLocal': finish.toUtc().toIso8601String(),
+      'trailId': hike.trail.trailId,
+      'trailName': hike.trail.name,
+      'location': hike.trail.locationLabel,
+      'difficulty': hike.trail.difficulty,
+      'hikeType': hike.draft.hikeType.name,
+      'teamHikeSessionId': hike.teamHikeSessionId,
+      'teamMemberCount': 1 + hike.draft.teamBuddies.length,
+      'coverImageUrl': hike.trail.coverImageUrl,
+      for (final key in [
+        'durationSeconds',
+        'distanceKm',
+        'checkIns',
+        'manualPins',
+        'routePointCount',
+        'batteryStartPercent',
+        'batteryEndPercent',
+      ])
+        key: summary[key],
+    };
+  }
 
   Map<String, dynamic>? get trailRating {
     final value = summaryPayload?[trailRatingKey];

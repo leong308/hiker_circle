@@ -126,6 +126,14 @@ abstract final class _HikerHomePageDataActions {
   setUpcomingHikeJoinPolicy(HikerCircleFirebaseRepository receiver) =>
       receiver.setUpcomingHikeJoinPolicy;
 
+  /// Binds current buddy relationships to the selected data source.
+  static Future<BuddyRelationships> Function({
+    required AppSession session,
+    bool force,
+  })
+  loadBuddyRelationships(HikerCircleFirebaseRepository receiver) =>
+      receiver.loadBuddyRelationships;
+
   /// Binds send buddy request to the selected data source.
   static Future<void> Function({
     required String buddyPhoneNumber,

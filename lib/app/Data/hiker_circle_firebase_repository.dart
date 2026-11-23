@@ -28,6 +28,7 @@ import '../../core/services/open_meteo_service.dart';
 import '../../core/services/trail_geometry_storage.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../home/Model/hike_session_models.dart';
+import '../../home/Model/team_hike_identity.dart';
 import '../../home/Model/upcoming_hike_sync_notice.dart';
 import '../../home/Model/upcoming_hike_request_inbox.dart';
 import '../../home/Data/active_hike_live_status_service.dart';
@@ -154,6 +155,14 @@ class HikerCircleFirebaseRepositoryException implements Exception {
   String toString() => message;
 }
 
+/// Whether another hiker can receive a new buddy request from this account.
+enum BuddyRequestDisposition {
+  available,
+  alreadyBuddies,
+  outgoingPending,
+  incomingPending,
+}
+
 /// Represents buddy relationships.
 class BuddyRelationships {
   /// Creates buddy relationships.
@@ -166,6 +175,40 @@ class BuddyRelationships {
   final Set<String> buddyPhoneNumbers;
   final Set<String> outgoingRequestPhones;
   final List<Map<String, dynamic>> incomingRequests;
+
+  BuddyRequestDisposition requestDispositionFor(String phoneNumber) {
+    final key = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    bool matches(String value) =>
+        key.isNotEmpty && value.replaceAll(RegExp(r'\D'), '') == key;
+    if (buddyPhoneNumbers.any(matches)) {
+      return BuddyRequestDisposition.alreadyBuddies;
+    }
+    if (outgoingRequestPhones.any(matches)) {
+      return BuddyRequestDisposition.outgoingPending;
+    }
+    if (incomingRequests.any(
+      (request) => matches(request['phoneNumber']?.toString() ?? ''),
+    )) {
+      return BuddyRequestDisposition.incomingPending;
+    }
+    return BuddyRequestDisposition.available;
+  }
+
+  /// Explain a known relationship before a QR/deep link offers a duplicate send.
+  String? requestStatusMessage({
+    required String phoneNumber,
+    required String displayName,
+  }) {
+    final hiker = displayName.trim().isEmpty ? 'This hiker' : displayName.trim();
+    return switch (requestDispositionFor(phoneNumber)) {
+      BuddyRequestDisposition.available => null,
+      BuddyRequestDisposition.alreadyBuddies => '$hiker is already your buddy.',
+      BuddyRequestDisposition.outgoingPending =>
+        'You already sent a friend request to $hiker.',
+      BuddyRequestDisposition.incomingPending =>
+        '$hiker has already sent you a request. Open Friend requests to respond.',
+    };
+  }
 }
 
 /// Represents nearby sos forward result.
@@ -631,6 +674,8 @@ class HikerCircleFirebaseRepository {
   static Stream<UpcomingHikeSyncNotice> get upcomingHikeSyncs =>
       _upcomingHikeSyncs.stream;
   static final _hikeRatingSyncs = StreamController<String>.broadcast();
+  static final _completedHikeSyncs = StreamController<String>.broadcast();
+  static Stream<String> get completedHikeSyncs => _completedHikeSyncs.stream;
   static Stream<String> get hikeRatingSyncs => _hikeRatingSyncs.stream;
 
   void _publishUpcomingHikeSync(AppSession session, Set<String> ids) {
@@ -761,16 +806,32 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
     }
+    final uid = _captureAccountUid(session);
+    if (uid == null) return;
     final now = DateTime.now().toUtc();
-    await _hikeSessions.doc(activeHike.sessionId).set({
-      'monitoringHeartbeatAt': FieldValue.serverTimestamp(),
-      'monitoringHeartbeatAtLocal': now.toIso8601String(),
-      'monitoringLifecycleState': lifecycleState,
-      'monitoringExpected': true,
-      if (fcmToken.isNotEmpty) 'monitoringFcmToken': fcmToken,
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': now.toIso8601String(),
-    }, SetOptions(merge: true));
+    final reference = _hikeSessions.doc(activeHike.sessionId);
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      _requireSameAccount(session, uid);
+      final data = snapshot.data();
+      if (!snapshot.exists ||
+          data?['status'] != 'active' ||
+          data?['userId'] != uid ||
+          data?['userPhoneNumber'] != session.phoneNumber) {
+        return;
+      }
+      // A concurrent completion causes Firestore to retry this read; its
+      // terminal status then prevents a late heartbeat from re-arming it.
+      transaction.update(reference, {
+        'monitoringHeartbeatAt': FieldValue.serverTimestamp(),
+        'monitoringHeartbeatAtLocal': now.toIso8601String(),
+        'monitoringLifecycleState': lifecycleState,
+        'monitoringExpected': true,
+        if (fcmToken.isNotEmpty) 'monitoringFcmToken': fcmToken,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedAtLocal': now.toIso8601String(),
+      });
+    });
   }
 
   /// Computes signal active hike potential termination.
@@ -782,18 +843,32 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
     }
+    final uid = _captureAccountUid(session);
+    if (uid == null) return;
     final now = DateTime.now().toUtc();
-    await _hikeSessions.doc(activeHike.sessionId).set({
-      'terminationSignalNonce':
-          '${now.microsecondsSinceEpoch}_${session.phoneNumber.hashCode}',
-      'terminationSignalAt': FieldValue.serverTimestamp(),
-      'terminationSignalAtLocal': now.toIso8601String(),
-      'monitoringLifecycleState': 'detached',
-      'monitoringExpected': true,
-      if (fcmToken.isNotEmpty) 'monitoringFcmToken': fcmToken,
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': now.toIso8601String(),
-    }, SetOptions(merge: true));
+    final reference = _hikeSessions.doc(activeHike.sessionId);
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      _requireSameAccount(session, uid);
+      final data = snapshot.data();
+      if (!snapshot.exists ||
+          data?['status'] != 'active' ||
+          data?['userId'] != uid ||
+          data?['userPhoneNumber'] != session.phoneNumber) {
+        return;
+      }
+      transaction.update(reference, {
+        'terminationSignalNonce':
+            '${now.microsecondsSinceEpoch}_${session.phoneNumber.hashCode}',
+        'terminationSignalAt': FieldValue.serverTimestamp(),
+        'terminationSignalAtLocal': now.toIso8601String(),
+        'monitoringLifecycleState': 'detached',
+        'monitoringExpected': true,
+        if (fcmToken.isNotEmpty) 'monitoringFcmToken': fcmToken,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedAtLocal': now.toIso8601String(),
+      });
+    });
   }
 
   /// Returns trails.
@@ -1932,6 +2007,56 @@ class HikerCircleFirebaseRepository {
     }).toList();
   }
 
+  /// Resolve the current account's accepted buddies without relying on the
+  /// first page of the community directory. Private social data stays local to
+  /// its owner; only the existing public-profile projection supplies labels.
+  Future<List<TeamHikeBuddy>> loadTeamHikeBuddies({
+    required AppSession session,
+  }) async {
+    final relationships = await loadBuddyRelationships(
+      session: session,
+      force: true,
+    );
+    final raw = relationships.buddyPhoneNumbers;
+    final ownKey = TeamHikeIdentity.key(session.phoneNumber);
+    final phones = raw
+        .whereType<String>()
+        .map((phone) => phone.trim())
+        .where((phone) => RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone))
+        .where((phone) => TeamHikeIdentity.key(phone) != ownKey)
+        .toSet()
+        .toList()
+      ..sort();
+    final profiles = <Map<String, dynamic>>[];
+    for (var offset = 0; offset < phones.length; offset += 50) {
+      profiles.addAll(await _getPublicProfiles({
+        'phoneNumbers': phones.sublist(
+          offset,
+          math.min(offset + 50, phones.length),
+        ),
+      }));
+    }
+    final accepted = {
+      for (final phone in phones) TeamHikeIdentity.key(phone): phone,
+    };
+    final choices = <String, TeamHikeBuddy>{};
+    for (final profile in profiles) {
+      final phone = _stringFrom(profile['phoneNumber']).trim();
+      final key = TeamHikeIdentity.key(phone);
+      if (!accepted.containsKey(key)) continue;
+      choices[key] = TeamHikeBuddy(
+        name: _stringFrom(profile['displayName']).trim().isEmpty
+            ? 'Hiking buddy'
+            : _stringFrom(profile['displayName']).trim(),
+        handle: _stringFrom(profile['handle']),
+        phoneNumber: accepted[key]!,
+        photoURL: _stringFrom(profile['photoURL']),
+      );
+    }
+    return choices.values.toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
   /// Loads the locally cached social read model before background hash validation.
   Future<Set<String>> loadBuddyPhoneNumbers({
     required AppSession session,
@@ -1980,32 +2105,50 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Loads all buddy states together so a request prompt can check current state.
+  Future<BuddyRelationships> loadBuddyRelationships({
+    required AppSession session,
+    bool force = false,
+  }) async {
+    if (force) {
+      _throwIfFirebaseUnavailable();
+      // A decision to send a request must not use a stale offline fallback.
+      final snapshot = await _moduleFor(
+        session,
+        UserModule.social,
+      ).get(const GetOptions(source: Source.server));
+      return _buddyRelationshipsFromData(snapshot.data() ?? const {});
+    }
+    return _buddyRelationshipsFromData(await _readSocial(session));
+  }
+
+  BuddyRelationships _buddyRelationshipsFromData(Map<String, dynamic> data) {
+    final buddies = data['buddyPhoneNumbers'];
+    final outgoing = data['buddyRequestsOutgoing'];
+    return BuddyRelationships(
+      buddyPhoneNumbers: buddies is Iterable
+          ? buddies.whereType<String>().toSet()
+          : const {},
+      outgoingRequestPhones: outgoing is Map
+          ? outgoing.keys.map((key) => key.toString()).toSet()
+          : const {},
+      incomingRequests: _buddyRequestsFromRaw(data['buddyRequestsIncoming']),
+    );
+  }
+
   /// Watches buddy relationships.
   Stream<BuddyRelationships> watchBuddyRelationships({
     required AppSession session,
   }) {
-    /// Parses.
-    BuddyRelationships parse(Map<String, dynamic> data) {
-      final buddies = data['buddyPhoneNumbers'];
-      final outgoing = data['buddyRequestsOutgoing'];
-      return BuddyRelationships(
-        buddyPhoneNumbers: buddies is Iterable
-            ? buddies.whereType<String>().toSet()
-            : const {},
-        outgoingRequestPhones: outgoing is Map
-            ? outgoing.keys.map((key) => key.toString()).toSet()
-            : const {},
-        incomingRequests: _buddyRequestsFromRaw(data['buddyRequestsIncoming']),
-      );
-    }
-
     if (!_firebaseBootstrapResult.isAvailable) {
-      return Stream.value(parse(const {}));
+      return Stream.value(_buddyRelationshipsFromData(const {}));
     }
     return _moduleFor(
       session,
       UserModule.social,
-    ).snapshots().map((snapshot) => parse(snapshot.data() ?? const {}));
+    ).snapshots().map(
+      (snapshot) => _buddyRelationshipsFromData(snapshot.data() ?? const {}),
+    );
   }
 
   /// Sends buddy request.
@@ -3918,10 +4061,12 @@ class HikerCircleFirebaseRepository {
       expectedUid: uid,
     );
     _requireSameAccount(session, uid);
-    await _localDatabase.deletePendingHikeEnd(
+    final removed = await _localDatabase.deletePendingHikeEnd(
       ownerPhoneNumber: session.phoneNumber,
       sessionId: activeHike.sessionId,
+      completedCloudId: completion.completed ? completion.sessionId : null,
     );
+    if (removed) _completedHikeSyncs.add(session.phoneNumber);
     return ActiveHikeEndResult(
       cloudSynced: true,
       sessionId: completion.sessionId,
@@ -4043,9 +4188,11 @@ class HikerCircleFirebaseRepository {
           ownerPhoneNumber: session.phoneNumber,
           sessionId: pending.sessionId,
           expectedSummaryPayload: pending.summaryPayload,
+          completedCloudId: completion.completed ? completion.sessionId : null,
         );
-        if (removed && rating != null) {
-          _hikeRatingSyncs.add(session.phoneNumber);
+        if (removed) {
+          _completedHikeSyncs.add(session.phoneNumber);
+          if (rating != null) _hikeRatingSyncs.add(session.phoneNumber);
         }
         synced += 1;
       } catch (error) {
@@ -5779,18 +5926,101 @@ class HikerCircleFirebaseRepository {
   }) async {
     final owner = await _historyCacheOwner();
     final bounded = limit.clamp(1, 200);
-    final data = await _conditionalCache.read(
-      owner: owner,
-      type: 'hike_history_list',
-      id: 'latest-$bounded',
-      callable: 'listMyHikeHistory',
-      arguments: {'limit': bounded},
-      freshness: const Duration(minutes: 2),
-      online: _firebaseBootstrapResult.isAvailable,
-      force: force,
-      cacheOnly: cacheOnly,
+    final pending = await _localDatabase.loadPendingHikeEnds(
+      ownerPhoneNumber: owner,
+      limit: bounded,
+      newestFirst: true,
     );
-    return parseHikeHistoryList(data);
+    Future<List<LocalCachedEntity>> receipts() =>
+        _localDatabase.loadCachedEntities(
+          ownerPhoneNumber: owner,
+          entityType: LocalSessionDatabase.acknowledgedHikeHistoryType,
+        );
+    final beforeRead = await receipts();
+    final online =
+        _firebaseBootstrapResult.isAvailable &&
+        NetworkReachabilityService.instance.latest.state !=
+            NetworkReachabilityState.offline;
+    final verifyReceipts = beforeRead.isNotEmpty && !cacheOnly && online;
+    Future<Map<String, dynamic>> readHistory(bool localOnly) =>
+        _conditionalCache.read(
+          owner: owner,
+          type: 'hike_history_list',
+          id: 'latest-$bounded',
+          callable: 'listMyHikeHistory',
+          arguments: {'limit': bounded},
+          freshness: const Duration(minutes: 2),
+          online: online,
+          force: force || verifyReceipts,
+          policy: verifyReceipts
+              ? CacheReadPolicy.cloudFirst
+              : CacheReadPolicy.localFirst,
+          cacheOnly: localOnly,
+        );
+    Map<String, dynamic> data;
+    try {
+      data = await readHistory(cacheOnly);
+    } on FirebaseFunctionsException catch (error) {
+      if ((pending.isEmpty && beforeRead.isEmpty) ||
+          !const {'unavailable', 'deadline-exceeded'}.contains(error.code)) {
+        rethrow;
+      }
+      data = await readHistory(true);
+    } on TimeoutException {
+      if (pending.isEmpty && beforeRead.isEmpty) rethrow;
+      data = await readHistory(true);
+    }
+    final confirmed = parseHikeHistoryList(data);
+    final acknowledged = await receipts();
+    if (await _historyCacheOwner() != owner) {
+      throw FirebaseFunctionsException(
+        code: 'unauthenticated',
+        message: 'The signed-in account changed.',
+      );
+    }
+    if (pending.isEmpty && acknowledged.isEmpty) return confirmed;
+    final ids = confirmed.map((hike) => hike.sessionId).toSet();
+    final teams = confirmed
+        .map((hike) => hike.teamHikeSessionId)
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    bool covered(Map<String, dynamic> row) =>
+        ids.contains(row['sessionId']) ||
+        teams.contains(row['teamHikeSessionId']);
+    final history = [...confirmed];
+    final retired = <String>[];
+    // Only a fresh source read started after the acknowledgement can establish
+    // that a deleted record is absent. An old or offline list retains its receipt.
+    final verifiedPage =
+        bounded == 100 &&
+        verifyReceipts &&
+        data['hikes'] is List &&
+        data['cacheFallback'] != true &&
+        data['payloadChecked'] == true;
+    final verifiedIds = beforeRead.map((r) => r.entityId).toSet();
+    for (final receipt in acknowledged) {
+      if (covered(receipt.payload) ||
+          (verifiedPage && verifiedIds.contains(receipt.entityId))) {
+        if (bounded == 100) retired.add(receipt.entityId);
+      } else {
+        history.add(
+          HikeHistorySummary.fromMap(receipt.payload, awaitingHistory: true),
+        );
+      }
+      ids.add(receipt.entityId);
+    }
+    await _localDatabase.retireAcknowledgedHikes(owner, retired);
+    for (final end in pending) {
+      final row = end.historyPreview(owner);
+      if (row == null || ids.contains(end.sessionId) || covered(row)) continue;
+      ids.add(row['sessionId'] as String);
+      history.add(HikeHistorySummary.fromMap(row, pendingSync: true));
+    }
+    if (history.length == confirmed.length) return confirmed;
+    int finishedAt(HikeHistorySummary hike) =>
+        (hike.endedAt ?? hike.startedAt)?.millisecondsSinceEpoch ?? 0;
+    history.sort((a, b) => finishedAt(b).compareTo(finishedAt(a)));
+    return history.take(bounded).toList();
   }
 
   /// Loads my hike history detail.

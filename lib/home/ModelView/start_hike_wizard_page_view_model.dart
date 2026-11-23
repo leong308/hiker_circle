@@ -31,6 +31,8 @@ class _StartHikeWizardPageStateViewModel extends ChangeNotifier {
       _StartHikeWizardStep.trail,
     _StartHikeWizardStep.type,
     _StartHikeWizardStep.timing,
+    if (!commandIsUpcomingHike && stateDraft.hikeType == HikeType.team)
+      _StartHikeWizardStep.buddies,
     if (commandIsUpcomingHike) _StartHikeWizardStep.reminder,
     if (!commandIsUpcomingHike) _StartHikeWizardStep.safety,
   ];
@@ -70,7 +72,11 @@ class _StartHikeWizardPageStateViewModel extends ChangeNotifier {
           ),
         );
       }
-      stateDraft = _withPlatformSafetyPolicy(_withSafeRecordingInterval(draft));
+      stateDraft = _withPlatformSafetyPolicy(
+        _withSafeRecordingInterval(
+          commandIsUpcomingHike ? draft.copyWith(teamBuddies: const []) : draft,
+        ),
+      );
       commandClampStepIndex();
     });
   }
@@ -79,6 +85,7 @@ class _StartHikeWizardPageStateViewModel extends ChangeNotifier {
   void commandUpdateStartNow(bool startNow) {
     _publish(() {
       stateStartNow = startNow;
+      if (!startNow) stateDraft = stateDraft.copyWith(teamBuddies: const []);
       commandClampStepIndex();
     });
   }

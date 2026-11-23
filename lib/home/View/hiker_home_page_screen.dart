@@ -986,8 +986,9 @@ class _HikerHomePageState extends State<HikerHomePage>
     });
     _upcomingSyncSubscription = HikerCircleFirebaseRepository.upcomingHikeSyncs
         .listen((notice) {
-          if (!mounted || notice.ownerPhoneNumber != widget.session.phoneNumber)
+          if (!mounted || notice.ownerPhoneNumber != widget.session.phoneNumber) {
             return;
+          }
           _syncedUpcomingHikeIds.addAll(notice.hikeIds);
           _upcomingSyncToastTimer?.cancel();
           _upcomingSyncToastTimer = Timer(
@@ -2602,53 +2603,78 @@ class _HikerHomePageState extends State<HikerHomePage>
     required String handle,
     required String phoneNumber,
   }) async {
-    final shouldAdd = await _presentShowAddBuddyPromptEffect1(name, handle);
-
-    if (shouldAdd != true || !mounted) {
-      return;
+    void showStatus(String message, {bool pending = false}) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(message),
+            duration: Duration(seconds: pending ? 30 : 5),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
     }
 
-    if (phoneNumber.isNotEmpty) {
-      try {
-        await _HikerHomePageDataActions.sendBuddyRequest(hikerCircleRepository)(
-          session: widget.session,
-          buddyPhoneNumber: phoneNumber,
-        );
-      } catch (error) {
-        if (!mounted) {
-          return;
-        }
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('Unable to send buddy request: $error'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+    if (phoneNumber.trim().isEmpty) {
+      showStatus('This buddy link has no phone number. Ask for a new QR code.');
+      return;
+    }
+    final displayName = name.trim().isEmpty || name == 'Trail buddy'
+        ? (handle.trim().isEmpty ? 'This hiker' : handle.trim())
+        : name.trim();
+    showStatus('Checking buddy status...', pending: true);
+    try {
+      final relationships =
+          await _HikerHomePageDataActions.loadBuddyRelationships(
+            hikerCircleRepository,
+          )(session: widget.session, force: true);
+      if (!mounted) return;
+      final status = relationships.requestStatusMessage(
+        phoneNumber: phoneNumber,
+        displayName: displayName,
+      );
+      if (status != null) {
+        showStatus(status);
         return;
       }
-    }
-    if (!mounted) {
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (mounted) showStatus(error.message);
+      return;
+    } catch (_) {
+      if (mounted) {
+        showStatus('Unable to check buddy status. Please try again.');
+      }
       return;
     }
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    final shouldAdd = await _presentShowAddBuddyPromptEffect1(
+      displayName,
+      handle,
+    );
+    if (shouldAdd != true || !mounted) return;
+
+    showStatus('Sending friend request...', pending: true);
+    try {
+      await _HikerHomePageDataActions.sendBuddyRequest(hikerCircleRepository)(
+        session: widget.session,
+        buddyPhoneNumber: phoneNumber,
+      );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (mounted) showStatus(error.message);
+      return;
+    } catch (_) {
+      if (mounted) {
+        showStatus('Unable to send the buddy request. Please try again.');
+      }
+      return;
+    }
+    if (!mounted) return;
 
     setState(() {
       selectedTabIndex = 2;
     });
     tabController.animateTo(2);
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            phoneNumber.isEmpty
-                ? '$name added to your buddies.'
-                : 'Friend request sent to $name.',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    showStatus('Friend request sent to $displayName.');
   }
 
   /// Delegates load live data to the ViewModel.
@@ -3026,40 +3052,9 @@ class _HikerHomePageState extends State<HikerHomePage>
       final choice = await showModalBottomSheet<String>(
         context: context,
         showDragHandle: true,
-        builder: (context) => SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Where are you hiking?',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 12),
-                ListTile(
-                  key: const ValueKey('start-catalog-hike'),
-                  enabled: trails.isNotEmpty,
-                  leading: const Icon(Icons.route_rounded),
-                  title: const Text('Choose a recorded trail'),
-                  subtitle: const Text('Use an existing route and checkpoints'),
-                  onTap: () => Navigator.pop(context, 'catalog'),
-                ),
-                ListTile(
-                  key: const ValueKey('start-location-hike'),
-                  leading: const Icon(Icons.my_location_rounded),
-                  title: const Text('Hike from my current location'),
-                  subtitle: const Text(
-                    'Record a route that is not in HikerCircle',
-                  ),
-                  onTap: () => Navigator.pop(context, 'location'),
-                ),
-              ],
-            ),
-          ),
+        builder: (context) => HikeSourceChooser(
+          trailAvailability: _screenModel,
+          hasRecordedTrails: () => trails.isNotEmpty,
         ),
       );
       if (!mounted || choice == null) {
@@ -5539,6 +5534,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       case 'Profile':
         return MePage(
           session: widget.session,
+          repository: hikerCircleRepository,
           phoneNumber: widget.session.phoneNumber,
           onSignOut: _signOutAndClearActiveHike,
           onRescheduleExpiredHike: _rescheduleExpiredHike,
@@ -6406,6 +6402,10 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   /// Synchronizes active hike live status.
   void _syncActiveHikeLiveStatus(ActiveHikeSession hike, {bool force = false}) {
+    // Late GPS/team callbacks must not restart a monitor after completion began.
+    if (_isEndingActiveHike || activeHike?.sessionId != hike.sessionId) {
+      return;
+    }
     final now = DateTime.now();
     if (!force &&
         lastActiveHikeLiveStatusSentAt != null &&
@@ -8875,8 +8875,8 @@ class _TeamSafetyPreparationPageState
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'If location stays within 5 meters for selected longest time, '
-                    'HikerCircle starts to check for stillness before triggering prolonged-stillness SOS'
+                    'If your location stays within 5 meters for this long, '
+                    'HikerCircle checks for phone movement and asks you to '
                     'respond before sending a prolonged-stillness SOS.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: colors.secondaryText,

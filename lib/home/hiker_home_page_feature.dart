@@ -129,6 +129,7 @@ import 'View/hiking_forecast_sheet.dart';
 import 'View/hike_share_preview_page.dart';
 import 'View/first_aid_guide_page.dart';
 import 'View/start_hike_wizard_page.dart';
+import 'View/widgets/hike_source_chooser.dart';
 import 'View/trail_rating_dialog.dart';
 import 'View/upcoming_hike_join_request_dialog.dart';
 import '../trail/Model/trail_hazard_assessment.dart';

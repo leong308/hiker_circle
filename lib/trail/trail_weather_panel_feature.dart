@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import '../core/widgets/hike_time_picker.dart';
 import 'Model/trail_models.dart';
 import 'Model/trail_weather_location.dart';
 import 'Model/trail_precautions.dart';

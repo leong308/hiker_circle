@@ -391,9 +391,14 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                 }
                 "stopActiveHikeLiveStatus" -> {
-                    stopActiveHikeLiveStatus()
-                    HikeSafetyMonitorService.stop(this)
-                    result.success(null)
+                    runCatching {
+                        HikeSafetyMonitorService.stop(this)
+                        stopActiveHikeLiveStatus()
+                    }.onSuccess {
+                        result.success(null)
+                    }.onFailure {
+                        result.error("native_hike_stop_failed", "Native hike tracking could not be stopped. Please try again.", null)
+                    }
                 }
                 "consumePendingSafetyEvent" -> {
                     result.success(HikeSafetyMonitorService.pendingEvent(this))

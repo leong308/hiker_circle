@@ -1,5 +1,7 @@
 part of '../me_page_feature.dart';
 
+enum _ProfileCollection { posts, circles, buddies }
+
 /// Owns the state and non-visual actions of MePage.
 class _MePageStateViewModel extends ChangeNotifier {
   /// Creates me page state view model.
@@ -30,15 +32,12 @@ class _MePageStateViewModel extends ChangeNotifier {
 
   MeProfile? stateFirestoreProfile;
 
-  List<_ProfileHistoryItem> statePostHistoryItems = const [];
-
-  List<_ProfileHistoryItem> stateCircleHistoryItems = const [];
-
-  List<_ProfileHistoryItem> stateBuddyHistoryItems = const [];
+  final history =
+      <_ProfileCollection, AsyncSnapshot<List<_ProfileHistoryItem>>>{};
+  final _reads = <_ProfileCollection, Object>{};
   StreamSubscription<CacheResourceUpdate>? _cachedReadSubscription;
   final Set<String> _revokedReadTypes = {};
   int _profileReadRevision = 0;
-  int _collectionReadRevision = 0;
 
   void commandWatchCachedReads() {
     _cachedReadSubscription = stateFirebaseRepository.cachedReadUpdates.listen((
@@ -47,22 +46,28 @@ class _MePageStateViewModel extends ChangeNotifier {
       if (!mounted || change.owner != readSession().phoneNumber) {
         return;
       }
+      final collection = switch (change.type) {
+        'mobile_chat_list' => _ProfileCollection.circles,
+        'mobile_social' => _ProfileCollection.buddies,
+        'cloud_community_posts' when !change.revoked && !change.invalidated =>
+          _ProfileCollection.posts,
+        _ => null,
+      };
       if (change.revoked) {
         _revokedReadTypes.add(change.type);
         if (change.type == 'profile') _profileReadRevision++;
-        if (change.type == 'mobile_chat_list' ||
-            change.type == 'mobile_social') {
-          _collectionReadRevision++;
-        }
         _publish(() {
           if (change.type == 'profile') stateFirestoreProfile = null;
           if (change.type == 'mobile_achievement_progress') {
             stateAchievementsFuture = Future.value(const []);
           }
-          if (change.type == 'mobile_chat_list') {
-            stateCircleHistoryItems = const [];
+          if (collection != null) {
+            _reads.remove(collection);
+            history[collection] = const AsyncSnapshot.withError(
+              ConnectionState.done,
+              'This history is unavailable.',
+            );
           }
-          if (change.type == 'mobile_social') stateBuddyHistoryItems = const [];
         });
         return;
       }
@@ -74,17 +79,14 @@ class _MePageStateViewModel extends ChangeNotifier {
         } else if (change.type == 'mobile_achievement_progress') {
           await commandFetchProfileAchievements();
           await commandReloadLocalProfileAchievements();
-        } else if (change.type == 'mobile_chat_list' ||
-            change.type == 'mobile_social') {
-          await commandLoadProfileCollections();
+        } else if (collection != null) {
+          await loadCollection(collection);
         }
       } catch (_) {
         // Keep the visible local view if its refreshed projection cannot load.
       }
     });
   }
-
-  final List<_ProfileHistoryItem> stateTrailHistoryItems = const [];
 
   /// Returns command display profile.
   MeProfile get commandDisplayProfile =>
@@ -199,83 +201,116 @@ class _MePageStateViewModel extends ChangeNotifier {
   }
 
   /// Load posts, group chats and buddy profiles independently from the account's editable profile fields.
-  Future<void> commandLoadProfileCollections() async {
+  Future<void> commandLoadProfileCollections() =>
+      Future.wait(_ProfileCollection.values.map(loadCollection));
+
+  Future<void> loadCollection(_ProfileCollection collection) async {
     final session = readSession();
-    final revision = ++_collectionReadRevision;
+    final revokedType = switch (collection) {
+      _ProfileCollection.circles => 'mobile_chat_list',
+      _ProfileCollection.buddies => 'mobile_social',
+      _ProfileCollection.posts => null,
+    };
+    if (_revokedReadTypes.contains(revokedType)) return;
+    final request = Object();
+    _reads[collection] = request;
+    if (history[collection]?.hasError == true) {
+      _publish(() => history.remove(collection));
+    }
+    bool current() =>
+        mounted &&
+        identical(_reads[collection], request) &&
+        session.phoneNumber == readSession().phoneNumber;
     try {
-      final results = await Future.wait<Object>([
-        stateFirebaseRepository.loadCommunityPostsForUser(session: session),
-        stateFirebaseRepository.loadUserGroupChats(session.phoneNumber),
-        stateFirebaseRepository.loadBuddyPhoneNumbers(session: session),
-      ]);
-      final ownPhone = readSession().phoneNumber.trim();
-      final posts = (results[0] as List<Map<String, dynamic>>)
-          .map(
-            (post) => _ProfileHistoryItem(
-              title: post['trailName']?.toString().trim().isNotEmpty == true
-                  ? post['trailName'].toString().trim()
-                  : 'Community post',
-              subtitle: post['caption']?.toString().trim() ?? '',
-              meta: commandProfileHistoryDate(post['createdAtLocal']),
-              icon: Icons.forum_rounded,
-            ),
-          )
-          .toList(growable: false);
-      final chats = (results[1] as List<GroupChat>)
-          .where((chat) => !chat.isDirect)
-          .map(
-            (chat) => _ProfileHistoryItem(
-              title: chat.displayNameFor(ownPhone),
-              subtitle:
-                  '${chat.participantPhones.length} hikers · ${chat.trailName}',
-              meta: chat.hikeEndedAt == null
-                  ? 'Active circle'
-                  : 'Hike ended ${commandProfileDateLabel(chat.hikeEndedAt!)}',
-              icon: Icons.groups_2_rounded,
-            ),
-          )
-          .toList(growable: false);
-      final buddyPhones = results[2] as Set<String>;
-      final buddyProfiles = await Future.wait(
-        buddyPhones.take(100).map((phone) async {
-          try {
-            return await stateFirebaseRepository.loadPublicHikerProfile(
-              phoneNumber: phone,
-            );
-          } catch (_) {
-            return <String, dynamic>{'phoneNumber': phone};
-          }
-        }),
-      );
-      final buddies = buddyProfiles
-          .map(
-            (profile) => _ProfileHistoryItem(
-              title: commandProfileDisplayName(profile),
-              subtitle: [
-                profile['levelName']?.toString().trim() ?? '',
-                profile['hikerExperience']?.toString().trim() ?? '',
-              ].where((value) => value.isNotEmpty).join(' · '),
-              meta: '${profile['achievementPoints'] ?? 0} achievement points',
-              icon: Icons.person_rounded,
-            ),
-          )
-          .toList(growable: false);
-      if (!mounted ||
-          revision != _collectionReadRevision ||
-          session.phoneNumber != readSession().phoneNumber) {
-        return;
+      final rows = await _historyRows(collection, session);
+      if (current()) {
+        _publish(
+          () => history[collection] = AsyncSnapshot.withData(
+            ConnectionState.done,
+            rows,
+          ),
+        );
       }
-      _publish(() {
-        statePostHistoryItems = posts;
-        stateCircleHistoryItems = _revokedReadTypes.contains('mobile_chat_list')
-            ? const []
-            : chats;
-        stateBuddyHistoryItems = _revokedReadTypes.contains('mobile_social')
-            ? const []
-            : buddies;
-      });
-    } catch (_) {
-      // The sections stay empty while Firebase is unavailable.
+    } catch (error) {
+      if (current() && history[collection]?.hasData != true) {
+        _publish(
+          () => history[collection] = AsyncSnapshot.withError(
+            ConnectionState.done,
+            error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<List<_ProfileHistoryItem>> _historyRows(
+    _ProfileCollection collection,
+    AppSession session,
+  ) async {
+    switch (collection) {
+      case _ProfileCollection.posts:
+        final posts = await stateFirebaseRepository.loadCommunityPostsForUser(
+          session: session,
+        );
+        return posts
+            .map(
+              (post) => _ProfileHistoryItem(
+                title: post['trailName']?.toString().trim().isNotEmpty == true
+                    ? post['trailName'].toString().trim()
+                    : 'Community post',
+                subtitle: post['caption']?.toString().trim() ?? '',
+                meta: commandProfileHistoryDate(post['createdAtLocal']),
+                icon: Icons.forum_rounded,
+              ),
+            )
+            .toList(growable: false);
+      case _ProfileCollection.circles:
+        final chats = await stateFirebaseRepository.loadUserGroupChats(
+          session.phoneNumber,
+        );
+        final ownPhone = session.phoneNumber.trim();
+        return chats
+            .where((chat) => !chat.isDirect)
+            .map(
+              (chat) => _ProfileHistoryItem(
+                title: chat.displayNameFor(ownPhone),
+                subtitle:
+                    '${chat.participantPhones.length} hikers · ${chat.trailName}',
+                meta: chat.hikeEndedAt == null
+                    ? 'Active circle'
+                    : 'Hike ended ${commandProfileDateLabel(chat.hikeEndedAt!)}',
+                icon: Icons.groups_2_rounded,
+              ),
+            )
+            .toList(growable: false);
+      case _ProfileCollection.buddies:
+        final buddyPhones = await stateFirebaseRepository.loadBuddyPhoneNumbers(
+          session: session,
+        );
+        final buddyProfiles = await Future.wait(
+          buddyPhones.take(100).map((phone) async {
+            try {
+              return await stateFirebaseRepository.loadPublicHikerProfile(
+                phoneNumber: phone,
+              );
+            } catch (_) {
+              return <String, dynamic>{'phoneNumber': phone};
+            }
+          }),
+        );
+        return buddyProfiles
+            .map(
+              (profile) => _ProfileHistoryItem(
+                title: commandProfileDisplayName(profile),
+                subtitle: [
+                  profile['levelName']?.toString().trim() ?? '',
+                  profile['hikerExperience']?.toString().trim() ?? '',
+                ].where((value) => value.isNotEmpty).join(' · '),
+                meta: '${profile['achievementPoints'] ?? 0} achievement points',
+                icon: Icons.person_rounded,
+              ),
+            )
+            .toList(growable: false);
     }
   }
 
@@ -316,11 +351,18 @@ class _MePageStateViewModel extends ChangeNotifier {
 
   /// Computes count label for action.
   String? commandCountLabelForAction(String title) => switch (title) {
-    'My posts' => '${statePostHistoryItems.length}',
-    'My circles' => '${stateCircleHistoryItems.length}',
-    'My buddies' => '${stateBuddyHistoryItems.length}',
-    'Export history' =>
-      '${statePostHistoryItems.length + stateCircleHistoryItems.length + stateBuddyHistoryItems.length + stateTrailHistoryItems.length}',
+    'My posts' => history[_ProfileCollection.posts]?.data?.length.toString(),
+    'My circles' =>
+      history[_ProfileCollection.circles]?.data?.length.toString(),
+    'My buddies' =>
+      history[_ProfileCollection.buddies]?.data?.length.toString(),
+    'Export history'
+        when _ProfileCollection.values.every(
+          (collection) => history[collection]?.hasData == true,
+        ) =>
+      history.values
+          .fold<int>(0, (sum, result) => sum + result.data!.length)
+          .toString(),
     _ => null,
   };
 

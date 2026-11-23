@@ -140,7 +140,11 @@ class _ReadinessCard extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    allReady ? 'SOS system ready' : 'Readiness needs attention',
+                    allReady
+                        ? value.hasPairedButton
+                              ? 'SOS system ready'
+                              : 'Phone SOS ready'
+                        : 'Readiness needs attention',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w900,
                     ),
@@ -175,8 +179,11 @@ class _ReadinessCard extends StatelessWidget {
               ),
               _readinessLine('Background monitor', value.monitorHealthy),
               _readinessLine(
-                'Paired button seen recently',
-                !value.hasPairedButton || value.buttonSeenRecently(),
+                value.hasPairedButton
+                    ? 'Paired button seen recently'
+                    : 'No SOS button paired',
+                value.hasPairedButton ? value.buttonSeenRecently() : null,
+                neutralColor: scheme.onSurfaceVariant,
               ),
               _readinessLine(
                 'Battery optimization unrestricted',
@@ -204,19 +211,28 @@ class _ReadinessCard extends StatelessWidget {
   }
 
   /// Computes readiness line.
-  Widget _readinessLine(String label, bool ready, {bool advisory = false}) {
+  Widget _readinessLine(
+    String label,
+    bool? ready, {
+    bool advisory = false,
+    Color? neutralColor,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
           Icon(
-            ready
+            ready == null
+                ? Icons.remove_circle_outline_rounded
+                : ready
                 ? Icons.check_circle_rounded
                 : advisory
                 ? Icons.info_rounded
                 : Icons.cancel_rounded,
             size: 18,
-            color: ready
+            color: ready == null
+                ? neutralColor
+                : ready
                 ? Colors.green
                 : advisory
                 ? Colors.orange

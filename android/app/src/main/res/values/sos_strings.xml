@@ -1,0 +1,10 @@
+<resources>
+    <plurals name="sos_contacts_notified">
+        <item quantity="one">Emergency alert sent to %1$d contact.</item>
+        <item quantity="other">Emergency alert sent to %1$d contacts.</item>
+    </plurals>
+    <plurals name="sos_contacts_partially_notified">
+        <item quantity="one">Alert sent to %1$d contact. Remaining delivery is queued.</item>
+        <item quantity="other">Alert sent to %1$d contacts. Remaining delivery is queued.</item>
+    </plurals>
+</resources>

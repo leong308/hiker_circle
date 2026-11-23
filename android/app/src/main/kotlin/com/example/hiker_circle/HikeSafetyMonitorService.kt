@@ -70,6 +70,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
         private const val PREFS = "hiker_circle_hike_safety"
         private const val KEY_ENABLED = "enabled"
+        private const val KEY_STOP_GENERATION = "stop_generation"
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_TRAIL_NAME = "trail_name"
         private const val KEY_REST_MILLIS = "rest_millis"
@@ -112,8 +113,11 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         private const val GRAVITY = 9.80665
 
         fun startOrUpdate(context: Context, config: SafetyConfig) {
+            val generation = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getLong(KEY_STOP_GENERATION, 0L)
             val intent = Intent(context, HikeSafetyMonitorService::class.java).apply {
                 action = ACTION_START
+                putExtra(KEY_STOP_GENERATION, generation)
                 putExtra(KEY_SESSION_ID, config.sessionId)
                 putExtra(KEY_TRAIL_NAME, config.trailName)
                 putExtra(KEY_REST_MILLIS, config.longestRestMillis)
@@ -135,9 +139,28 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         }
 
         fun stop(context: Context) {
+            // The channel may return, or the process may die, before Android
+            // delivers ACTION_STOP. Persist the barrier first so neither a
+            // queued start nor a sticky/boot restore can revive that monitor.
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val generation = prefs.getLong(KEY_STOP_GENERATION, 0L) + 1L
+            val editor = prefs.edit()
+                .putBoolean(KEY_ENABLED, false)
+                .putLong(KEY_STOP_GENERATION, generation)
+            if (NativeHikeMonitorLifecyclePolicy.cancelsPendingWarning(
+                    prefs.getString(KEY_EVENT_PHASE, null),
+                )) {
+                clearPendingEvent(editor)
+            } else if (prefs.getString(KEY_EVENT_ID, null) != null) {
+                // Ending tracking also stops local outputs, but leaves an
+                // already-escalated event intact until delivery is durable.
+                editor.putBoolean(KEY_LOCAL_ALARM_STOPPED, true)
+            }
+            check(editor.commit()) { "Unable to stop the native hike monitor safely." }
             context.startService(
                 Intent(context, HikeSafetyMonitorService::class.java).apply {
                     action = ACTION_STOP
+                    putExtra(KEY_STOP_GENERATION, generation)
                 },
             )
         }
@@ -162,7 +185,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         }
 
         fun restartIfConfigured(context: Context) {
-            if (!isConfigured(context)) return
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (!isConfigured(context) && !NativeHikeMonitorLifecyclePolicy.recoversPendingDispatch(
+                    false, prefs.getString(KEY_EVENT_PHASE, null),
+                )) return
             val intent = Intent(context, HikeSafetyMonitorService::class.java).apply {
                 action = ACTION_START
             }
@@ -303,6 +329,18 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 )
             }
         }
+
+        private fun clearPendingEvent(editor: android.content.SharedPreferences.Editor):
+            android.content.SharedPreferences.Editor = editor
+            .remove(KEY_EVENT_ID)
+            .remove(KEY_EVENT_KIND)
+            .remove(KEY_EVENT_PHASE)
+            .remove(KEY_EVENT_DETECTED_WALL)
+            .remove(KEY_EVENT_DEADLINE_WALL)
+            .remove(KEY_EVENT_TRIGGERED_WALL)
+            .remove(KEY_DISPATCH_MESSAGE)
+            .remove(KEY_LOCAL_ALARM_STOPPED)
+            .remove(KEY_DISPATCH_ONLY)
     }
 
     data class SafetyConfig(
@@ -337,6 +375,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     private val handler = Handler(Looper.getMainLooper())
     private var wakeLock: PowerManager.WakeLock? = null
     private var config: SafetyConfig? = null
+    private var activeGeneration = 0L
     private var state = DetectionState.NORMAL
     private var lastMotionElapsed = SystemClock.elapsedRealtime()
     private var lastMotionPersistedElapsed = 0L
@@ -363,7 +402,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     private val ticker = object : Runnable {
         override fun run() {
-            if (!monitoring) return
+            if (!monitoring || !trackingEnabled()) return
             HikeArrivalSafety.tick(this@HikeSafetyMonitorService)
             sampleLocationIfDue()
             uploadBufferedLocationsIfDue()
@@ -394,7 +433,14 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 if (monitoring) return START_STICKY
             }
             ACTION_STOP -> {
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+                val generation = intent.takeIf { it.hasExtra(KEY_STOP_GENERATION) }
+                    ?.getLongExtra(KEY_STOP_GENERATION, 0L)
+                if (!NativeHikeMonitorLifecyclePolicy.appliesStop(
+                        generation, prefs.getLong(KEY_STOP_GENERATION, 0L),
+                        prefs.getBoolean(KEY_ENABLED, false),
+                    )) return if (monitoring) START_STICKY else START_NOT_STICKY
+                prefs.edit()
                     .putBoolean(KEY_BATTERY_ADJUSTED, false).putInt(KEY_BATTERY_REVISION, 0)
                     .remove(KEY_ORIGINAL_SENSITIVITY).remove(KEY_ORIGINAL_INTERVAL).apply()
                 if (retainPendingDispatchWithoutTracking()) return START_NOT_STICKY
@@ -405,6 +451,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 stopMonitoring()
                 stopWarningOutputs()
                 physicalAlarm.stop()
+                notificationManager.cancel(ALERT_NOTIFICATION_ID)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -452,15 +499,40 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             }
         }
 
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (NativeHikeMonitorLifecyclePolicy.recoversPendingDispatch(
+                prefs.getBoolean(KEY_ENABLED, false), prefs.getString(KEY_EVENT_PHASE, null),
+            ) && retainPendingDispatchWithoutTracking()) return START_NOT_STICKY
+
         val restored = readConfig(intent)
         if (restored == null || restored.sessionId.isBlank()) {
-            stopSelf()
-            return START_NOT_STICKY
+            // Reject a stale start without destroying a newer live monitor or
+            // an already-triggered SOS dispatcher that is saving its retry.
+            if (!monitoring && backgroundEngine == null) stopSelf(startId)
+            return if (monitoring && trackingEnabled()) START_STICKY else START_NOT_STICKY
         }
         val previous = config
+        val previousGeneration = activeGeneration
         config = restored
+        activeGeneration = getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getLong(KEY_STOP_GENERATION, 0L)
+        if (monitoring && previousGeneration != activeGeneration) {
+            // A fresh explicit resume may overtake delivery of an older STOP.
+            // Its durable barrier already cancelled any un-escalated warning;
+            // do not carry the old in-memory countdown into the new monitor.
+            stopMonitoring()
+            stopWarningOutputs()
+            physicalAlarm.stop()
+            state = DetectionState.NORMAL
+            wasDeviceLockedDuringWarning = false
+            quietStartedElapsed = 0L
+            verificationStartedElapsed = 0L
+            responseDeadlineElapsed = 0L
+            latestImpactAcceleration = null
+            if (pendingEvent(this) == null) notificationManager.cancel(ALERT_NOTIFICATION_ID)
+        }
         persistConfig(restored)
-        if (previous?.sessionId != restored.sessionId) {
+        if (previous?.sessionId != restored.sessionId || previousGeneration != activeGeneration) {
             latestLocation = null
             referenceLocation = null
             lastSampleAtElapsed = 0L
@@ -507,6 +579,13 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     private fun readConfig(intent: Intent?): SafetyConfig? {
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val hasIncoming = intent?.hasExtra(KEY_SESSION_ID) == true
+        val generation = intent?.takeIf { it.hasExtra(KEY_STOP_GENERATION) }
+            ?.getLongExtra(KEY_STOP_GENERATION, 0L)
+        if (!NativeHikeMonitorLifecyclePolicy.acceptsStart(
+                hasIncoming, prefs.getBoolean(KEY_ENABLED, false), generation,
+                prefs.getLong(KEY_STOP_GENERATION, 0L),
+            )) return null
         val sessionId = intent?.getStringExtra(KEY_SESSION_ID)
             ?.takeIf { it.isNotBlank() }
             ?: prefs.getString(KEY_SESSION_ID, null)
@@ -514,7 +593,6 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         val sameSession = prefs.getString(KEY_SESSION_ID, null) == sessionId &&
             (intent?.getStringExtra(KEY_OWNER_UID) ?: prefs.getString(KEY_OWNER_UID, "")) == prefs.getString(KEY_OWNER_UID, "")
         val adjusted = sameSession && prefs.getBoolean(KEY_BATTERY_ADJUSTED, false)
-        val hasIncoming = intent?.hasExtra(KEY_SESSION_ID) == true
         val storedRevision = if (sameSession) prefs.getInt(KEY_BATTERY_REVISION, 0) else 0
         val incomingRevision = if (hasIncoming) intent!!.getIntExtra(KEY_BATTERY_REVISION, 0).coerceAtLeast(0) else storedRevision
         val incomingActive = if (hasIncoming) intent!!.getBooleanExtra(KEY_BATTERY_ADJUSTED, false) else adjusted
@@ -589,6 +667,14 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 .remove(KEY_LAST_ACCURACY).remove(KEY_LAST_CAPTURED_AT)
         }
         editor.apply()
+    }
+
+    private fun trackingEnabled(): Boolean {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        return NativeHikeMonitorLifecyclePolicy.allowsTracking(
+            prefs.getBoolean(KEY_ENABLED, false), activeGeneration,
+            prefs.getLong(KEY_STOP_GENERATION, 0L),
+        )
     }
 
     private fun startMonitoring() {
@@ -686,7 +772,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (!monitoring) return
+        if (!monitoring || !trackingEnabled()) return
         val now = SystemClock.elapsedRealtime()
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
@@ -768,7 +854,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     override fun onLocationChanged(location: Location) {
-        if (!monitoring) return
+        if (!monitoring || !trackingEnabled()) return
         if (!isFreshLocation(location)) return
         val accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else 50.0
         if (!accuracy.isFinite() || accuracy < 0 || accuracy > 500) return
@@ -815,7 +901,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     // sampleLocationIfDue: Persist a due GPS sample before scheduling cloud footprint uploads.
     private fun sampleLocationIfDue() {
-        if (!monitoring) return
+        if (!monitoring || !trackingEnabled()) return
         // The resumed Flutter isolate owns foreground sampling; avoid two clocks
         // recording nearly identical positions at different milliseconds.
         if (flutterUiForeground) return
@@ -909,7 +995,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     // evaluateTimers: Advance stillness and response timers from persisted motion state.
     private fun applyBatterySafetyIfNeeded() {
-        if (!monitoring) return
+        if (!monitoring || !trackingEnabled()) return
         val current = config ?: return
         val battery = (getSystemService(BATTERY_SERVICE) as BatteryManager).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         if (battery !in 0..100) return
@@ -931,7 +1017,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     private fun evaluateTimers() {
-        if (!monitoring) return
+        if (!monitoring || !trackingEnabled()) return
         applyBatterySafetyIfNeeded()
         val settings = config ?: return
         if (!settings.fallDetectionEnabled) return
@@ -982,6 +1068,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     // beginResponseCountdown: Start the fixed response window before escalating a safety alert.
     private fun beginResponseCountdown(kind: String) {
+        if (!trackingEnabled()) return
         val settings = config ?: return
         val nowWall = System.currentTimeMillis()
         val deadlineWall = nowWall + settings.responseMillis
@@ -1011,6 +1098,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     private fun escalateAlert() {
+        if (!trackingEnabled()) return
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         val eventId = prefs.getString(KEY_EVENT_ID, null) ?: return
         val kind = prefs.getString(KEY_EVENT_KIND, "prolonged_stillness")
@@ -1115,7 +1203,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         val eventId = prefs.getString(KEY_EVENT_ID, null) ?: return false
         val phase = prefs.getString(KEY_EVENT_PHASE, null)
-        if (phase != "triggering" && phase != "dispatching") return false
+        if (phase !in setOf("triggering", "dispatching", "dispatch_failed")) return false
         // Ending a hike stops all tracking immediately, but must not destroy
         // an SOS dispatcher before it can save a durable retry or send it.
         prefs.edit().putBoolean(KEY_ENABLED, false)
@@ -1123,13 +1211,23 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             .putBoolean(KEY_DISPATCH_ONLY, true).apply()
         stopMonitoring()
         stopTriggeredAlarmOutputs(eventId)
-        if (config == null) config = readConfig(null)
-        updateActiveNotification("Finishing SOS delivery; hike tracking stopped")
+        try {
+            // Cold recovery of an actual pending SOS needs a foreground
+            // dispatcher, never the location/sensor monitoring path.
+            startForeground(ACTIVE_NOTIFICATION_ID,
+                activeNotification("Finishing SOS delivery; hike tracking stopped"))
+        } catch (error: RuntimeException) {
+            // The original event remains durable for the foreground app retry
+            // if Android disallows starting this service in the background.
+            android.util.Log.w("HikeSafetyMonitor", "Pending SOS retained for foreground retry", error)
+            stopSelf()
+            return true
+        }
         if (backgroundDispatchEventId != eventId) {
             handler.post {
                 if (!isCurrentTriggeredEvent(eventId) ||
                     !prefs.getBoolean(KEY_DISPATCH_ONLY, false) ||
-                    prefs.getString(KEY_EVENT_PHASE, null) !in setOf("triggering", "dispatching")
+                    prefs.getString(KEY_EVENT_PHASE, null) !in setOf("triggering", "dispatching", "dispatch_failed")
                 ) return@post
                 startBackgroundDispatch(eventId,
                     prefs.getString(KEY_EVENT_KIND, "prolonged_stillness") ?: "prolonged_stillness",
@@ -1270,7 +1368,8 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                     "dispatchSafetyEvent",
                     mapOf(
                         "eventId" to eventId,
-                        "sessionId" to (config?.sessionId ?: ""),
+                        "sessionId" to (config?.sessionId
+                            ?: prefs.getString(KEY_SESSION_ID, "").orEmpty()),
                         "kind" to kind,
                         "triggeredAtMillis" to triggeredWall,
                         "latitude" to prefs.getString(KEY_LAST_LATITUDE, null)
@@ -1355,9 +1454,9 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             val queued = result["queuedForRetry"] == true
             message = when {
                 sentCount > 0 && sentCount >= contactCount ->
-                    "Emergency alert sent to $sentCount contact(s)."
+                    resources.getQuantityString(R.plurals.sos_contacts_notified, sentCount, sentCount)
                 sentCount > 0 && queued ->
-                    "Alert sent to $sentCount contact(s); remaining delivery is queued."
+                    resources.getQuantityString(R.plurals.sos_contacts_partially_notified, sentCount, sentCount)
                 queued ->
                     "Emergency alert saved securely and queued until the network returns."
                 else -> "Emergency alert processing completed."
@@ -1649,18 +1748,6 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         } else {
             0
         }
-
-    private fun clearPendingEvent(editor: android.content.SharedPreferences.Editor):
-        android.content.SharedPreferences.Editor = editor
-        .remove(KEY_EVENT_ID)
-        .remove(KEY_EVENT_KIND)
-        .remove(KEY_EVENT_PHASE)
-        .remove(KEY_EVENT_DETECTED_WALL)
-        .remove(KEY_EVENT_DEADLINE_WALL)
-        .remove(KEY_EVENT_TRIGGERED_WALL)
-        .remove(KEY_DISPATCH_MESSAGE)
-        .remove(KEY_LOCAL_ALARM_STOPPED)
-        .remove(KEY_DISPATCH_ONLY)
 
     private fun lerp(start: Double, end: Double, amount: Double): Double =
         start + (end - start) * amount

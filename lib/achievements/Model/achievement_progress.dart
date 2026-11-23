@@ -59,6 +59,22 @@ class AchievementMetricEvent {
   final int increment;
 }
 
+/// The server uses the same owner-scoped identity for an offline completion and its retries.
+String canonicalCompletedHikeSessionId({
+  required String owner,
+  required String sessionId,
+  required String sourceUpcomingHikeId,
+  required String teamSessionId,
+}) {
+  if (!RegExp(r'^session_[0-9]{13}$').hasMatch(sessionId)) return sessionId;
+  final identity = sourceUpcomingHikeId.isNotEmpty
+      ? 'upcoming:$sourceUpcomingHikeId'
+      : teamSessionId.isNotEmpty
+      ? 'team:$teamSessionId'
+      : 'offline:$sessionId';
+  return 'hike_${crypto.sha256.convert(utf8.encode('$owner:$identity')).toString().substring(0, 48)}';
+}
+
 /// Computes completed hike achievement events.
 List<AchievementMetricEvent> completedHikeAchievementEvents({
   required String owner,
@@ -81,16 +97,12 @@ List<AchievementMetricEvent> completedHikeAchievementEvents({
     return normalized.length > 120 ? normalized.substring(0, 120) : normalized;
   }
 
-  var canonicalSessionId = sessionId;
-  if (RegExp(r'^session_[0-9]{13}$').hasMatch(sessionId)) {
-    final identity = sourceUpcomingHikeId.isNotEmpty
-        ? 'upcoming:$sourceUpcomingHikeId'
-        : teamSessionId.isNotEmpty
-        ? 'team:$teamSessionId'
-        : 'offline:$sessionId';
-    canonicalSessionId =
-        'hike_${crypto.sha256.convert(utf8.encode('$owner:$identity')).toString().substring(0, 48)}';
-  }
+  final canonicalSessionId = canonicalCompletedHikeSessionId(
+    owner: owner,
+    sessionId: sessionId,
+    sourceUpcomingHikeId: sourceUpcomingHikeId,
+    teamSessionId: teamSessionId,
+  );
   final normalizedState = switch (slug(state)) {
     'melaka' => 'malacca',
     'pulau-pinang' => 'penang',

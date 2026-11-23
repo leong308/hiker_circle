@@ -120,6 +120,34 @@ Map<String, dynamic> _communityCommentView(
   };
 }
 
+/// Keeps connectivity failures actionable while preserving server validation messages.
+HikerCircleFirebaseRepositoryException _communityWriteFailure(
+  FirebaseException error, {
+  required bool sharingStory,
+}) {
+  const connectionCodes = {
+    'unavailable',
+    'deadline-exceeded',
+    'network-request-failed',
+    'retry-limit-exceeded',
+  };
+  final status = error.code.trim().toLowerCase().replaceAll('_', '-');
+  final messageStatus = error.message?.trim().toLowerCase().replaceAll('_', '-');
+  if (connectionCodes.contains(status) || connectionCodes.contains(messageStatus)) {
+    return HikerCircleFirebaseRepositoryException(
+      sharingStory
+          ? 'Your draft is still here. Check your connection and try sharing again.'
+          : 'Check your connection and try again.',
+    );
+  }
+  return HikerCircleFirebaseRepositoryException(
+    error.message ??
+        (sharingStory
+            ? 'Your story could not be shared. Your draft is still here.'
+            : 'Unable to update this community post. Please try again.'),
+  );
+}
+
 /// Computes community call.
 Future<Map<String, dynamic>> _communityCall(
   HikerCircleFirebaseRepository r,
@@ -161,9 +189,9 @@ Future<Map<String, dynamic>> _communityCall(
     }
     return Map<String, dynamic>.from(response.data as Map);
   } on FirebaseFunctionsException catch (error) {
-    throw HikerCircleFirebaseRepositoryException(
-      error.message ??
-          'Unable to update this community post. Please try again.',
+    throw _communityWriteFailure(
+      error,
+      sharingStory: name == 'publishCommunityPost',
     );
   }
 }
@@ -287,10 +315,7 @@ Future<void> _publishCommunity(
     r._requireSameAccount(session, uid);
   } on FirebaseException catch (error) {
     // An uncertain publish must retain uploads: a retry uses the same ID/path.
-    throw HikerCircleFirebaseRepositoryException(
-      error.message ??
-          'Unable to upload these photos. Your draft is saved; try again.',
-    );
+    throw _communityWriteFailure(error, sharingStory: true);
   }
 }
 

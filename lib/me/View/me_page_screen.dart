@@ -8,12 +8,14 @@ class MePage extends StatefulWidget {
     required this.session,
     required this.phoneNumber,
     required this.onSignOut,
+    required this.repository,
     this.onRescheduleExpiredHike,
     this.onOpenNotificationLink,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
   });
 
   final AppSession session;
+  final HikerCircleFirebaseRepository repository;
   final String phoneNumber;
   final Future<void> Function(String link)? onOpenNotificationLink;
   final VoidCallback onSignOut;
@@ -82,18 +84,6 @@ class _MePageState extends State<MePage> {
   set firestoreProfile(MeProfile? value) =>
       _screenModel.stateFirestoreProfile = value;
 
-  /// Returns post history items.
-  List<_ProfileHistoryItem> get _postHistoryItems =>
-      _screenModel.statePostHistoryItems;
-
-  /// Returns circle history items.
-  List<_ProfileHistoryItem> get _circleHistoryItems =>
-      _screenModel.stateCircleHistoryItems;
-
-  /// Returns buddy history items.
-  List<_ProfileHistoryItem> get _buddyHistoryItems =>
-      _screenModel.stateBuddyHistoryItems;
-
   /// Rebuilds the view after its ViewModel changes.
   void _renderScreenModel() {
     if (mounted) setState(() {});
@@ -115,9 +105,7 @@ class _MePageState extends State<MePage> {
         _presentOpenAchievementsEffect1;
 
     viewModel = MeViewModel(session: widget.session);
-    firebaseRepository = HikerCircleFirebaseRepository(
-      firebaseBootstrapResult: widget.firebaseBootstrapResult,
-    );
+    firebaseRepository = widget.repository;
     onboardingRepository = OnboardingRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
@@ -251,21 +239,21 @@ class _MePageState extends State<MePage> {
           title: 'My Posts',
           subtitle: 'Trail updates from your hiking history',
           icon: Icons.forum_rounded,
-          items: _postHistoryItems,
+          collection: _ProfileCollection.posts,
         );
       case 'My circles':
         _openHistoryPage(
           title: 'My Circles',
           subtitle: 'Each circle represents a hiking team',
           icon: Icons.groups_2_rounded,
-          items: _circleHistoryItems,
+          collection: _ProfileCollection.circles,
         );
       case 'My buddies':
         _openHistoryPage(
           title: 'My Buddies',
           subtitle: 'People from past hikes and QR adds',
           icon: Icons.person_add_alt_1_rounded,
-          items: _buddyHistoryItems,
+          collection: _ProfileCollection.buddies,
         );
       case 'Emergency contacts':
         _openEmergencyContacts();
@@ -343,15 +331,19 @@ class _MePageState extends State<MePage> {
     required String title,
     required String subtitle,
     required IconData icon,
-    required List<_ProfileHistoryItem> items,
+    required _ProfileCollection collection,
   }) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => _ProfileHistoryPage(
-          title: title,
-          subtitle: subtitle,
-          icon: icon,
-          items: items,
+        builder: (context) => ListenableBuilder(
+          listenable: _screenModel,
+          builder: (_, _) => _ProfileHistoryPage(
+            title: title,
+            subtitle: subtitle,
+            icon: icon,
+            history: _screenModel.history[collection],
+            retry: () => _screenModel.loadCollection(collection),
+          ),
         ),
       ),
     );
@@ -853,17 +845,20 @@ class _ProfileHistoryPage extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.icon,
-    required this.items,
+    required this.history,
+    required this.retry,
   });
 
   final String title;
   final String subtitle;
   final IconData icon;
-  final List<_ProfileHistoryItem> items;
+  final AsyncSnapshot<List<_ProfileHistoryItem>>? history;
+  final VoidCallback retry;
 
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
+    final items = history?.data;
     return Scaffold(
       backgroundColor: _MeColors.backgroundFor(context),
       body: SafeArea(
@@ -881,49 +876,64 @@ class _ProfileHistoryPage extends StatelessWidget {
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Row(
-                        children: [
-                          _Glyph(icon: icon),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              '${items.length} history item${items.length == 1 ? '' : 's'} from profile activity.',
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(
-                                    color: _MeColors.textFor(context),
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0,
-                                  ),
-                            ),
-                          ),
-                        ],
+                  if (items == null)
+                    if (history?.hasError == true) ...[
+                      const Text('Couldn’t load this history.'),
+                      TextButton(
+                        onPressed: retry,
+                        child: const Text('Try again'),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  if (items.isEmpty)
+                    ] else
+                      const Center(
+                        child: CircularProgressIndicator(
+                          semanticsLabel: 'Loading history',
+                        ),
+                      )
+                  else ...[
                     _InsetGroup(
                       child: Padding(
-                        padding: const EdgeInsets.all(18),
-                        child: Text(
-                          'No profile activity is available here yet.',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: _MeColors.secondaryTextFor(context),
-                                letterSpacing: 0,
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
+                          children: [
+                            _Glyph(icon: icon),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                '${items.length} history item${items.length == 1 ? '' : 's'} from profile activity.',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(
+                                      color: _MeColors.textFor(context),
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0,
+                                    ),
                               ),
+                            ),
+                          ],
                         ),
                       ),
-                    )
-                  else
-                    for (final item in items) ...[
-                      _ProfileHistoryCard(item: item),
-                      const SizedBox(height: 10),
-                    ],
+                    ),
+                    const SizedBox(height: 14),
+                    if (items.isEmpty)
+                      _InsetGroup(
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Text(
+                            'No profile activity is available here yet.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: _MeColors.secondaryTextFor(context),
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                        ),
+                      )
+                    else
+                      for (final item in items) ...[
+                        _ProfileHistoryCard(item: item),
+                        const SizedBox(height: 10),
+                      ],
+                  ],
                 ],
               ),
             ),

@@ -1371,6 +1371,12 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
             phoneNumber: readSession().phoneNumber,
           );
         } else {
+          final persistedId =
+              stateActiveHikeSessionIdRemaps[hike.sessionId] ?? hike.sessionId;
+          if (stateIsEndingActiveHike ||
+              stateActiveHike?.sessionId != persistedId) {
+            return;
+          }
           await stateHikerCircleRepository.localDatabase.saveActiveHikeSession(
             phoneNumber: readSession().phoneNumber,
             activeHike:
@@ -2588,6 +2594,9 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
     ActiveHikeSession hike, {
     required String lifecycleState,
   }) async {
+    if (stateIsEndingActiveHike || stateActiveHike?.sessionId != hike.sessionId) {
+      return;
+    }
     try {
       await stateHikerCircleRepository.updateActiveHikeMonitoringHeartbeat(
         session: readSession(),
@@ -2604,6 +2613,9 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
   Future<void> commandSignalPotentialAppTermination(
     ActiveHikeSession hike,
   ) async {
+    if (stateIsEndingActiveHike || stateActiveHike?.sessionId != hike.sessionId) {
+      return;
+    }
     try {
       await stateHikerCircleRepository.signalActiveHikePotentialTermination(
         session: readSession(),

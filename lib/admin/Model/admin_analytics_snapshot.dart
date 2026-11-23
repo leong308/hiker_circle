@@ -268,6 +268,30 @@ class AdminDashboardMetric {
       ? 1
       : -1;
 
+  /// Selects the noun spoken for a chart count, retaining its qualifiers.
+  static String countUnit(num count, String pluralUnit) {
+    if (count != 1) return pluralUnit;
+    const singularNouns = {
+      'accounts': 'account',
+      'awards': 'award',
+      'contacts': 'contact',
+      'definitions': 'definition',
+      'entries': 'entry',
+      'events': 'event',
+      'forecasts': 'forecast',
+      'jobs': 'job',
+      'plans': 'plan',
+      'reports': 'report',
+      'requests': 'request',
+      'sessions': 'session',
+      'teams': 'team',
+      'trails': 'trail',
+    };
+    final start = pluralUnit.lastIndexOf(' ') + 1;
+    final noun = pluralUnit.substring(start);
+    return pluralUnit.substring(0, start) + (singularNouns[noun] ?? noun);
+  }
+
   /// Keeps full count formatting readable on dashboards without scientific notation.
   static String formatNumber(num value, {bool decimals = false}) {
     final raw = decimals && value != value.round()
