@@ -172,6 +172,7 @@ class SosAlertRepository {
       _providedReadCache ??
       ConditionalCloudCache(_localDatabase, () => FirebaseFunctions.instance);
 
+  // Query hiker's SOS preferences
   Future<Map<String, dynamic>> _readSosPreferences(
     AppSession session, {
     bool force = false,
@@ -421,6 +422,7 @@ class SosAlertRepository {
     String note, {
     int? operationSeq,
   }) async {
+    // Update cloud: save custom SOS note
     final response = await FirebaseFunctions.instance
         .httpsCallable(
           'syncSafetyPreferences',
@@ -628,6 +630,7 @@ class SosAlertRepository {
       if (referencedAlerts.isNotEmpty) {
         return _confirmedLogs(session, referencedAlerts);
       }
+      // Query SOS alert history by user
       final snapshot = await _sosAlerts
           .where(
             'userId',
@@ -652,6 +655,7 @@ class SosAlertRepository {
     required AppSession session,
     required int limit,
   }) async {
+    // Query saved SOS alert references
     final userSnapshot = await _userDocumentFor(session).get();
     final rawPaths = userSnapshot.data()?['recentSosAlertPaths'];
     if (rawPaths is! Iterable) return const [];
@@ -668,6 +672,7 @@ class SosAlertRepository {
         .toList();
     if (paths.isEmpty) return const [];
     final snapshots = await Future.wait(
+      // Query SOS alert by document path
       paths.map((path) => _resolvedFirestore.doc(path).get()),
     );
     final alerts = snapshots
@@ -1722,6 +1727,7 @@ class SosAlertRepository {
       final logTimeout = _cloudWriteTimeout < const Duration(seconds: 15)
           ? const Duration(seconds: 15)
           : _cloudWriteTimeout;
+      // Update cloud: save SOS alert log
       final result = await FirebaseFunctions.instance
           .httpsCallable(
             'saveSosAlertLog',

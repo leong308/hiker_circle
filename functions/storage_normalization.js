@@ -8,6 +8,7 @@ function weatherMillis(weather) { return Date.parse(weather?.cachedAtLocal || ''
 async function syncTrailWeather(db, reference, observed, weather) {
   if (sameWeather(observed.weather, weather)) return {written: false, weather};
   return db.runTransaction(async tx => {
+    // Query current trail weather
     const snapshot = await tx.get(reference);
     if (!snapshot.exists) return {written: false, missing: true, weather};
     const current = snapshot.data();
@@ -17,6 +18,7 @@ async function syncTrailWeather(db, reference, observed, weather) {
     if (sameWeather(current.weather, weather) || weatherMillis(current.weather) > weatherMillis(weather)) {
       return {written: false, weather: current.weather};
     }
+    // Update cloud: save normalized trail forecast
     tx.update(reference, {weather});
     return {written: true, weather};
   });

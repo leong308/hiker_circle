@@ -106,6 +106,7 @@ class GreenApiClient {
       }
       // The callable SDK attaches Firebase Auth credentials. Avoid a separate
       // token lookup before the emergency request reaches Firebase.
+      // Update cloud: submit SOS WhatsApp dispatch
       final response = await _resolvedFunctions
           .httpsCallable('sendSosWhatsAppMessage')
           .call(<String, dynamic>{

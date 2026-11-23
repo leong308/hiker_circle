@@ -75,6 +75,7 @@ class TrailCautionService {
         final reference = FirebaseStorage.instance.ref(path);
         FullMetadata? existing;
         try {
+          // Query caution image metadata
           existing = await reference.getMetadata();
         } on FirebaseException catch (e) {
           if (e.code != 'object-not-found') rethrow;
@@ -93,6 +94,7 @@ class TrailCautionService {
               'The selected file changed. Please choose it again.',
             );
           }
+          // Update cloud: upload trail caution image
           await reference.putData(
             bytes,
             SettableMetadata(
@@ -118,6 +120,7 @@ class TrailCautionService {
     bool confirmed = false,
   }) async {
     final media = await upload(hazardId, files);
+    // Update cloud: submit trail caution vote or update
     final response = await FirebaseFunctions.instance
         .httpsCallable('updateTrailCaution')
         .call({

@@ -42,6 +42,7 @@ class FirebaseTrailCautionDetailsRepository
   @override
   Stream<CommunityHazard?> watchReport(String hazardId) => Firebase.apps.isEmpty
       ? const Stream.empty()
+      // Query live trail hazard by ID
       : FirebaseFirestore.instance
             .collection('hazardReports')
             .doc(hazardId)
@@ -61,6 +62,7 @@ class FirebaseTrailCautionDetailsRepository
   Stream<List<CautionUpdate>> watchUpdates(String hazardId) =>
       Firebase.apps.isEmpty
       ? Stream.value(const [])
+      // Query live trail hazard updates
       : FirebaseFirestore.instance
             .collection('hazardReports')
             .doc(hazardId)
@@ -83,6 +85,7 @@ class FirebaseTrailCautionDetailsRepository
     int cycle,
   ) => Firebase.apps.isEmpty
       ? Stream.value(const CautionViewerVotes())
+      // Query hiker's trail hazard votes
       : FirebaseFirestore.instance
             .collection('hazardReports')
             .doc(hazardId)

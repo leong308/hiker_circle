@@ -65,6 +65,7 @@ class _TrailPageState extends State<TrailPage> {
     super.initState();
     _trails = List.of(widget.initialTrails ?? const []);
     unawaited(_loadLiveTrails());
+    // Query trail list updates
     _trailsSubscription =
         _TrailPageDataActions.watchTrails(
           widget.hikerCircleRepository,
@@ -86,6 +87,7 @@ class _TrailPageState extends State<TrailPage> {
       _isLoadingTrails = true;
     });
     try {
+      // Query trail list for page refresh
       final liveTrails = await _TrailPageDataActions.loadTrails(
         widget.hikerCircleRepository,
       )();
@@ -522,6 +524,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
   @override
   void initState() {
     super.initState();
+    // Query live trail details by ID
     _trailSubscription = widget.hikerCircleRepository.firestore
         .collection('trails')
         .doc(_trail.trailId)

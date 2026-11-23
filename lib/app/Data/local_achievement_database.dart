@@ -28,6 +28,7 @@ List<Map<String, dynamic>> _achievementRows(Object? json) {
 extension LocalAchievementEvents on LocalSessionDatabase {
   /// Creates achievement event tables.
   Future<void> _createAchievementEventTables(DatabaseExecutor db) async {
+    // Update local: create achievement sync tables
     await db.execute('''CREATE TABLE IF NOT EXISTS achievement_event_receipts (
       owner_phone_number TEXT NOT NULL, event_key TEXT NOT NULL,
       metric_key TEXT NOT NULL, recorded_at TEXT NOT NULL,
@@ -57,6 +58,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
     if (owner.isEmpty) return const [];
     final db = await _openDatabase();
     final result = await db.transaction((tx) async {
+      // Query local: achievement progress and sync state
       final cached = await tx.query(
         'achievement_progress_cache',
         where: 'owner_phone_number = ?',
@@ -89,6 +91,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
         Map<String, dynamic> row, {
         required bool announce,
       }) async {
+        // Query local: existing unlock notification
         final existing = await tx.query(
           'achievement_notification_outbox',
           columns: ['achievement_id'],
@@ -97,6 +100,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
           limit: 1,
         );
         if (existing.isNotEmpty) return;
+        // Update local: queue achievement unlock notification
         await tx.insert(
           'achievement_notification_outbox',
           {
@@ -170,6 +174,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
         );
         rows = next;
         if (freshServerSnapshot) {
+          // Update local: save achievement sync state
           await tx.insert('achievement_sync_state', {
             'owner_phone_number': owner,
             'has_server_baseline': 1,
@@ -185,6 +190,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
             event.increment > (metric['maxIncrement'] as num).toInt()) {
           continue;
         }
+        // Query local: previous achievement event
         final seen = await tx.query(
           'achievement_event_receipts',
           where: 'owner_phone_number = ? AND event_key = ?',
@@ -192,6 +198,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
           limit: 1,
         );
         if (seen.isNotEmpty) continue;
+        // Update local: save event and achievement progress
         await tx.insert('achievement_event_receipts', {
           'owner_phone_number': owner,
           'event_key': event.eventKey,
@@ -240,6 +247,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
   ) async {
     await AchievementCatalog.load();
     final db = await _openDatabase();
+    // Query local: pending achievement notifications
     final rows = await db.query(
       'achievement_notification_outbox',
       where: 'owner_phone_number = ? AND delivered_at IS NULL',
@@ -278,6 +286,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
     final db = await _openDatabase();
     final changed = await db.transaction((tx) async {
       var changed = false;
+      // Query local: notification awaiting history entry
       final pending = await tx.query(
         'achievement_notification_outbox',
         where: 'owner_phone_number = ? AND delivered_at IS NULL',
@@ -302,6 +311,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
           source: 'local_achievement',
         );
         row['_deviceHistorySaved'] = true;
+        // Update local: update notification history status
         await tx.update(
           'achievement_notification_outbox',
           {'payload_json': jsonEncode(row)},
@@ -321,6 +331,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
     String achievementId,
   ) async {
     final db = await _openDatabase();
+    // Update local: mark achievement notification delivered
     await db.update(
       'achievement_notification_outbox',
       {'delivered_at': DateTime.now().toUtc().toIso8601String()},
@@ -335,6 +346,7 @@ extension LocalAchievementEvents on LocalSessionDatabase {
     String achievementId,
   ) async {
     final db = await _openDatabase();
+    // Query local: achievement notification by ID
     final rows = await db.query(
       'achievement_notification_outbox',
       where: 'owner_phone_number = ? AND achievement_id = ?',

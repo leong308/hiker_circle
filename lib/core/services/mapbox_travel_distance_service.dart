@@ -62,6 +62,7 @@ class MapboxTravelDistanceService {
         // Matrix requires at least two elements. Include the origin's zero
         // distance when requesting only one destination, then skip it below.
         final single = batch.length == 1;
+        // API: Mapbox driving distance matrix
         final uri = Uri.https(
           'api.mapbox.com',
           '/directions-matrix/v1/mapbox/driving/$coordinates',

@@ -13,6 +13,7 @@ class NativeLocationSampleBuffer(context: Context) :
         NativeLocationCipher.password(context), null, 1, 0, NativeLocationCipher.preserveOnError, null, true) {
     init { setWriteAheadLoggingEnabled(true) }
 
+    // Update local: create GPS sample table and index
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""
             CREATE TABLE samples (
@@ -32,6 +33,7 @@ class NativeLocationSampleBuffer(context: Context) :
     fun pendingSessions(ownerUid: String, forCloud: Boolean = false): List<String> {
         if (ownerUid.isBlank()) return emptyList()
         val flag = if (forCloud) "cloud_acknowledged" else "local_transferred"
+        // Query local: pending GPS sessions
         return readableDatabase.rawQuery(
             "SELECT session_id FROM samples WHERE owner_uid=? AND $flag=0 GROUP BY session_id ORDER BY MIN(sampled_at)",
             arrayOf(ownerUid),
@@ -46,6 +48,7 @@ class NativeLocationSampleBuffer(context: Context) :
         var moved = 0
         db.beginTransaction()
         try {
+            // Query local: GPS samples under provisional ID
             db.query("samples", null, "session_id=? AND owner_uid=?", arrayOf(oldSessionId, ownerUid), null, null, null).use { cursor ->
                 while (cursor.moveToNext()) {
                     val sampledAt = cursor.getLong(cursor.getColumnIndexOrThrow("sampled_at"))
@@ -63,14 +66,17 @@ class NativeLocationSampleBuffer(context: Context) :
                         // A server acknowledgement for the old session does not acknowledge the new one.
                         put("cloud_acknowledged", 0)
                     }
+                    // Update local: copy samples to confirmed session
                     db.insertWithOnConflict("samples", null, values, SQLiteDatabase.CONFLICT_IGNORE)
                     db.execSQL("UPDATE samples SET local_transferred=MAX(local_transferred, ?) WHERE sample_id=? AND owner_uid=?", arrayOf(transferred, id, ownerUid))
+                    // Query local: copied GPS sample
                     db.rawQuery("SELECT 1 FROM samples WHERE sample_id=? AND owner_uid=?", arrayOf(id, ownerUid)).use {
                         check(it.moveToFirst()) { "The target GPS session belongs to another account." }
                     }
                     moved += 1
                 }
             }
+            // Update local: remove old session samples
             db.delete("samples", "session_id=? AND owner_uid=?", arrayOf(oldSessionId, ownerUid))
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
@@ -91,6 +97,7 @@ class NativeLocationSampleBuffer(context: Context) :
             if (location.hasAltitude() && location.altitude.isFinite() && location.altitude in -1000.0..100000.0) put("altitude", location.altitude)
             if (location.hasSpeed() && location.speed.isFinite() && location.speed >= 0f) put("speed", location.speed.toDouble())
         }
+        // Update local: insert unique GPS sample
         writableDatabase.insertWithOnConflict("samples", null, values, SQLiteDatabase.CONFLICT_IGNORE)
     }
 
@@ -98,6 +105,7 @@ class NativeLocationSampleBuffer(context: Context) :
     fun pending(sessionId: String, ownerUid: String, limit: Int = 500, forCloud: Boolean = false): List<Map<String, Any>> {
         if (sessionId.isBlank() || ownerUid.isBlank()) return emptyList()
         val flag = if (forCloud) "cloud_acknowledged" else "local_transferred"
+        // Query local: pending GPS samples by time
         return readableDatabase.query(
             "samples", null, "session_id = ? AND owner_uid = ? AND $flag = 0",
             arrayOf(sessionId, ownerUid), null, null, "sampled_at ASC", limit.coerceIn(1, 500).toString(),
@@ -133,10 +141,12 @@ class NativeLocationSampleBuffer(context: Context) :
             for (ids in sampleIds.distinct().chunked(400)) {
                 val where = "session_id = ? AND owner_uid = ? AND sample_id IN (${ids.joinToString(",") { "?" }})"
                 val args = (listOf(sessionId, ownerUid) + ids).toTypedArray()
+                // Update local: acknowledge GPS sample transfer
                 changed += db.update("samples", ContentValues().apply {
                     put(if (cloud) "cloud_acknowledged" else "local_transferred", 1)
                 }, where, args)
             }
+            // Update local: remove fully acknowledged samples
             db.delete("samples", "local_transferred = 1 AND cloud_acknowledged = 1", null)
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }

@@ -24,6 +24,7 @@ async function mediaFor({bucket, uid, hazardId, media = []}) {
     }
     paths.add(path);
     const file = bucket.file(path); let metadata;
+    // Query trail caution image metadata
     try { [metadata] = await file.getMetadata(); } catch (error) {
       if (Number(error.code) === 404) fail('invalid-argument','Media upload is incomplete. Please retry.');
       fail('unavailable','Evidence could not be verified yet. Please retry.');
@@ -36,6 +37,7 @@ async function mediaFor({bucket, uid, hazardId, media = []}) {
     total += size;
     if (total > MAX_MEDIA_BYTES) fail('invalid-argument','Photos and videos must total at most 50 MB.');
     let token = metadata.metadata?.firebaseStorageDownloadTokens?.split(',')[0];
+    // Update cloud: save caution image download metadata
     if (!token) { token = randomUUID(); await file.setMetadata({metadata:{...metadata.metadata, firebaseStorageDownloadTokens:token}}); }
     result.push({storagePath:path, contentType, sizeBytes:size,
       name: typeof item.name === 'string' ? item.name.substring(0,160) : path.split('/').at(-1),
@@ -58,6 +60,7 @@ async function submit({db, bucket, uid, phone, data, now = Date.now(), timestamp
   const reference = db.collection('hazardReports').doc(hazardId);
   const media = await mediaFor({bucket, uid, hazardId, media:data.media});
   return db.runTransaction(async tx => {
+    // Query existing caution by ID
     const existing = await tx.get(reference);
     if (existing.exists) {
       if (existing.data().reportedBy !== uid) fail('permission-denied','This report belongs to another hiker.');
@@ -75,6 +78,7 @@ async function submit({db, bucket, uid, phone, data, now = Date.now(), timestamp
       fail('failed-precondition', 'This saved caution is too old to publish. Submit a new report if it is still present.');
     }
     const reportedAt = timestamp(observedAt);
+    // Update cloud: create hazard report and vote
     tx.create(reference, {hazardId, trailId, trailName:data.trailName.trim(), hazardType:data.hazardType,
       description, latitude:data.latitude, longitude:data.longitude, media, ...classifyHazard(data.hazardType),
       reportedBy:uid, reportedByPhoneNumber:phone, status:'unverified', reportLabel:'Community report',
@@ -99,6 +103,7 @@ async function update({db, bucket, uid, data, now = Date.now(), timestamp}) {
   const media = await mediaFor({bucket, uid, hazardId, media:data.media});
   const reference = db.collection('hazardReports').doc(hazardId);
   return db.runTransaction(async tx => {
+    // Query caution, update and viewer vote
     const reportSnapshot = await tx.get(reference);
     if (!reportSnapshot.exists) fail('not-found','This caution is unavailable.');
     const report = reportSnapshot.data();
@@ -122,6 +127,7 @@ async function update({db, bucket, uid, data, now = Date.now(), timestamp}) {
     const at = timestamp(now);
     if (vote.exists || (action === 'confirm' && cycle === 0 && report.reportedBy === uid)) {
       if (action === 'resolve' && (description || media.length)) {
+        // Update cloud: save caution resolution evidence
         tx.create(eventRef, {uid, action, cycle, description, media, createdAt:at});
       }
       return {hazardId, duplicate:true};
@@ -138,6 +144,7 @@ async function update({db, bucket, uid, data, now = Date.now(), timestamp}) {
           latestEvidence:{description, media}});
       }
     }
+    // Update cloud: save caution, vote and update
     tx.update(reference, patch);
     tx.create(voteRef, {uid, kind, cycle, createdAt:at});
     tx.create(eventRef, {uid, action, cycle, description, media, createdAt:at});

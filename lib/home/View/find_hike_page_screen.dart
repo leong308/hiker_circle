@@ -24,6 +24,10 @@ Future<void> showUpcomingHikePopup(
           session: session,
           repository: repository,
           onJoin: onJoin ?? () {},
+          onDeleted: () {
+            Navigator.of(context).pop();
+            onJoin?.call();
+          },
         ),
       ),
     ),
@@ -136,6 +140,18 @@ class _FindHikePageState extends State<FindHikePage>
         widget.repository,
       )();
       if (!mounted) return;
+      final owner = widget.session.phoneNumber;
+      var hidden = const <String>{};
+      if (hikes.any((h) => h.isParticipant(owner))) {
+        try {
+          hidden = await widget.repository.loadLocallyHiddenUpcomingHikeIds(
+            owner,
+          );
+        } catch (error) {
+          debugPrint('Upcoming hike cancellation cache unavailable: $error');
+        }
+      }
+      if (!mounted) return;
       final userLat = _userLat;
       final userLng = _userLng;
 
@@ -143,6 +159,7 @@ class _FindHikePageState extends State<FindHikePage>
       final active = hikes
           .where(
             (h) =>
+                !(h.isParticipant(owner) && hidden.contains(h.id)) &&
                 !now.isAfter(h.departureTime.add(const Duration(minutes: 15))),
           )
           .toList();
@@ -265,14 +282,21 @@ class _FindHikePageState extends State<FindHikePage>
       padding: EdgeInsets.zero,
       itemCount: _hikes.length,
       separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (context, index) => UpcomingHikeCard(
-        hike: _hikes[index],
-        userLat: _userLat,
-        userLng: _userLng,
-        session: widget.session,
-        repository: widget.repository,
-        onJoin: () => unawaited(_load(silent: true)),
-      ),
+      itemBuilder: (context, index) {
+        final hike = _hikes[index];
+        return UpcomingHikeCard(
+          key: ValueKey(hike.id),
+          hike: hike,
+          userLat: _userLat,
+          userLng: _userLng,
+          session: widget.session,
+          repository: widget.repository,
+          onJoin: () => unawaited(_load(silent: true)),
+          onDeleted: () => setState(
+            () => _hikes = _hikes.where((h) => h.id != hike.id).toList(),
+          ),
+        );
+      },
     );
   }
 }

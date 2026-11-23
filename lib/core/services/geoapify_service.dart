@@ -87,6 +87,7 @@ class GeoapifyService {
 
     final client = _client ?? http.Client();
     try {
+      // API: Geoapify reverse geocoding
       final response = _client == null
           ? await PrivateProviderClient.request('geoReverse', {
               'latitude': latitude,
@@ -181,6 +182,7 @@ class GeoapifyService {
         for (final wp in waypoints) '${wp.latitude},${wp.longitude}',
         '$endLatitude,$endLongitude',
       ].join('|');
+      // API: Geoapify hiking route
       final response = _client == null
           ? await PrivateProviderClient.request('geoRoute', {
               'coordinates': [

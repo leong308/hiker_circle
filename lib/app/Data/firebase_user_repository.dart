@@ -66,6 +66,7 @@ class FirebaseUserRepository {
 
   /// Watches session state.
   Stream<Map<String, dynamic>> watchSessionState(String phoneNumber) {
+    // Query live mobile session changes
     return _resolvedFirestore
         .collection('mobileSessions')
         .doc(documentIdForPhoneNumber(phoneNumber))
@@ -78,6 +79,7 @@ class FirebaseUserRepository {
   }
 
   /// Publishes confirmed account roles independently of mobile-session changes.
+  // Query live account status and roles
   Stream<Map<String, dynamic>> watchAccountState(String phoneNumber) => _users
       .doc(documentIdForPhoneNumber(phoneNumber))
       .snapshots(includeMetadataChanges: true)
@@ -99,6 +101,7 @@ class FirebaseUserRepository {
     try {
       await _requireAuthenticatedMfaSession(session);
       final account = _users.doc(documentIdForPhoneNumber(session.phoneNumber));
+      // Query account, profile and device modules
       final snapshots = await Future.wait([
         account.get(const GetOptions(source: Source.server)),
         userModuleDocument(

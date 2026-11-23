@@ -16,6 +16,7 @@ async function recordEvents({db, userId, metricKey, events, now = new Date().toI
     total = await db.runTransaction(async tx => {
       const refs = chunk.map(event => db.collection('achievementEventReceipts')
         .doc(crypto.createHash('sha256').update(`metric:${userId}:${metricKey}:${event.eventKey}`).digest('hex')));
+      // Query achievement total and prior events
       const [current, receipts] = await Promise.all([tx.get(totalRef), Promise.all(refs.map(ref => tx.get(ref)))]);
       const previous = Math.max(0, Number(current.data()?.progressCount || 0));
       let delta = 0;
@@ -23,6 +24,7 @@ async function recordEvents({db, userId, metricKey, events, now = new Date().toI
         if (receipt.exists) return;
         const event = chunk[index];
         delta += event.increment;
+        // Update cloud: save achievement events and total
         tx.create(refs[index], {userId, metricKey, eventKey: event.eventKey, increment: event.increment,
           applied: true, createdAtLocal: now});
       });

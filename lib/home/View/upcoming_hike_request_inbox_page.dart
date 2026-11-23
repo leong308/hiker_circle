@@ -118,7 +118,7 @@ class _UpcomingHikeRequestInboxPageState
                         const SizedBox(height: 20),
                         SectionLabel(
                           label: _model.history
-                              ? 'Request history'
+                              ? 'Join history'
                               : 'Waiting for your decision',
                           padding: EdgeInsets.zero,
                         ),
@@ -163,7 +163,7 @@ class _UpcomingHikeRequestInboxPageState
                                     const SizedBox(height: 12),
                                     Text(
                                       _model.history
-                                          ? 'No decisions yet'
+                                          ? 'No join history yet'
                                           : 'You’re all caught up',
                                       style: theme.textTheme.titleMedium
                                           ?.copyWith(
@@ -173,7 +173,7 @@ class _UpcomingHikeRequestInboxPageState
                                     const SizedBox(height: 6),
                                     Text(
                                       _model.history
-                                          ? 'Accepted and rejected requests will appear here.'
+                                          ? 'Hikers who join and past requests will appear here.'
                                           : 'New requests to join this hike will appear here.',
                                       textAlign: TextAlign.center,
                                       style: theme.textTheme.bodyMedium
@@ -280,12 +280,16 @@ class _RequestRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 7),
                     Text(
-                      'Requested ${_date(row.createdAt)}',
+                      row.isJoined
+                          ? 'joined: ${_date(row.joinedAt ?? row.decidedAt)}'
+                          : 'Requested ${_date(row.createdAt)}',
                       style: theme.textTheme.bodySmall,
                     ),
-                    if (row.status != 'pending' && row.decidedAt != null)
+                    if (!row.isJoined &&
+                        row.status != 'pending' &&
+                        row.decidedAt != null)
                       Text(
-                        '${row.status == 'accepted' || row.status == 'rejected' ? 'Decided' : 'Updated'} ${_date(row.decidedAt)}',
+                        '${row.status == 'rejected' ? 'Decided' : 'Updated'} ${_date(row.decidedAt)}',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: colors.onSurfaceVariant,
                         ),

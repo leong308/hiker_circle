@@ -50,6 +50,7 @@ function historySession(team) {
 
 // Authorize shared results using canonical membership and this hiker's terminal state.
 async function loadDetail(db, teamId, phone, ErrorType, detailBuilder) {
+  // Query team hike history by session ID
   const doc = await db.collection('teamHikeSessions').doc(teamId).get();
   const team = {...(doc.data() || {}), teamHikeSessionId: teamId};
   const member = (Array.isArray(team.participants) ? team.participants : []).find(p =>

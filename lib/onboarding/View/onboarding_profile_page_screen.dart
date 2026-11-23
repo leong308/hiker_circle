@@ -124,6 +124,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
   /// Loads password setup status.
   Future<void> _loadPasswordSetupStatus() async {
     try {
+      // Query account password setup status
       final response = await FirebaseFunctions.instance
           .httpsCallable('getPasswordSetupStatus')
           .call();
@@ -178,6 +179,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
       }
       try {
         if (_passwordConfigured != true) {
+          // Update cloud: link account password
           await functions.httpsCallable('linkPasswordToAccount').call({
             'password': _passwordController.text,
             'username': _usernameController.text.trim(),

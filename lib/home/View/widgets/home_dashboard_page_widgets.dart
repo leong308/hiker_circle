@@ -1543,6 +1543,7 @@ class _MyUpcomingHikesSection extends StatefulWidget {
     this.plannedHike,
     required this.phoneNumber,
     this.onTapHike,
+    this.onDeleteHike,
   });
 
   final List<UpcomingHike> hikes;
@@ -1551,6 +1552,7 @@ class _MyUpcomingHikesSection extends StatefulWidget {
   final PlannedHike? plannedHike;
   final String phoneNumber;
   final Future<void> Function(UpcomingHike)? onTapHike;
+  final Future<void> Function(UpcomingHike)? onDeleteHike;
 
   /// Creates the presentation state for this widget.
   @override
@@ -1675,6 +1677,13 @@ class _MyUpcomingHikesSectionState extends State<_MyUpcomingHikesSection> {
           isNextHike: index == 0,
           phoneNumber: widget.phoneNumber,
           plannedHike: plan,
+          onDelete:
+              widget.onDeleteHike == null ||
+                  index != _index ||
+                  !widget.isVisible ||
+                  !hike.isParticipant(widget.phoneNumber)
+              ? null
+              : () => widget.onDeleteHike!(hike),
           trail: trail,
           isVisible: widget.isVisible && index == _index,
           onReview: widget.onTapHike != null

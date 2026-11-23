@@ -296,6 +296,7 @@ class LocalSessionDatabase {
 
   Future<FeedbackSavedDraft?> loadFeedbackDraft(String owner) async {
     final database = await _openDatabase();
+    // Query local: owner's feedback draft
     final rows = await database.query(
       'feedback_drafts',
       where: 'owner = ? AND status = ?',
@@ -311,6 +312,7 @@ class LocalSessionDatabase {
   ) async {
     final database = await _openDatabase();
     return database.transaction((transaction) async {
+      // Query local: open feedback draft
       final rows = await transaction.query(
         'feedback_drafts',
         where: 'owner = ?',
@@ -333,6 +335,7 @@ class LocalSessionDatabase {
         'submission_attempted': initial.submissionAttempted ? 1 : 0,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
+      // Update local: create feedback draft
       await transaction.insert(
         'feedback_drafts',
         saved,
@@ -349,6 +352,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final screenshotHash = _feedbackScreenshotHash(draft.screenshot);
     return database.transaction((transaction) async {
+      // Query local: draft and revision
       final rows = await transaction.query(
         'feedback_drafts',
         columns: [
@@ -381,6 +385,7 @@ class LocalSessionDatabase {
       }
       final changedImage = rows.single['screenshot_hash'] != screenshotHash;
       final revision = draft.revision + 1;
+      // Update local: save draft and revision
       await transaction.update(
         'feedback_drafts',
         {
@@ -409,6 +414,7 @@ class LocalSessionDatabase {
 
   Future<bool> discardFeedbackDraft(FeedbackSavedDraft expected) async {
     final database = await _openDatabase();
+    // Update local: discard feedback draft
     return await database.update(
           'feedback_drafts',
           _clearedFeedbackDraftValues(expected.revision + 1),
@@ -427,6 +433,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     return database.transaction((transaction) async {
+      // Query local: submitted draft revision
       final rows = await transaction.query(
         'feedback_drafts',
         columns: ['revision'],
@@ -443,6 +450,7 @@ class LocalSessionDatabase {
         limit: 1,
       );
       if (rows.isEmpty) return false;
+      // Update local: acknowledge draft submission
       await transaction.update(
         'feedback_drafts',
         _clearedFeedbackDraftValues((rows.single['revision'] as int) + 1),
@@ -471,6 +479,7 @@ class LocalSessionDatabase {
     DateTime start,
   ) async {
     final db = await _openDatabase();
+    // Update local: create SOS button debug session
     await db.insert('button_debug_sessions', {
       'id': id,
       'owner_phone_number': owner,
@@ -486,12 +495,14 @@ class LocalSessionDatabase {
   ) async {
     final db = await _openDatabase();
     await db.transaction((txn) async {
+      // Query local: button debug session
       final session = await txn.query(
         'button_debug_sessions',
         where: 'id = ? AND owner_phone_number = ? AND status = ?',
         whereArgs: [entry['session_id'], owner, 'recording'],
       );
       if (session.isEmpty) throw StateError('Debug session is not recording.');
+      // Update local: append button debug event
       await txn.insert('button_debug_entries', entry);
     });
   }
@@ -501,6 +512,7 @@ class LocalSessionDatabase {
     String owner,
   ) async {
     final db = await _openDatabase();
+    // Query local: owner's button debug sessions
     return db.query(
       'button_debug_sessions',
       columns: [
@@ -521,6 +533,7 @@ class LocalSessionDatabase {
   /// Loads button debug log.
   Future<String?> loadButtonDebugLog(String owner, String id) async {
     final db = await _openDatabase();
+    // Query local: button debug session by ID
     final rows = await db.query(
       'button_debug_sessions',
       columns: ['log_text'],
@@ -537,6 +550,7 @@ class LocalSessionDatabase {
     String id,
   ) async {
     final db = await _openDatabase();
+    // Query local: debug log by session
     return db.rawQuery(
       '''
       SELECT e.* FROM button_debug_entries e
@@ -557,6 +571,7 @@ class LocalSessionDatabase {
     String? filePath,
   }) async {
     final db = await _openDatabase();
+    // Update local: close button debug session
     await db.update(
       'button_debug_sessions',
       {
@@ -573,6 +588,7 @@ class LocalSessionDatabase {
 
   /// Creates button debug tables.
   Future<void> _createButtonDebugTables(DatabaseExecutor db) async {
+    // Update local: create button debug tables
     await db.execute('''
       CREATE TABLE IF NOT EXISTS button_debug_sessions (
         id TEXT PRIMARY KEY, owner_phone_number TEXT NOT NULL,
@@ -601,6 +617,7 @@ class LocalSessionDatabase {
   /// Loads session.
   Future<AppSession?> loadSession() async {
     final database = await _openDatabase();
+    // Query local: saved user session
     final rows = await database.query(
       'users',
       orderBy: 'signed_in_at DESC',
@@ -617,6 +634,7 @@ class LocalSessionDatabase {
   Future<void> saveSession(AppSession session) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Update local: replace saved user session
       await transaction.delete('users');
       await transaction.insert(
         'users',
@@ -633,6 +651,7 @@ class LocalSessionDatabase {
     required bool isSuperAdmin,
   }) async {
     final database = await _openDatabase();
+    // Update local: update saved session roles
     await database.update(
       'users',
       {
@@ -648,6 +667,7 @@ class LocalSessionDatabase {
   /// Clears user session only.
   Future<void> clearUserSessionOnly() async {
     final database = await _openDatabase();
+    // Update local: clear saved session
     await database.delete('users');
   }
 
@@ -659,6 +679,7 @@ class LocalSessionDatabase {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty) return null;
     final database = await _openDatabase();
+    // Query local: cached achievement progress
     final rows = await database.query(
       'achievement_progress_cache',
       where: 'owner_phone_number = ?',
@@ -686,6 +707,7 @@ class LocalSessionDatabase {
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       );
     } catch (_) {
+      // Update local: remove invalid achievement cache
       await database.delete(
         'achievement_progress_cache',
         where: 'owner_phone_number = ?',
@@ -704,6 +726,7 @@ class LocalSessionDatabase {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty || rows.isEmpty) return;
     final database = await _openDatabase();
+    // Update local: cache achievement progress
     await database.insert('achievement_progress_cache', {
       'owner_phone_number': owner,
       'content_hash': contentHash.trim(),
@@ -720,6 +743,7 @@ class LocalSessionDatabase {
     required ActiveHikeSession activeHike,
   }) async {
     final database = await _openDatabase();
+    // Update local: save active hike
     await database.insert('active_hike_session', {
       'owner_phone_number': phoneNumber,
       'session_id': activeHike.sessionId,
@@ -758,6 +782,7 @@ class LocalSessionDatabase {
 
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Query local: provisional hike session
       final activeRows = await transaction.query(
         'active_hike_session',
         columns: ['session_id', 'payload_json'],
@@ -786,6 +811,7 @@ class LocalSessionDatabase {
           // The supplied in-memory snapshot is the safe fallback when an older
           // local payload is malformed.
         }
+        // Update local: replace provisional hike ID
         await transaction.update(
           'active_hike_session',
           {
@@ -837,6 +863,7 @@ class LocalSessionDatabase {
     required String oldSessionId,
     required String newSessionId,
   }) async {
+    // Update local: move footprints and alerts
     await database.rawDelete(
       '''DELETE FROM footprints WHERE session_id = ? AND owner_phone_number = ? AND sample_key IS NOT NULL AND sample_key IN (SELECT sample_key FROM footprints WHERE session_id = ? AND owner_phone_number = ?)''',
       [oldSessionId, ownerPhoneNumber, newSessionId, ownerPhoneNumber],
@@ -862,6 +889,7 @@ class LocalSessionDatabase {
     required String phoneNumber,
   }) async {
     final database = await _openDatabase();
+    // Query local: owner's active hike
     final rows = await database.query(
       'active_hike_session',
       where: 'owner_phone_number = ?',
@@ -883,6 +911,7 @@ class LocalSessionDatabase {
       if (activeHike.sessionId.isEmpty) {
         throw const FormatException('Active hike session ID is missing.');
       }
+      // Query local: queued completion and GPS samples
       final pendingEnds = await database.query(
         'pending_hike_ends',
         where: 'owner_phone_number = ?',
@@ -926,6 +955,7 @@ class LocalSessionDatabase {
   /// Clears active hike session.
   Future<void> clearActiveHikeSession({required String phoneNumber}) async {
     final database = await _openDatabase();
+    // Query local: active hike to clear
     final rows = await database.query(
       'active_hike_session',
       columns: ['session_id'],
@@ -938,11 +968,13 @@ class LocalSessionDatabase {
         .where((sessionId) => sessionId.isNotEmpty)
         .toSet();
     await database.transaction((transaction) async {
+      // Update local: remove saved active hike
       await transaction.delete(
         'active_hike_session',
         where: 'owner_phone_number = ?',
         whereArgs: [phoneNumber],
       );
+      // Query local: pending hike completions
       final pendingEnds = await transaction.query(
         'pending_hike_ends',
         columns: ['session_id'],
@@ -989,6 +1021,7 @@ class LocalSessionDatabase {
       for (final entry in hikes.entries) {
         final hike = entry.value;
         final payload = hike.toPersistence();
+        // Query local: matching saved hike plan
         final existing = await transaction.query(
           'planned_hike_state',
           where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
@@ -1022,6 +1055,7 @@ class LocalSessionDatabase {
         final initialChecklist = GearChecklistCatalog.sanitize(
           hike.draft?.completedChecklistItems ?? const <String>{},
         ).toList()..sort();
+        // Update local: save hike plan
         await transaction.insert('planned_hike_state', {
           'owner_phone_number': owner,
           'upcoming_hike_id': entry.key,
@@ -1057,6 +1091,7 @@ class LocalSessionDatabase {
           if (!hike.isLocalPendingSync && !hike.isCancelledForHistory)
             _plannedHikeScheduleKey(hike): hike,
       };
+      // Query local: pending and confirmed hike plans
       final savedConfirmedRows = await transaction.query(
         'planned_hike_state',
         where: 'owner_phone_number = ? AND upcoming_hike_id NOT LIKE ?',
@@ -1112,6 +1147,7 @@ class LocalSessionDatabase {
             final transferredChecklist = pendingState.completedChecklistItems
                 .toList();
             transferredChecklist.sort();
+            // Update local: move plan to confirmed hike
             await transaction.update(
               'planned_hike_state',
               {
@@ -1157,6 +1193,7 @@ class LocalSessionDatabase {
         }
       }
       if (!pruneMissing) return;
+      // Query local: obsolete hike plans
       final savedRows = await transaction.query(
         'planned_hike_state',
         columns: ['upcoming_hike_id', 'upcoming_payload_json', 'is_consumed'],
@@ -1178,6 +1215,7 @@ class LocalSessionDatabase {
           ? ''
           : ' AND upcoming_hike_id NOT IN (${List.filled(preserved.length, '?').join(',')})';
       if (hikes.isEmpty) {
+        // Update local: remove obsolete plans
         await transaction.delete(
           'planned_hike_state',
           where:
@@ -1203,6 +1241,7 @@ class LocalSessionDatabase {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty) return const [];
     final database = await _openDatabase();
+    // Query local: owner's hike plans
     final rows = await database.query(
       'planned_hike_state',
       where: 'owner_phone_number = ?',
@@ -1237,6 +1276,7 @@ class LocalSessionDatabase {
         owner,
         upcomingHikeId.trim(),
       );
+      // Query local: hike plan checklist
       final rows = await transaction.query(
         'planned_hike_state',
         where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
@@ -1244,6 +1284,7 @@ class LocalSessionDatabase {
         limit: 1,
       );
       if (rows.isEmpty) return;
+      // Update local: save hike checklist
       await transaction.update(
         'planned_hike_state',
         {
@@ -1267,6 +1308,7 @@ class LocalSessionDatabase {
     bool consumed,
   ) async {
     final db = await _openDatabase();
+    // Update local: change plan consumption status
     await db.update(
       'planned_hike_state',
       {'is_consumed': consumed ? 1 : 0},
@@ -1284,6 +1326,7 @@ class LocalSessionDatabase {
     final hikeId = upcomingHikeId.trim();
     if (owner.isEmpty || hikeId.isEmpty) return;
     final database = await _openDatabase();
+    // Update local: mark hike plan consumed
     await database.update(
       'planned_hike_state',
       {
@@ -1320,6 +1363,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final now = DateTime.now().toUtc().toIso8601String();
     await database.transaction((transaction) async {
+      // Query local: existing queued completion
       final rows = await transaction.query(
         'pending_hike_ends',
         where: 'owner_phone_number = ? AND session_id = ?',
@@ -1333,6 +1377,7 @@ class LocalSessionDatabase {
       final rating =
           trailRating ?? previousSummary?[LocalPendingHikeEnd.trailRatingKey];
       final savedSummary = summary?.toFirestore() ?? previousSummary;
+      // Update local: queue hike completion
       await transaction.insert('pending_hike_ends', {
         'owner_phone_number': owner,
         'session_id': sessionId,
@@ -1362,6 +1407,7 @@ class LocalSessionDatabase {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty || limit <= 0) return const [];
     final database = await _openDatabase();
+    // Query local: pending hike completions
     final rows = await database.query(
       'pending_hike_ends',
       where: 'owner_phone_number = ?',
@@ -1383,6 +1429,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     return database.transaction((transaction) async {
+      // Query local: queued completion by ID
       final rows = await transaction.query(
         'pending_hike_ends',
         where: 'owner_phone_number = ? AND session_id = ?',
@@ -1406,6 +1453,7 @@ class LocalSessionDatabase {
           rows.single,
         ).historyPreview(ownerPhoneNumber, cloudId: completedCloudId);
         if (preview != null) {
+          // Update local: acknowledge queued hike completion
           await transaction.insert('cached_entities', {
             'owner_phone_number': ownerPhoneNumber.trim(),
             'entity_type': acknowledgedHikeHistoryType,
@@ -1433,6 +1481,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final batch = database.batch();
     for (final id in ids) {
+      // Update local: clear retired completion acknowledgements
       batch.delete(
         'cached_entities',
         where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
@@ -1449,6 +1498,7 @@ class LocalSessionDatabase {
     String lastError = '',
   }) async {
     final database = await _openDatabase();
+    // Update local: count completion retry
     await database.rawUpdate(
       '''
       UPDATE pending_hike_ends
@@ -1469,6 +1519,7 @@ class LocalSessionDatabase {
   /// Loads or create app instance id.
   Future<String> loadOrCreateAppInstanceId() async {
     final database = await _openDatabase();
+    // Query local: installation device ID
     final rows = await database.query('app_device', limit: 1);
     if (rows.isNotEmpty) {
       final existingId = rows.first['app_instance_id'] as String?;
@@ -1478,6 +1529,7 @@ class LocalSessionDatabase {
     }
 
     final appInstanceId = _newAppInstanceId();
+    // Update local: save installation ID
     await database.insert('app_device', {
       'id': 1,
       'app_instance_id': appInstanceId,
@@ -1491,6 +1543,7 @@ class LocalSessionDatabase {
     required String phoneNumber,
   }) async {
     final database = await _openDatabase();
+    // Query local: ordered emergency contacts
     final rows = await database.query(
       'emergency_contacts',
       where: 'owner_phone_number = ?',
@@ -1508,6 +1561,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final now = DateTime.now().toUtc().toIso8601String();
     await database.transaction((transaction) async {
+      // Update local: replace emergency contacts
       await transaction.delete(
         'emergency_contacts',
         where: 'owner_phone_number = ?',
@@ -1532,6 +1586,7 @@ class LocalSessionDatabase {
   /// Saves cached entity.
   Future<void> saveCachedEntity(LocalCachedEntity entity) async {
     final database = await _openDatabase();
+    // Query local: existing cached entity
     final existing = await database.query(
       'cached_entities',
       columns: ['payload_json', 'source_updated_at', 'expires_at'],
@@ -1554,6 +1609,7 @@ class LocalSessionDatabase {
             entity.expiresAt?.toUtc().toIso8601String()) {
       return;
     }
+    // Update local: save cached entity
     await database.insert('cached_entities', {
       'owner_phone_number': entity.ownerPhoneNumber.trim(),
       'entity_type': entity.entityType.trim(),
@@ -1572,6 +1628,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final batch = database.batch();
     for (final entity in entities) {
+      // Update local: cache entity batch
       batch.insert('cached_entities', {
         'owner_phone_number': entity.ownerPhoneNumber.trim(),
         'entity_type': entity.entityType.trim(),
@@ -1604,6 +1661,7 @@ class LocalSessionDatabase {
       clauses.add('(expires_at IS NULL OR expires_at > ?)');
       arguments.add(DateTime.now().toUtc().toIso8601String());
     }
+    // Query local: cached entities by owner and type
     final rows = await database.query(
       'cached_entities',
       where: clauses.join(' AND '),
@@ -1621,6 +1679,7 @@ class LocalSessionDatabase {
     bool includeExpired = false,
   }) async {
     final database = await _openDatabase();
+    // Query local: cached entity by ID
     final rows = await database.query(
       'cached_entities',
       where:
@@ -1645,6 +1704,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Update local: register cached resource
       await transaction.insert('cached_entities', {
         'owner_phone_number': descriptor.ownerPhoneNumber.trim(),
         'entity_type': 'conditional_read_descriptor',
@@ -1653,6 +1713,7 @@ class LocalSessionDatabase {
         'payload_json': jsonEncode(descriptor.payload),
         'cached_at': descriptor.cachedAt.toUtc().toIso8601String(),
       }, conflictAlgorithm: ConflictAlgorithm.replace);
+      // Query local: cache entries for eviction
       final rows = await transaction.query(
         'cached_entities',
         where: 'owner_phone_number = ? AND entity_type = ?',
@@ -1664,6 +1725,7 @@ class LocalSessionDatabase {
       );
       for (final row in rows.skip(maximumPerOwner.clamp(1, 64))) {
         final old = LocalCachedEntity.fromRow(row);
+        // Update local: prune old cache entries
         await transaction.delete(
           'cached_entities',
           where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
@@ -1708,6 +1770,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Update local: remove unowned private data
       await transaction.delete(
         'cached_entities',
         where: "owner_phone_number = '' AND entity_type IN (?, ?, ?, ?)",
@@ -1718,6 +1781,7 @@ class LocalSessionDatabase {
           'hike_history_detail:validation',
         ],
       );
+      // Query local: orphaned private cache entries
       final descriptors = await transaction.query(
         'cached_entities',
         where: "owner_phone_number = '' AND entity_type = ?",
@@ -1731,6 +1795,7 @@ class LocalSessionDatabase {
         final type = descriptor.payload['type'];
         final id = descriptor.payload['id'];
         if (type is String && id is String) {
+          // Update local: remove orphaned cache entries
           await transaction.delete(
             'cached_entities',
             where:
@@ -1763,6 +1828,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     return database.transaction((transaction) async {
       if (expectedSessionOwner.isNotEmpty) {
+        // Query local: cache owner and validation state
         final users = await transaction.query(
           'users',
           columns: ['phone_number'],
@@ -1827,6 +1893,7 @@ class LocalSessionDatabase {
         if (descriptors.isEmpty) return false;
       }
       if (deletePayload) {
+        // Update local: save resource and validation state
         await transaction.delete(
           'cached_entities',
           where: 'owner_phone_number = ? AND entity_type = ? AND entity_id = ?',
@@ -1865,6 +1932,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Update local: invalidate cached resource
       await transaction.delete(
         'cached_entities',
         where:
@@ -1900,6 +1968,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Update local: replace owner's cached entities
       await transaction.delete(
         'cached_entities',
         where: 'owner_phone_number = ? AND entity_type = ? AND parent_id = ?',
@@ -1931,6 +2000,7 @@ class LocalSessionDatabase {
   /// Computes enqueue sync operation.
   Future<void> enqueueSyncOperation(LocalSyncOperation operation) async {
     final database = await _openDatabase();
+    // Update local: queue sync operation
     await database.insert('sync_outbox', {
       'operation_id': operation.operationId,
       'owner_phone_number': operation.ownerPhoneNumber.trim(),
@@ -1956,6 +2026,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     final now = DateTime.now().toUtc().toIso8601String();
+    // Query local: sync operations ready to retry
     final rows = await database.query(
       'sync_outbox',
       where:
@@ -1974,6 +2045,7 @@ class LocalSessionDatabase {
     DateTime? nextAttemptAt,
   }) async {
     final database = await _openDatabase();
+    // Update local: schedule sync retry
     await database.rawUpdate(
       '''
       UPDATE sync_outbox
@@ -1993,6 +2065,7 @@ class LocalSessionDatabase {
   /// Deletes sync operation.
   Future<void> deleteSyncOperation(String operationId) async {
     final database = await _openDatabase();
+    // Update local: remove acknowledged sync operation
     await database.delete(
       'sync_outbox',
       where: 'operation_id = ?',
@@ -2008,6 +2081,7 @@ class LocalSessionDatabase {
     bool isDirty = false,
   }) async {
     final database = await _openDatabase();
+    // Update local: save device preference
     await database.insert('local_preferences', {
       'owner_phone_number': ownerPhoneNumber.trim(),
       'preference_key': key.trim(),
@@ -2024,6 +2098,7 @@ class LocalSessionDatabase {
     Object? value,
   ) async {
     final db = await _openDatabase();
+    // Update local: initialize missing preference
     await db.insert('local_preferences', {
       'owner_phone_number': owner,
       'preference_key': key,
@@ -2042,6 +2117,7 @@ class LocalSessionDatabase {
     final db = await _openDatabase();
     await db.transaction((tx) async {
       final versionKey = 'sync_sequence:$key';
+      // Query local: current preference revision
       final rows = await tx.query(
         'local_preferences',
         where: 'owner_phone_number = ? AND preference_key = ?',
@@ -2051,6 +2127,7 @@ class LocalSessionDatabase {
           ? 0
           : (jsonDecode(rows.single['value_json'] as String) as num).toInt();
       for (final entry in {key: value, versionKey: sequence + 1}.entries) {
+        // Update local: queue preference revision
         await tx.insert('local_preferences', {
           'owner_phone_number': owner,
           'preference_key': entry.key,
@@ -2069,6 +2146,7 @@ class LocalSessionDatabase {
   ) async {
     final db = await _openDatabase();
     return db.transaction((tx) async {
+      // Query local: versioned preference
       final rows = await tx.query(
         'local_preferences',
         where: 'owner_phone_number = ? AND preference_key IN (?, ?)',
@@ -2085,6 +2163,7 @@ class LocalSessionDatabase {
                 .toInt();
       if (sequence == 0 && values[key]?['is_dirty'] == 1) {
         sequence = 1;
+        // Update local: initialize preference revision
         await tx.insert('local_preferences', {
           'owner_phone_number': owner,
           'preference_key': 'sync_sequence:$key',
@@ -2103,6 +2182,7 @@ class LocalSessionDatabase {
     required String key,
   }) async {
     final database = await _openDatabase();
+    // Query local: preference by owner and key
     final rows = await database.query(
       'local_preferences',
       columns: ['value_json'],
@@ -2121,6 +2201,7 @@ class LocalSessionDatabase {
     required Object? expectedValue,
   }) async {
     final database = await _openDatabase();
+    // Update local: clear matching preference
     final deleted = await database.delete(
       'local_preferences',
       where: 'owner_phone_number = ? AND preference_key = ? AND value_json = ?',
@@ -2143,6 +2224,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     return database.transaction((transaction) async {
+      // Query local: unsent preference edits
       final rows = await transaction.query(
         'local_preferences',
         columns: ['is_dirty'],
@@ -2150,6 +2232,7 @@ class LocalSessionDatabase {
         whereArgs: [ownerPhoneNumber.trim(), key.trim()],
       );
       if (rows.isNotEmpty && rows.first['is_dirty'] == 1) return false;
+      // Update local: save downloaded preference
       await transaction.insert('local_preferences', {
         'owner_phone_number': ownerPhoneNumber.trim(),
         'preference_key': key.trim(),
@@ -2166,6 +2249,7 @@ class LocalSessionDatabase {
     required String owner,
   }) async {
     final database = await _openDatabase();
+    // Query local: pending hike arrival responses
     final rows = await database.query(
       'local_preferences',
       columns: ['preference_key', 'value_json'],
@@ -2185,6 +2269,7 @@ class LocalSessionDatabase {
     required String ownerPhoneNumber,
   }) async {
     final database = await _openDatabase();
+    // Query local: pending preference edits
     final rows = await database.query(
       'local_preferences',
       columns: ['preference_key', 'value_json'],
@@ -2214,6 +2299,7 @@ class LocalSessionDatabase {
     int? expectedSequence,
   }) async {
     final database = await _openDatabase();
+    // Update local: acknowledge preference revision
     await database.update(
       'local_preferences',
       {'is_dirty': 0},
@@ -2242,6 +2328,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Update local: replace static hazards and matches
       await transaction.delete('trail_hazard_matches');
       await transaction.delete('hazard_feature_rtree');
       await transaction.delete('hazard_features');
@@ -2319,6 +2406,7 @@ class LocalSessionDatabase {
       }
       for (final trailId in scannedTrailIds.map((id) => id.trim())) {
         if (trailId.isEmpty) continue;
+        // Update local: save hazard scan metadata
         await transaction.insert('local_preferences', {
           'owner_phone_number': '',
           'preference_key': '$_staticHazardScanPreferencePrefix$trailId',
@@ -2339,6 +2427,7 @@ class LocalSessionDatabase {
     final normalizedTrailId = trailId.trim();
     if (normalizedTrailId.isEmpty) return null;
     final database = await _openDatabase();
+    // Query local: last hazard scan time
     final rows = await database.query(
       'local_preferences',
       columns: ['value_json', 'updated_at'],
@@ -2375,6 +2464,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final scannedAtUtc = scannedAt.toUtc();
     await database.transaction((transaction) async {
+      // Query local: previous hazard matches by trail
       final previousHazards = await transaction.rawQuery(
         '''
         SELECT hazards.hazard_id, hazards.local_id
@@ -2385,6 +2475,7 @@ class LocalSessionDatabase {
         ''',
         [normalizedTrailId],
       );
+      // Update local: clear trail hazard matches
       await transaction.delete(
         'trail_hazard_matches',
         where: 'trail_id = ?',
@@ -2392,6 +2483,7 @@ class LocalSessionDatabase {
       );
       for (final row in previousHazards) {
         final hazardId = row['hazard_id'] as String? ?? '';
+        // Query local: shared hazard reference count
         final referenceCount = Sqflite.firstIntValue(
           await transaction.rawQuery(
             'SELECT COUNT(*) FROM trail_hazard_matches WHERE hazard_id = ?',
@@ -2399,6 +2491,7 @@ class LocalSessionDatabase {
           ),
         );
         if ((referenceCount ?? 0) != 0) continue;
+        // Update local: remove unreferenced hazards
         await transaction.delete(
           'hazard_feature_rtree',
           where: 'owner_phone_number = ? AND chat_id = ? AND local_id = ?',
@@ -2417,6 +2510,7 @@ class LocalSessionDatabase {
 
       final localIds = <String, int>{};
       for (final hazard in hazards) {
+        // Update local: save refreshed hazards and matches
         final localId = await transaction.insert('hazard_features', {
           'hazard_id': hazard.hazardId,
           'hazard_type': hazard.hazardType,
@@ -2479,6 +2573,7 @@ class LocalSessionDatabase {
     String trailId,
   ) async {
     final database = await _openDatabase();
+    // Query local: saved hazard matches by trail
     final rows = await database.rawQuery(
       '''
       SELECT hazards.*, matches.trail_id, matches.relationship,
@@ -2511,6 +2606,7 @@ class LocalSessionDatabase {
   /// Loads static hazard dataset summary.
   Future<LocalHazardDatasetSummary> loadStaticHazardDatasetSummary() async {
     final database = await _openDatabase();
+    // Query local: hazard counts and scan metadata
     final rows = await database.rawQuery('''
       SELECT COUNT(*) AS hazard_count,
              COUNT(DISTINCT matches.trail_id) AS trail_count,
@@ -2566,6 +2662,7 @@ class LocalSessionDatabase {
   Future<void> clearStaticHazardDataset() async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Update local: clear static hazard data
       await transaction.delete('trail_hazard_matches');
       await transaction.delete('hazard_feature_rtree');
       await transaction.delete('hazard_features');
@@ -2630,6 +2727,7 @@ class LocalSessionDatabase {
   }) async {
     final now = DateTime.now().toUtc();
     final effectiveMessageId = messageId.trim();
+    // Query local: existing device notification
     final existingRows = effectiveMessageId.isEmpty
         ? const <Map<String, Object?>>[]
         : await database.query(
@@ -2658,6 +2756,7 @@ class LocalSessionDatabase {
     };
 
     if (existingRows.isEmpty) {
+      // Update local: save notification and prune old entries
       await database.insert('device_notifications', row);
     } else {
       await database.update(
@@ -2689,6 +2788,7 @@ class LocalSessionDatabase {
     DateTime? asOf,
   }) async {
     final database = await _openDatabase();
+    // Query local: hiker's device notifications
     final rows = await database.query(
       'device_notifications',
       where: 'owner_phone_number = ? AND received_at <= ?',
@@ -2708,6 +2808,7 @@ class LocalSessionDatabase {
     DateTime? asOf,
   }) async {
     final database = await _openDatabase();
+    // Query local: next notification timestamp
     final rows = await database.query(
       'device_notifications',
       columns: ['received_at'],
@@ -2730,6 +2831,7 @@ class LocalSessionDatabase {
     required String messageId,
   }) async {
     final database = await _openDatabase();
+    // Update local: remove scheduled notification
     await database.delete(
       'device_notifications',
       where: 'owner_phone_number = ? AND message_id = ? AND received_at > ?',
@@ -2748,6 +2850,7 @@ class LocalSessionDatabase {
     required String messageId,
   }) async {
     final database = await _openDatabase();
+    // Update local: mark notification message opened
     await database.update(
       'device_notifications',
       {'opened_at': DateTime.now().toUtc().toIso8601String()},
@@ -2763,6 +2866,7 @@ class LocalSessionDatabase {
     required int id,
   }) async {
     final database = await _openDatabase();
+    // Update local: mark device notification opened
     await database.update(
       'device_notifications',
       {'opened_at': DateTime.now().toUtc().toIso8601String()},
@@ -2777,6 +2881,7 @@ class LocalSessionDatabase {
     required String ownerPhoneNumber,
   }) async {
     final database = await _openDatabase();
+    // Update local: mark all notifications opened
     await database.update(
       'device_notifications',
       {'opened_at': DateTime.now().toUtc().toIso8601String()},
@@ -2793,6 +2898,7 @@ class LocalSessionDatabase {
     required int id,
   }) async {
     final database = await _openDatabase();
+    // Update local: mark notification unread
     await database.update(
       'device_notifications',
       {'opened_at': null},
@@ -2809,6 +2915,7 @@ class LocalSessionDatabase {
     required bool isStarred,
   }) async {
     final database = await _openDatabase();
+    // Update local: change notification star
     await database.update(
       'device_notifications',
       {'is_starred': isStarred ? 1 : 0},
@@ -2824,6 +2931,7 @@ class LocalSessionDatabase {
     required int id,
   }) async {
     final database = await _openDatabase();
+    // Update local: delete device notification
     await database.delete(
       'device_notifications',
       where: 'owner_phone_number = ? AND id = ?',
@@ -2838,6 +2946,7 @@ class LocalSessionDatabase {
     bool includeStarred = true,
   }) async {
     final database = await _openDatabase();
+    // Update local: clear owner's notifications
     await database.delete(
       'device_notifications',
       where: includeStarred
@@ -2856,6 +2965,7 @@ class LocalSessionDatabase {
     if (owner.isEmpty || eventKey.isEmpty) return;
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Query local: previous nearby SOS event
       final existingRows = await transaction.query(
         'nearby_sos_events',
         where: 'owner_phone_number = ? AND event_key = ?',
@@ -2902,6 +3012,7 @@ class LocalSessionDatabase {
             detectorLocation?.capturedAt?.toUtc().toIso8601String(),
       };
       if (existing == null) {
+        // Update local: save nearby SOS event
         await transaction.insert('nearby_sos_events', row);
       } else {
         await transaction.update(
@@ -2935,6 +3046,7 @@ class LocalSessionDatabase {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty || limit <= 0) return const [];
     final database = await _openDatabase();
+    // Query local: saved nearby SOS events
     final rows = await database.query(
       'nearby_sos_events',
       where:
@@ -3047,6 +3159,7 @@ class LocalSessionDatabase {
       databasePath,
       version: 40,
       onCreate: (database, version) async {
+        // Update local: create session database schema
         await database.execute('''
           CREATE TABLE users (
             phone_number TEXT PRIMARY KEY,
@@ -3089,6 +3202,7 @@ class LocalSessionDatabase {
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 40) {
+          // Update local: add privacy consent fields
           await database.execute(
             'ALTER TABLE users ADD COLUMN requires_privacy_consent INTEGER NOT NULL DEFAULT 0',
           );
@@ -3101,10 +3215,12 @@ class LocalSessionDatabase {
         }
         // One-time rename keeps pending samples, IDs and owner isolation intact.
         if (oldVersion < 29) {
+          // Query local: legacy tracking schema
           final oldTable = await database.rawQuery(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'local_location_points'",
           );
           if (oldTable.isNotEmpty) {
+            // Update local: migrate tracking tables and indexes
             await database.execute(
               'ALTER TABLE local_location_points RENAME TO footprints',
             );
@@ -3247,6 +3363,7 @@ class LocalSessionDatabase {
           await _createPlannedHikeStateTable(database);
         }
         if (oldVersion < 20) {
+          // Update local: migrate queued alerts
           await database.update(
             'queued_alerts',
             {
@@ -3325,11 +3442,13 @@ class LocalSessionDatabase {
             columnName: 'last_error',
             definition: "TEXT NOT NULL DEFAULT ''",
           );
+          // Update local: assign owners to queued messages
           await database.rawUpdate('''
             UPDATE pending_messages
             SET owner_phone_number = sender_phone
             WHERE TRIM(owner_phone_number) = ''
           ''');
+          // Query local: legacy read receipt tables
           final readReceiptTable = await database.rawQuery(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chat_read_receipts'",
           );
@@ -3339,6 +3458,7 @@ class LocalSessionDatabase {
           if (readReceiptTable.isEmpty) {
             await _createChatReadReceiptsTable(database);
           } else {
+            // Update local: migrate chat read receipts
             await database.execute(
               'ALTER TABLE chat_read_receipts RENAME TO chat_read_receipts_v24',
             );
@@ -3380,6 +3500,7 @@ class LocalSessionDatabase {
             columnName: 'fix_captured_at',
             definition: 'TEXT',
           );
+          // Update local: rebuild GPS sample index
           await database.execute(
             'CREATE UNIQUE INDEX IF NOT EXISTS footprint_sample_identity ON footprints(owner_phone_number, session_id, sample_key)',
           );
@@ -3397,6 +3518,7 @@ class LocalSessionDatabase {
         if (oldVersion < 31) {
           // These dormant map/network caches have no readers or replay path.
           // Preserve operational users, footprints, drafts and every sync queue.
+          // Update local: drop retired map tables
           await database.execute('DROP TABLE IF EXISTS downloaded_maps');
           await database.execute('DROP TABLE IF EXISTS offline_map_regions');
           await database.execute('DROP TABLE IF EXISTS network_observations');
@@ -3423,7 +3545,9 @@ class LocalSessionDatabase {
             );
           }
           await _createUpcomingHikeRemindersTable(database);
+          // Query local: existing plans for migration
           for (final row in await database.query('planned_hike_state')) {
+            // Update local: migrate planning state
             await database.update(
               'planned_hike_state',
               {
@@ -3450,6 +3574,7 @@ class LocalSessionDatabase {
         if (oldVersion < 34) {
           // Remove only the retired assistant's conversation and clear markers.
           await _createOfflineFirstTables(database);
+          // Update local: remove obsolete preferences
           await database.delete(
             'local_preferences',
             where: 'preference_key IN (?, ?)',
@@ -3460,15 +3585,18 @@ class LocalSessionDatabase {
           );
         }
         if (oldVersion < 38) {
+          // Update local: add superadmin session role
           await database.execute(
             'ALTER TABLE users ADD COLUMN is_super_admin INTEGER NOT NULL DEFAULT 0',
           );
         }
         if (oldVersion < 37) {
+          // Update local: migrate pending chat messages
           await database.execute(
             'ALTER TABLE pending_messages RENAME TO pending_messages_v36',
           );
           await _createPendingMessagesTable(database);
+          // Query local: legacy pending message columns
           final columns = (await database.rawQuery(
             'PRAGMA table_info(pending_messages_v36)',
           )).map((row) => row['name'] as String).join(', ');
@@ -3537,6 +3665,7 @@ class LocalSessionDatabase {
       (recordedAt ?? DateTime.now()).millisecondsSinceEpoch,
       isUtc: true,
     );
+    // Update local: insert GPS footprint
     return database.insert('footprints', {
       'owner_phone_number': ownerPhoneNumber.trim(),
       'session_id': normalizedSessionId,
@@ -3575,6 +3704,7 @@ class LocalSessionDatabase {
     }
     final database = await _openDatabase();
     final now = DateTime.now().toUtc().toIso8601String();
+    // Update local: queue hike safety alert
     return database.insert('queued_alerts', {
       'owner_phone_number': owner,
       'session_id': sessionId,
@@ -3600,6 +3730,7 @@ class LocalSessionDatabase {
     if (owner.isEmpty) {
       return const [];
     }
+    // Query local: queued hike safety alerts
     final rows = await database.query(
       'queued_alerts',
       where: 'owner_phone_number = ? AND send_status IN (?, ?)',
@@ -3617,6 +3748,7 @@ class LocalSessionDatabase {
     if (owner.isEmpty) {
       return 0;
     }
+    // Query local: queued alert count by status
     final result = await database.rawQuery(
       '''
         SELECT COUNT(*) AS total
@@ -3632,6 +3764,7 @@ class LocalSessionDatabase {
   /// Marks queued alert sent.
   Future<void> markQueuedAlertSent(int id) async {
     final database = await _openDatabase();
+    // Update local: mark queued alert sent
     await database.update(
       'queued_alerts',
       {
@@ -3652,6 +3785,7 @@ class LocalSessionDatabase {
     String lastError = '',
   }) async {
     final database = await _openDatabase();
+    // Update local: replace queued alert payload
     await database.update(
       'queued_alerts',
       {
@@ -3671,6 +3805,7 @@ class LocalSessionDatabase {
     String lastError = '',
   }) async {
     final database = await _openDatabase();
+    // Update local: record alert retry
     await database.rawUpdate(
       '''
       UPDATE queued_alerts
@@ -3690,6 +3825,7 @@ class LocalSessionDatabase {
     String? ownerPhoneNumber,
   }) async {
     final database = await _openDatabase();
+    // Query local: unsent GPS footprint count
     final result = await database.rawQuery(
       '''
       SELECT COUNT(*) AS total
@@ -3716,6 +3852,7 @@ class LocalSessionDatabase {
       return const [];
     }
     final database = await _openDatabase();
+    // Query local: pending GPS footprints by time
     final rows = await database.query(
       'footprints',
       where:
@@ -3745,6 +3882,7 @@ class LocalSessionDatabase {
     required String ownerPhoneNumber,
   }) async {
     final database = await _openDatabase();
+    // Query local: recorded GPS footprints by hike
     final rows = await database.query(
       'footprints',
       where: 'session_id = ? AND owner_phone_number = ?',
@@ -3768,6 +3906,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final batch = database.batch();
     for (final id in ids) {
+      // Update local: acknowledge uploaded GPS footprints
       batch.update(
         'footprints',
         {'is_synced': 1},
@@ -3795,6 +3934,7 @@ class LocalSessionDatabase {
       arguments.add(recordedBefore.toUtc().toIso8601String());
     }
     final database = await _openDatabase();
+    // Update local: remove synced GPS footprints
     return database.delete(
       'footprints',
       where: clauses.join(' AND '),
@@ -3809,6 +3949,7 @@ class LocalSessionDatabase {
     if (normalizedSessionId.isEmpty) return;
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Update local: discard hike tracking points
       await transaction.delete(
         'footprints',
         where: 'session_id = ?',
@@ -3823,6 +3964,7 @@ class LocalSessionDatabase {
     required String sessionId,
     required bool preserveUnsent,
   }) async {
+    // Update local: clear completed hike tracking data
     await database.delete(
       'footprints',
       where: preserveUnsent
@@ -3841,6 +3983,7 @@ class LocalSessionDatabase {
 
   /// Creates safety tables.
   Future<void> _createSafetyTables(Database database) async {
+    // Update local: create footprint and alert tables
     await database.execute('''
       CREATE TABLE IF NOT EXISTS footprints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3886,6 +4029,7 @@ class LocalSessionDatabase {
 
   /// Creates safety indexes.
   Future<void> _createSafetyIndexes(Database database) async {
+    // Update local: index pending footprints and alerts
     await database.execute('''
       CREATE INDEX IF NOT EXISTS idx_footprints_session_sync_time
       ON footprints(session_id, is_synced, recorded_at)
@@ -3898,6 +4042,7 @@ class LocalSessionDatabase {
 
   /// Creates device binding tables.
   Future<void> _createDeviceBindingTables(Database database) async {
+    // Update local: create device binding table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS app_device (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -3909,6 +4054,7 @@ class LocalSessionDatabase {
 
   /// Preserve report payloads and attachment bytes atomically until confirmed.
   Future<void> _createCautionOutboxTables(Database database) async {
+    // Update local: create caution outbox and media tables
     await database.execute('''CREATE TABLE IF NOT EXISTS caution_report_outbox (
       owner TEXT NOT NULL, report_id TEXT NOT NULL, payload TEXT NOT NULL,
       content_hash TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -3930,6 +4076,7 @@ class LocalSessionDatabase {
 
   /// Keeps unsent feedback independent of downloaded caches and upload queues.
   Future<void> _createFeedbackDraftTable(Database database) async {
+    // Update local: create feedback draft table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS feedback_drafts (
         owner TEXT PRIMARY KEY,
@@ -3948,6 +4095,7 @@ class LocalSessionDatabase {
 
   /// Creates emergency contacts table.
   Future<void> _createEmergencyContactsTable(Database database) async {
+    // Update local: create emergency contacts table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS emergency_contacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3964,6 +4112,7 @@ class LocalSessionDatabase {
 
   /// Creates pending messages table.
   Future<void> _createPendingMessagesTable(Database database) async {
+    // Update local: create pending chat messages table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS pending_messages (
         local_id TEXT NOT NULL,
@@ -3991,6 +4140,7 @@ class LocalSessionDatabase {
 
   /// Creates active hike session table.
   Future<void> _createActiveHikeSessionTable(Database database) async {
+    // Update local: create active hike table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS active_hike_session (
         owner_phone_number TEXT PRIMARY KEY,
@@ -4003,6 +4153,7 @@ class LocalSessionDatabase {
 
   /// Creates pending hike ends table.
   Future<void> _createPendingHikeEndsTable(Database database) async {
+    // Update local: create pending hike completions table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS pending_hike_ends (
         owner_phone_number TEXT NOT NULL,
@@ -4025,6 +4176,7 @@ class LocalSessionDatabase {
 
   /// Creates planned hike state table.
   Future<void> _createPlannedHikeStateTable(Database database) async {
+    // Update local: create hike planning table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS planned_hike_state (
         owner_phone_number TEXT NOT NULL,
@@ -4051,6 +4203,7 @@ class LocalSessionDatabase {
 
   /// Creates achievement progress cache table.
   Future<void> _createAchievementProgressCacheTable(Database database) async {
+    // Update local: create achievement progress cache
     await database.execute('''
       CREATE TABLE IF NOT EXISTS achievement_progress_cache (
         owner_phone_number TEXT PRIMARY KEY,
@@ -4063,6 +4216,7 @@ class LocalSessionDatabase {
 
   /// Creates offline first tables.
   Future<void> _createOfflineFirstTables(Database database) async {
+    // Update local: create entity cache table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS cached_entities (
         owner_phone_number TEXT NOT NULL DEFAULT '',
@@ -4080,6 +4234,7 @@ class LocalSessionDatabase {
       CREATE INDEX IF NOT EXISTS idx_cached_entities_owner_type_parent
       ON cached_entities(owner_phone_number, entity_type, parent_id, source_updated_at DESC)
     ''');
+    // Update local: create sync outbox table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS sync_outbox (
         operation_id TEXT PRIMARY KEY,
@@ -4102,6 +4257,7 @@ class LocalSessionDatabase {
       CREATE INDEX IF NOT EXISTS idx_sync_outbox_owner_status_next
       ON sync_outbox(owner_phone_number, status, next_attempt_at, created_at)
     ''');
+    // Update local: create preferences table and indexes
     await database.execute('''
       CREATE TABLE IF NOT EXISTS local_preferences (
         owner_phone_number TEXT NOT NULL,
@@ -4126,6 +4282,7 @@ class LocalSessionDatabase {
 
   /// Creates static hazard tables.
   Future<void> _createStaticHazardTables(Database database) async {
+    // Update local: create hazard features table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS hazard_features (
         local_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4150,6 +4307,7 @@ class LocalSessionDatabase {
       CREATE INDEX IF NOT EXISTS idx_hazard_features_type_downloaded
       ON hazard_features(hazard_type, downloaded_at DESC)
     ''');
+    // Update local: create trail hazard matches table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS trail_hazard_matches (
         trail_id TEXT NOT NULL,
@@ -4171,6 +4329,7 @@ class LocalSessionDatabase {
     // optional RTREE module. Keep the existing table name/data contract but
     // use a portable table: current hazard reads are trail-id based, while
     // these bounds remain available for a future indexed bounding-box query.
+    // Update local: create hazard bounds table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS hazard_feature_rtree (
         local_id INTEGER PRIMARY KEY,
@@ -4194,6 +4353,7 @@ class LocalSessionDatabase {
 
   /// Creates chat read receipts table.
   Future<void> _createChatReadReceiptsTable(Database database) async {
+    // Update local: create chat read receipts table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS chat_read_receipts (
         chat_id TEXT NOT NULL,
@@ -4211,6 +4371,7 @@ class LocalSessionDatabase {
 
   /// Creates device notifications table.
   Future<void> _createDeviceNotificationsTable(Database database) async {
+    // Update local: create device notifications table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS device_notifications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4235,6 +4396,7 @@ class LocalSessionDatabase {
 
   /// Creates nearby sos events table.
   Future<void> _createNearbySosEventsTable(Database database) async {
+    // Update local: create nearby SOS events table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS nearby_sos_events (
         owner_phone_number TEXT NOT NULL,
@@ -4270,6 +4432,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     await database.transaction((tx) async {
+      // Query local: saved chat read position
       final rows = await tx.query(
         'chat_read_receipts',
         where: 'owner_phone_number = ? AND chat_id = ?',
@@ -4279,6 +4442,7 @@ class LocalSessionDatabase {
         final old = DateTime.tryParse(rows.single['last_read_at'] as String);
         if (old != null && old.isAfter(lastReadAt)) return;
       }
+      // Update local: save newer chat read receipt
       await tx.insert('chat_read_receipts', {
         'chat_id': chatId,
         'owner_phone_number': ownerPhoneNumber.trim(),
@@ -4294,6 +4458,7 @@ class LocalSessionDatabase {
     String ownerPhoneNumber = '',
   }) async {
     final database = await _openDatabase();
+    // Query local: chat read receipt by owner
     final rows = await database.query(
       'chat_read_receipts',
       columns: ['last_read_at', 'is_synced'],
@@ -4309,6 +4474,7 @@ class LocalSessionDatabase {
     String ownerPhoneNumber = '',
   }) async {
     final database = await _openDatabase();
+    // Query local: owner's chat read receipts
     final rows = await database.query(
       'chat_read_receipts',
       where: 'owner_phone_number = ?',
@@ -4329,6 +4495,7 @@ class LocalSessionDatabase {
     String ownerPhoneNumber = '',
   }) async {
     final database = await _openDatabase();
+    // Query local: unsynced chat read receipts
     final rows = await database.query(
       'chat_read_receipts',
       columns: ['chat_id'],
@@ -4345,6 +4512,7 @@ class LocalSessionDatabase {
     required DateTime expectedLastReadAt,
   }) async {
     final database = await _openDatabase();
+    // Update local: acknowledge chat read receipt
     await database.update(
       'chat_read_receipts',
       {'is_synced': 1},
@@ -4376,6 +4544,7 @@ class LocalSessionDatabase {
     Map<String, dynamic>? attachmentUpload,
   }) async {
     final database = await _openDatabase();
+    // Update local: queue outgoing chat message
     await database.insert('pending_messages', {
       'local_id': localId,
       'chat_id': chatId,
@@ -4403,6 +4572,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     await database.transaction((tx) async {
       for (final row in rows) {
+        // Query local: stored chat message state
         final existing = await tx.query(
           'pending_messages',
           columns: ['send_status', 'awaiting_cloud_snapshot'],
@@ -4413,6 +4583,7 @@ class LocalSessionDatabase {
         if (existing.isNotEmpty && existing.single['send_status'] != 'sent') {
           continue;
         }
+        // Update local: save chat message
         await tx.insert('pending_messages', {
           ...row,
           if (existing.isNotEmpty)
@@ -4432,6 +4603,7 @@ class LocalSessionDatabase {
     final db = await _openDatabase();
     await db.transaction((tx) async {
       for (final id in ids) {
+        // Update local: confirm downloaded messages
         await tx.update(
           'pending_messages',
           {'awaiting_cloud_snapshot': 0},
@@ -4451,6 +4623,7 @@ class LocalSessionDatabase {
     Map<String, dynamic> attachment,
   ) async {
     final db = await _openDatabase();
+    // Update local: save uploaded attachment details
     await db.update(
       'pending_messages',
       {'attachment_json': jsonEncode(attachment)},
@@ -4465,6 +4638,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     final owner = ownerPhoneNumber?.trim();
+    // Query local: outgoing messages awaiting upload
     return database.query(
       'pending_messages',
       where: owner == null || owner.isEmpty
@@ -4484,6 +4658,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     final owner = ownerPhoneNumber?.trim();
+    // Query local: saved conversation messages
     return database.query(
       'pending_messages',
       where: owner == null || owner.isEmpty
@@ -4519,6 +4694,7 @@ class LocalSessionDatabase {
     if (firestoreDocId != null) {
       values['firestore_doc_id'] = firestoreDocId;
     }
+    // Update local: update message send status
     await database.update(
       'pending_messages',
       values,
@@ -4535,6 +4711,7 @@ class LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     final owner = ownerPhoneNumber?.trim();
+    // Query local: pending messages by chat
     return database.query(
       'pending_messages',
       where: owner == null || owner.isEmpty
@@ -4554,6 +4731,7 @@ class LocalSessionDatabase {
     String? chatId,
   }) async {
     final database = await _openDatabase();
+    // Update local: count failed message retry
     await database.rawUpdate(
       '''UPDATE pending_messages
          SET retry_count = retry_count + 1, send_status = 'failed',
@@ -4570,6 +4748,7 @@ class LocalSessionDatabase {
 
   /// Creates route cache table.
   Future<void> _createRouteCacheTable(Database database) async {
+    // Update local: create route cache
     await database.execute('''
       CREATE TABLE IF NOT EXISTS route_cache (
         trail_id TEXT NOT NULL,
@@ -4597,6 +4776,7 @@ class LocalSessionDatabase {
     required String sourceLabel,
   }) async {
     final database = await _openDatabase();
+    // Update local: cache route, distance and duration
     await database.insert('route_cache', {
       'trail_id': trailId,
       'checkpoints_hash': checkpointsHash,
@@ -4615,6 +4795,7 @@ class LocalSessionDatabase {
     required String checkpointsHash,
   }) async {
     final database = await _openDatabase();
+    // Query local: route by trail and checkpoint hash
     final rows = await database.query(
       'route_cache',
       where: 'trail_id = ? AND checkpoints_hash = ?',
@@ -4632,6 +4813,7 @@ class LocalSessionDatabase {
   /// Computes dump all tables.
   Future<Map<String, List<Map<String, dynamic>>>> dumpAllTables() async {
     final database = await _openDatabase();
+    // Query local: SQLite tables and diagnostic rows
     final tableRows = await database.rawQuery('''
       SELECT name
       FROM sqlite_master
@@ -4658,11 +4840,13 @@ class LocalSessionDatabase {
     required String columnName,
     required String definition,
   }) async {
+    // Query local: columns before schema migration
     final columns = await database.rawQuery('PRAGMA table_info($tableName)');
     final exists = columns.any((column) => column['name'] == columnName);
     if (exists) {
       return;
     }
+    // Update local: add missing migration column
     await database.execute(
       'ALTER TABLE $tableName ADD COLUMN $columnName $definition',
     );

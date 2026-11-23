@@ -47,6 +47,7 @@ async function sharedTrailWeather(db, latitude, longitude, { fetcher = fetch, ma
   const deadline = Date.now() + 16000;
   while (Date.now() < deadline) {
     const claim = await db.runTransaction(async (tx) => {
+      // Query forecast and lease by coordinates
       const data = (await tx.get(ref)).data() || {};
       if (data.weather?.schemaVersion === 2 && Date.now() - data.updatedAtMs < maxAgeMs) {
         return { weather: data.weather };
@@ -56,6 +57,7 @@ async function sharedTrailWeather(db, latitude, longitude, { fetcher = fetch, ma
         throw new Error('Weather temporarily unavailable; retry later');
       }
       if (data.leaseUntilMs > Date.now()) return {};
+      // Update cloud: claim weather refresh lease
       tx.set(ref, { leaseToken: token, leaseUntilMs: Date.now() + 30000 }, { merge: true });
       return { owner: true };
     });
@@ -65,19 +67,24 @@ async function sharedTrailWeather(db, latitude, longitude, { fetcher = fetch, ma
       continue;
     }
     try {
+      // API: Open-Meteo trail forecast
       const response = await fetcher(weatherUrl(lat, lon), { signal: AbortSignal.timeout(12000) });
       if (!response.ok) throw new Error(`Weather provider returned ${response.status}`);
       const weather = parseWeather(await response.json());
       await db.runTransaction(async (tx) => {
+        // Query current weather refresh lease
         const data = (await tx.get(ref)).data();
         if (data?.leaseToken !== token) throw new Error('Weather refresh lease expired');
+        // Update cloud: cache forecast and release lease
         tx.set(ref, { weather, updatedAtMs: Date.now(), leaseUntilMs: 0, retryAfterMs: 0 });
       });
       return weather;
     } catch (error) {
       await db.runTransaction(async (tx) => {
+        // Query latest weather refresh lease
         const data = (await tx.get(ref)).data();
         if (data?.leaseToken === token) {
+          // Update cloud: save weather retry cooldown
           tx.set(ref, { leaseUntilMs: 0, retryAfterMs: Date.now() + 60000 }, { merge: true });
         }
       });

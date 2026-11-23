@@ -49,6 +49,7 @@ abstract final class MobileSecurityService {
   static Future<Map<String, dynamic>> prepareLogin() async {
     final deviceDetails = await device();
     AuthFlowDiagnostics.event('prepare-mobile-session-call', 'start');
+    // Update cloud: prepare mobile login session
     final result = await FirebaseFunctions.instance
         .httpsCallable('prepareMobileSession')
         .call({'device': deviceDetails});
@@ -60,6 +61,7 @@ abstract final class MobileSecurityService {
   // unconfirmed takeover.
   /// Computes activate login.
   static Future<void> activateLogin(String expectedPreviousSessionId) async {
+    // Update cloud: activate mobile session
     await FirebaseFunctions.instance
         .httpsCallable('activateMobileSession')
         .call({'expectedPreviousSessionId': expectedPreviousSessionId});
@@ -74,6 +76,7 @@ abstract final class MobileSecurityService {
   /// Ends session.
   static Future<void> endSession() async {
     if (FirebaseAuth.instance.currentUser == null) return;
+    // Update cloud: end mobile session
     await FirebaseFunctions.instance.httpsCallable('endMobileSession').call();
   }
 }

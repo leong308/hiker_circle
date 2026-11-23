@@ -9,6 +9,7 @@ function upcomingMembershipChanged(before, after) {
 }
 // hasUpcomingListing: Use the same live-listing predicate that scheduled lifecycle processing consumes.
 async function hasUpcomingListing(db) {
+  // Query listed upcoming hike existence
   return !(await db.collection('upcomingHikes').where('isDeleted', '==', false)
     .limit(1).select().get()).empty;
 }

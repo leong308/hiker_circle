@@ -7,6 +7,7 @@ async function removeMfaFactor(db, userId, factorId, ErrorType, timestamp) {
   const userRef = db.collection('users').doc(userId);
   return db.runTransaction(async tx => {
     // Query read and parent write serialize both removal and enrollment.
+    // Query enrolled factors and security settings
     const [snapshot, account] = await Promise.all([
       tx.get(userRef.collection('authFactors')), readUser(userRef, ["security"], tx),
     ]);
@@ -21,6 +22,7 @@ async function removeMfaFactor(db, userId, factorId, ErrorType, timestamp) {
     const remaining = factors.filter(d => d.id !== factorId);
     const methods = [...new Set(remaining.map(d => d.data().type))]
       .filter(type => ['totp', 'passkey'].includes(type)).sort();
+    // Update cloud: delete factor and update MFA summary
     tx.delete(target.ref);
     setUser(tx, userRef, { mfaRequired: true, mfaFactorCount: remaining.length, mfaMethods: methods,
       mfaUpdatedAt: timestamp(), mfaUpdatedAtLocal: new Date().toISOString() }, { merge: true });

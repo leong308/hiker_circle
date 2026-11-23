@@ -19,6 +19,7 @@ function createSchedulerClient({projectId, accessToken, fetchImpl = fetch, funct
   const name = schedulerJobName(projectId, functionName);
   async function request(action) {
     const token = await accessToken();
+    // API: Cloud Scheduler monitoring job
     const response = await fetchImpl(`https://cloudscheduler.googleapis.com/v1/${name}${action ? ':' + action : ''}`, {
       method: action ? 'POST' : 'GET',
       headers: {Authorization: `Bearer ${token}`},
@@ -38,10 +39,12 @@ async function acquireLease(db, documentId, now = Date.now, tickMillis, leaseMil
   const ref = db.collection('maintenanceState').doc(documentId);
   const owner = randomUUID();
   const claimed = await db.runTransaction(async tx => {
+    // Query current monitoring lease
     const snapshot = await tx.get(ref);
     const current = snapshot.data() || {};
     if (Number.isFinite(tickMillis) && Number(current.lastCompletedTickMillis) >= tickMillis) return false;
     if (current.leaseOwner && Number(current.leaseExpiresAtMillis) > now()) return false;
+    // Update cloud: claim monitoring lease
     tx.set(ref, {leaseOwner: owner, leaseExpiresAtMillis: now() + leaseMillis}, {merge: true});
     return true;
   });
@@ -49,18 +52,22 @@ async function acquireLease(db, documentId, now = Date.now, tickMillis, leaseMil
 }
 async function releaseLease(db, lease, details = {}) {
   await db.runTransaction(async tx => {
+    // Query lease owner before release
     const snapshot = await tx.get(lease.ref);
     if (snapshot.data()?.leaseOwner !== lease.owner) return;
+    // Update cloud: release monitoring lease
     tx.set(lease.ref, {...details, leaseOwner: null, leaseExpiresAtMillis: 0}, {merge: true});
   });
 }
 async function assertLease(db, lease, now) {
+  // Query current lease owner
   const snapshot = await lease.ref.get();
   if (snapshot.data()?.leaseOwner !== lease.owner || Number(snapshot.data()?.leaseExpiresAtMillis) <= now()) {
     throw new Error('Active hike scheduler lease expired.');
   }
 }
 async function hasActiveHike(db) {
+  // Query active hike existence
   return !(await db.collection('hikeSessions').where('status', '==', 'active').limit(1).select().get()).empty;
 }
 async function reconcileActiveHikeMonitor({db, scheduler, now = Date.now}) {

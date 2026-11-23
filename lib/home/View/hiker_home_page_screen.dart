@@ -676,6 +676,8 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   Route<void>? _nativeSafetyCountdownRoute;
   String? _nativeSafetyCountdownEventId;
+  OverlayEntry? _fallImpactPopup;
+  int _fallImpactPopupRevision = 0;
 
   bool _isOpeningHazardReport = false;
 
@@ -1057,6 +1059,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     fallStillnessMonitor.addListener(_handleFallStillnessMonitorChanged);
     _activeHikeLiveStatusService.setNativeSafetyEventHandler(
       _consumePendingNativeSafetyEvent,
+      onFallImpactCheckChanged: _refreshFallImpactPopup,
     );
     WidgetsBinding.instance.addObserver(this);
     tabController = TabController(length: tabs.length, vsync: this);
@@ -2050,11 +2053,8 @@ class _HikerHomePageState extends State<HikerHomePage>
       return;
     }
     if (uri.host == 'hike' && uri.path == '/safety-safe') {
-      // Legacy links may reveal the emergency but cannot bypass its slider.
+      // The Android popup already handled its own event-scoped response.
       await _consumePendingNativeSafetyEvent();
-      if (!_hasTriggeredSos) {
-        _cancelFallStillnessSos('Safety popup response received');
-      }
       return;
     }
     if (uri.host == 'hike' && uri.path == '/check-in') {
@@ -3941,37 +3941,27 @@ class _HikerHomePageState extends State<HikerHomePage>
     UpcomingHike hike, {
     String? hazardId,
   }) async {
-    final target = hike;
-    await _HikerHomePageDataActions.cancelUpcomingHike(hikerCircleRepository)(
-      hikeId: target.id,
-      withdrawSelf: !_sameTeamPhone(
-        target.creatorPhone,
-        widget.session.phoneNumber,
-      ),
-      hazardId: hazardId,
-      snapshot: hike,
-    );
-    for (final id in {hike.id, target.id}) {
-      try {
-        await _HikerHomePageDataActions.markPlannedHikeConsumed(
-          hikerCircleRepository.localDatabase,
-        )(ownerPhoneNumber: widget.session.phoneNumber, upcomingHikeId: id);
-      } catch (error) {
-        // The server change has committed. Do not report cancellation failure
-        // because optional local cleanup failed; the live roster will reconcile.
-        debugPrint('Cancelled hike local cleanup is pending: $error');
-      }
-    }
+    final confirmed =
+        await _HikerHomePageDataActions.cancelUpcomingHike(
+          hikerCircleRepository,
+        )(
+          hikeId: hike.id,
+          withdrawSelf: !hike.isHostedBy(widget.session.phoneNumber),
+          hazardId: hazardId,
+          snapshot: hike,
+        );
     if (!mounted) {
       return;
     }
     _upcomingPlanningRevision++;
+    if (!confirmed && !hike.isHostedBy(widget.session.phoneNumber)) {
+      HikerCircleToast.show(
+        context,
+        'Withdrawal queued. The group roster will update after sync.',
+      );
+    }
     setState(() {
-      _consumedUpcomingHikeIds = {
-        ..._consumedUpcomingHikeIds,
-        hike.id,
-        target.id,
-      };
+      _consumedUpcomingHikeIds = {..._consumedUpcomingHikeIds, hike.id};
       myUpcomingHikes = myUpcomingHikes
           .where(
             (item) =>
@@ -4708,6 +4698,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   void _handleSosPresentationChanged() {
     if (!mounted) return;
     if (_hasTriggeredSos) {
+      _hideFallImpactPopup();
       _precautionAnnouncer.dismiss();
       _hikeWarningSpeech.synchronizeSession(null);
       return;
@@ -5477,6 +5468,7 @@ class _HikerHomePageState extends State<HikerHomePage>
             onStartHike: _startHikeFromDashboard,
             onFindHike: () => _openFindHike(),
             onTapUpcomingHike: _showUpcomingHikeDetails,
+            onDeleteUpcomingHike: _cancelUpcomingHike,
             onOpenTrailDetail: openTrailDetail,
             onAddTrailByAdmin: widget.session.isAdmin
                 ? () => unawaited(addTrailByAdminFromHome())
@@ -5569,6 +5561,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.hidden) {
+      _hideFallImpactPopup();
       if (hike != null) {
         unawaited(
           _sendActiveHikeMonitoringHeartbeat(
@@ -5603,6 +5596,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       unawaited(_drainPendingTeamReadiness());
       unawaited(_resumeBleSosMonitor());
       unawaited(_consumePendingNativeSafetyEvent());
+      unawaited(_refreshFallImpactPopup());
       if (hike != null) {
         unawaited(
           _sendActiveHikeMonitoringHeartbeat(hike, lifecycleState: 'active'),
@@ -5633,8 +5627,61 @@ class _HikerHomePageState extends State<HikerHomePage>
       _screenModel.commandResumeBleSosMonitor();
 
   /// Delegates handle fall stillness monitor changed to the ViewModel.
-  void _handleFallStillnessMonitorChanged() =>
-      _screenModel.commandHandleFallStillnessMonitorChanged();
+  void _handleFallStillnessMonitorChanged() {
+    _screenModel.commandHandleFallStillnessMonitorChanged();
+    if (!_usesNativeFallDetection) unawaited(_refreshFallImpactPopup());
+  }
+
+  bool get _usesNativeFallDetection =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  Future<void> _refreshFallImpactPopup() async {
+    final hike = activeHike;
+    if (!mounted ||
+        _appLifecycleState != AppLifecycleState.resumed ||
+        _isEndingActiveHike ||
+        hike == null ||
+        !hike.draft.fallDetectionEnabled ||
+        _hasTriggeredSos ||
+        isNativeSafetyDialogVisible ||
+        isFallStillnessDialogVisible) {
+      _hideFallImpactPopup();
+      return;
+    }
+    final revision = ++_fallImpactPopupRevision;
+    final snapshot = fallStillnessMonitor.snapshot;
+    final checking = _usesNativeFallDetection
+        ? await _activeHikeLiveStatusService.isCheckingFallImpact(
+            sessionId: hike.sessionId,
+            ownerUid: widget.firebaseBootstrapResult.isAvailable
+                ? FirebaseAuth.instance.currentUser?.uid ?? ''
+                : '',
+          )
+        : snapshot.status == FallStillnessMonitorStatus.impactDetected ||
+              (snapshot.status ==
+                      FallStillnessMonitorStatus.verifyingStillness &&
+                  !snapshot.isProlongedStillnessDetection);
+    if (!mounted || revision != _fallImpactPopupRevision) return;
+    if (!checking || activeHike?.sessionId != hike.sessionId) {
+      _hideFallImpactPopup();
+      return;
+    }
+    if (_fallImpactPopup != null) return;
+    final overlay = Navigator.maybeOf(context, rootNavigator: true)?.overlay;
+    if (overlay == null) return;
+    final entry = OverlayEntry(builder: (_) => const FallImpactCheckPopup());
+    _fallImpactPopup = entry;
+    overlay.insert(entry);
+  }
+
+  void _hideFallImpactPopup() {
+    ++_fallImpactPopupRevision;
+    _fallImpactPopup?.remove();
+    _fallImpactPopup?.dispose();
+    _fallImpactPopup = null;
+  }
 
   /// Delegates handle fall stillness countdown started to the ViewModel.
   Future<void> _handleFallStillnessCountdownStarted() =>
@@ -5784,6 +5831,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       // the foreground. Unlike Android, there is no overlay activity to own
       // this screen, so the app must present the explicit cancellation UI.
       isNativeSafetyDialogVisible = true;
+      _hideFallImpactPopup();
       var wasCancelled = false;
       try {
         await Navigator.of(context, rootNavigator: true).push<void>(
@@ -5799,8 +5847,8 @@ class _HikerHomePageState extends State<HikerHomePage>
                   ModalRoute.of(dialogContext),
                 ),
                 onCancel: () async {
+                  await _cancelNativeSafetyCountdown(event.eventId);
                   wasCancelled = true;
-                  await _cancelNativeSafetyCountdown();
                   if (dialogContext.mounted) {
                     HikeStartNavigation.closeOwnedRoute(
                       ModalRoute.of(dialogContext),
@@ -5995,6 +6043,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       unawaited(LiveLocationSharingService.instance.deactivate(manual: false));
     }
     _syncFallStillnessMonitor(hike);
+    if (hike?.draft.fallDetectionEnabled != true) _hideFallImpactPopup();
     _syncTeamHikeSessionWatch(hike);
     unawaited(_syncLiveLocationForActiveHike(hike));
     if (hike == null) {
@@ -6448,32 +6497,17 @@ class _HikerHomePageState extends State<HikerHomePage>
       _screenModel.commandCancelFallStillnessSos(reason);
 
   /// Cancels native safety countdown.
-  Future<void> _cancelNativeSafetyCountdown() async {
-    /// Computes ignore failure.
-    Future<void> ignoreFailure(Future<void> operation) async {
-      try {
-        await operation;
-      } catch (_) {
-        // One unavailable native output must not prevent the safety state from
-        // being cancelled or leave the confirmation dialog stuck onscreen.
-      }
+  Future<void> _cancelNativeSafetyCountdown(String eventId) async {
+    if (!await _activeHikeLiveStatusService.cancelNativeSafetyAlert(eventId)) {
+      throw StateError('The safety warning is no longer active.');
     }
-
-    await Future.wait<void>([
-      ignoreFailure(
-        _sosDeviceAlertService.stopFallStillnessCountdownVibration(),
-      ),
-      ignoreFailure(_sosDeviceAlertService.stopSpokenPrompt()),
-      ignoreFailure(_sosDeviceAlertService.stopManualSosPattern()),
-      ignoreFailure(_activeHikeLiveStatusService.cancelNativeSafetyAlert()),
-    ]);
     isFallStillnessLocalAlarmActive = false;
     if (!mounted) {
       return;
     }
     HikerCircleToast.show(
       context,
-      'The stillness alert and SOS countdown were cancelled.',
+      'Safety warning cancelled. Monitoring continues.',
       tone: HikerCircleToastTone.success,
       title: 'You are marked safe',
     );
@@ -6482,6 +6516,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   /// Releases resources owned by this instance.
   @override
   void dispose() {
+    _hideFallImpactPopup();
     _arrivalSafety.dispose();
     final arrivalRoute = _arrivalSafetyRoute;
     if (arrivalRoute != null) {
@@ -8356,6 +8391,8 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
         content: Text(
           host
               ? 'This closes team readiness for everyone. Your upcoming hike stays saved and can be launched again.'
+              : team.sourceUpcomingHikeId.isNotEmpty
+              ? 'You will leave the scheduled hike and its team launch.'
               : 'You will leave this team launch.',
         ),
         actions: [

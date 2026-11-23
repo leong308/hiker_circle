@@ -576,6 +576,7 @@
     const trailStatus = document.querySelector('[data-trail-stats-status]');
     const trailKeys = ['totalTrails', 'trailDistanceKm', 'regionsCovered', 'easyTrails', 'moderateTrails', 'hardTrails'];
     try {
+      // Query public trail ratings and hike statistics
       const response = await fetch("/api/public-stats?v=trail-votes", { headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error(`Stats request failed with ${response.status}`);
       const stats = await response.json();

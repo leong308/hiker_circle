@@ -56,6 +56,7 @@ class DeviceHikeReminderNotifications
 
   @override
   Future<void> reportLocalSchedules(Map<String, Object?> report) async {
+    // Update cloud: acknowledge scheduled reminder slots
     final response = await (_functions ?? FirebaseFunctions.instance)
         .httpsCallable(
           'acknowledgeLocalHikeReminderSlots',

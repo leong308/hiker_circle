@@ -371,6 +371,7 @@
         staticState = 'fallback';
         syncMapVisibility();
         const bbox = [lng - 0.008, lat - 0.005, lng + 0.008, lat + 0.005].join(',');
+        // API: OpenStreetMap fallback map
         fallbackMap.src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lng}`;
       }
       if (typeof config.mapboxAccessToken !== 'string' || !config.mapboxAccessToken.startsWith('pk.')) { fallback(); return; }
@@ -568,6 +569,7 @@
         const location = latestShare.latestLocation;
         // Keep the container laid out while the style loads, then reveal it.
         footprintMapElement.hidden = false;
+        // API: Mapbox live location map
         glMap = new library.Map({
           container: footprintMapElement, accessToken: config.mapboxAccessToken,
           style: 'mapbox://styles/mapbox/outdoors-v12',
@@ -644,6 +646,7 @@
       const generation = ++routeGeneration;
       let firstSnapshot = true;
       const chunks = query(collection(db, 'live_location_shares', shareId, 'live_location_route_chunks'), orderBy('bucketStartMillis'));
+      // Query live route chunks for shared hike
       routeUnsubscribe = onSnapshot(chunks, snapshot => {
         if (generation !== routeGeneration || !eligibleForFootprints()) return;
         if (firstSnapshot || typeof snapshot.docChanges !== 'function') {
@@ -785,6 +788,7 @@
     } else {
       const app = initializeApp(firebaseConfig);
       db = getFirestore(app);
+      // Query live location share updates
       onSnapshot(
         doc(db, "live_location_shares", shareId),
         (snapshot) => {

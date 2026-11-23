@@ -229,6 +229,7 @@ class ConditionalCloudCache {
     Duration timeout = const Duration(seconds: 20),
   }) async {
     if (_request != null) return _request(callable, arguments).timeout(timeout);
+    // Query server resource by callable
     final response = await functions()
         .httpsCallable(
           callable,
@@ -481,6 +482,7 @@ class ConditionalCloudCache {
     }
     try {
       _requireRemoteOwner(resource.owner);
+      // Query resource by cached content hash
       final data = await _call(resource.callable, {
         ...resource.arguments,
         if (resource.owner.isNotEmpty) 'expectedOwner': resource.owner,
@@ -869,6 +871,7 @@ class ConditionalCloudCache {
           (_batchAttemptVersions[resource.key] ?? 0) + 1;
     }
     // Firebase compares server-maintained manifests before rebuilding any unchanged projection.
+    // Query registered resources on reconnect
     final response = await _call('reconcileMobileReadCache', {
       'expectedOwner': owner,
       'manifestVersion': 1,

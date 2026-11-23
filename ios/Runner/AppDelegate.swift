@@ -55,6 +55,9 @@ import ActivityKit
   private var latestManualHikeStatus: ManualHikeLiveStatus?
   private var hikerBleBridge: HikerBleBridge?
   private lazy var iosHikeSafetyMonitor: IOSHikeSafetyMonitor = IOSHikeSafetyMonitor(
+    impactCheckChanged: { [weak self] in
+      self?.activeHikeLiveStatusChannel?.invokeMethod("onFallImpactCheckChanged", arguments: nil)
+    },
     warningStarted: { [weak self] in
       guard let self else { return }
       self.startFallStillnessCountdownVibration()
@@ -423,17 +426,19 @@ import ActivityKit
       return
     }
     if response.actionIdentifier == IOSHikeSafetyMonitor.safeActionIdentifier {
-      let eventId = response.notification.request.content.userInfo["eventId"] as? String ?? ""
-      _ = iosHikeSafetyMonitor.stopTriggeredAlarm(eventId: eventId)
-      var components = URLComponents()
-      components.scheme = "hikercircle"
-      components.host = "hike"
-      components.path = "/safety-alarm-stopped"
-      components.queryItems = [URLQueryItem(name: "eventId", value: eventId)]
-      let deepLink = components.string ?? "hikercircle://hike/safety"
-      pendingDeepLink = deepLink
-      deepLinkChannel?.invokeMethod("onDeepLink", arguments: deepLink)
-      completionHandler()
+      DispatchQueue.main.async {
+        let eventId = response.notification.request.content.userInfo["eventId"] as? String ?? ""
+        _ = self.iosHikeSafetyMonitor.stopTriggeredAlarm(eventId: eventId)
+        var components = URLComponents()
+        components.scheme = "hikercircle"
+        components.host = "hike"
+        components.path = "/safety-alarm-stopped"
+        components.queryItems = [URLQueryItem(name: "eventId", value: eventId)]
+        let deepLink = components.string ?? "hikercircle://hike/safety"
+        self.pendingDeepLink = deepLink
+        self.deepLinkChannel?.invokeMethod("onDeepLink", arguments: deepLink)
+        completionHandler()
+      }
       return
     }
     super.userNotificationCenter(
@@ -446,6 +451,10 @@ import ActivityKit
   /// Delivers the spoken local warning in the foreground as well as while the app is backgrounded.
   override func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
       withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    if notification.request.identifier == IOSHikeSafetyMonitor.impactNotificationIdentifier {
+      completionHandler([]) // The app presents the impact check in the foreground.
+      return
+    }
     if notification.request.identifier.hasPrefix("hiker_circle.sos_button.") {
       DispatchQueue.main.async {
         guard self.hikerBleBridge?.acceptsPresenceNotification(notification.request.content.userInfo) == true else { completionHandler([]); return }
@@ -611,6 +620,12 @@ import ActivityKit
         result(self.iosHikeSafetyMonitor.pendingEvent(
           preferCurrent: arguments?["preferCurrent"] as? Bool ?? false
         ))
+      case "isCheckingFallImpact":
+        let arguments = call.arguments as? [String: Any]
+        result(self.iosHikeSafetyMonitor.isCheckingFallImpact(
+          session: arguments?["sessionId"] as? String ?? "",
+          owner: arguments?["ownerUid"] as? String ?? ""
+        ))
       case "acknowledgeSafetyEvent":
         let arguments = call.arguments as? [String: Any]
         self.iosHikeSafetyMonitor.acknowledgeEvent(
@@ -618,8 +633,10 @@ import ActivityKit
         )
         result(nil)
       case "cancelNativeSafetyAlert":
-        self.iosHikeSafetyMonitor.cancelAlert(reason: "Safe response received")
-        result(nil)
+        let arguments = call.arguments as? [String: Any]
+        result(self.iosHikeSafetyMonitor.stopTriggeredAlarm(
+          eventId: arguments?["eventId"] as? String
+        ))
       case "markSafetyEventDispatched":
         let arguments = call.arguments as? [String: Any]
         self.iosHikeSafetyMonitor.markDispatched(
@@ -1324,6 +1341,7 @@ import ActivityKit
 
 private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   static let warningCategoryIdentifier = "HIKER_SAFETY_WARNING"
+  static let impactNotificationIdentifier = "hiker_circle.ios_fall_impact"
   static let monitoringStoppedCategoryIdentifier = "HIKER_MONITORING_STOPPED"
   static let safeActionIdentifier = "HIKER_IM_SAFE"
   static let openActionIdentifier = "HIKER_OPEN_APP"
@@ -1333,6 +1351,10 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private static let watchdogNotificationIdentifier = "hiker_monitoring_watchdog"
   private static let defaultsPrefix = "ios_hike_safety_"
   private static let warningDuration: TimeInterval = 15
+  private static let impactSettleDuration: TimeInterval = 2
+  private static let impactCheckDuration: TimeInterval = 62
+  private static let impactQuietDuration: TimeInterval = 10
+  private static let motionSampleGapLimit: TimeInterval = 1
   private static let watchdogDuration: TimeInterval = 120
   private static let locationMaximumAge: TimeInterval = 30
 
@@ -1345,13 +1367,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
 
   private let motionManager = CMMotionManager()
   private let locationManager = CLLocationManager()
-  private let motionQueue: OperationQueue = {
-    let queue = OperationQueue()
-    queue.name = "com.leongziqi.hikercircle.ios-hike-motion"
-    queue.qualityOfService = .userInitiated
-    queue.maxConcurrentOperationCount = 1
-    return queue
-  }()
+  private let impactCheckChanged: () -> Void
   private let warningStarted: () -> Void
   private let escalationStarted: () -> Void
   private let monitoringReset: () -> Void
@@ -1409,15 +1425,22 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   }
 
   init(
+    impactCheckChanged: @escaping () -> Void,
     warningStarted: @escaping () -> Void,
     escalationStarted: @escaping () -> Void,
     monitoringReset: @escaping () -> Void
   ) {
+    self.impactCheckChanged = impactCheckChanged
     self.warningStarted = warningStarted
     self.escalationStarted = escalationStarted
     self.monitoringReset = monitoringReset
     super.init()
     locationManager.delegate = self
+  }
+
+  func isCheckingFallImpact(session: String, owner: String) -> Bool {
+    isActive && fallDetectionEnabled && phase == .monitoring && fallImpactAt != nil
+      && sessionId == session && ownerUid == owner
   }
 
   func powerSettings(owner: String) -> [String: Any]? {
@@ -1542,6 +1565,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     let replacingSession = previousSessionId != incomingSessionId
       || previousOwnerUid != incomingOwnerUid
     if replacingSession {
+      clearImpactCheck()
       // A new hike must not overwrite a stopped SOS that Flutter has not yet
       // durably accepted. Keep its original owner/session in a separate receipt.
       archivePendingDispatchIfNeeded()
@@ -1593,6 +1617,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       refreshTerminationWatchdog(force: true)
     } else {
       motionManager.stopDeviceMotionUpdates()
+      clearImpactCheck()
       if phase == .readyForFlutterDispatch, let eventId {
         _ = stopTriggeredAlarm(eventId: eventId)
       } else {
@@ -1645,6 +1670,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
 
   func stop() {
     motionManager.stopDeviceMotionUpdates()
+    clearImpactCheck()
     locationManager.stopUpdatingLocation()
     if CLLocationManager.significantLocationChangeMonitoringAvailable() {
       locationManager.stopMonitoringSignificantLocationChanges()
@@ -1748,11 +1774,15 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     UNUserNotificationCenter.current().removeDeliveredNotifications(
       withIdentifiers: [Self.warningNotificationIdentifier, Self.escalationNotificationIdentifier]
     )
+    clearImpactCheck()
     clearEventState()
     phase = .monitoring
     lastMotionAt = Date()
     persistMotionClock()
-    if isActive { refreshTerminationWatchdog(force: true) }
+    if isActive && fallDetectionEnabled {
+      startMotionUpdates()
+      refreshTerminationWatchdog(force: true)
+    }
     monitoringReset()
   }
 
@@ -1885,7 +1915,8 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     guard motionManager.isDeviceMotionAvailable else { return }
     motionManager.deviceMotionUpdateInterval = 0.1
     if motionManager.isDeviceMotionActive { return }
-    motionManager.startDeviceMotionUpdates(to: motionQueue) { [weak self] motion, _ in
+    // Serialize sensor decisions with notification responses and session changes.
+    motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
       guard let self, let motion else { return }
       self.handleMotion(motion)
     }
@@ -1901,7 +1932,9 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   }
 
   private func handleMotion(_ motion: CMDeviceMotion) {
-    guard fallDetectionEnabled else { return }
+    guard isActive, fallDetectionEnabled, motionManager.isDeviceMotionActive else { return }
+    let now = Date()
+    let sampleGap = now.timeIntervalSince(latestMotionCapturedAt)
     let accelerationMagnitude = sqrt(
       pow(motion.userAcceleration.x, 2)
         + pow(motion.userAcceleration.y, 2)
@@ -1919,7 +1952,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     ) * 9.80665
     latestAccelerationMagnitude = accelerationMagnitude
     latestRotationMagnitude = rotationMagnitude
-    latestMotionCapturedAt = Date()
+    latestMotionCapturedAt = now
 
     let normalizedSensitivity = (sensitivity - 1) / 9
     let movementThreshold = 0.55 + (1.25 - 0.55) * normalizedSensitivity
@@ -1927,39 +1960,59 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     let meaningfulMovement = rotationMagnitude > 0.08
       || accelerationMagnitude > movementThreshold
 
-    if totalAcceleration >= impactThreshold && phase == .monitoring {
-      fallImpactAt = Date()
-      fallQuietSince = nil
-    }
-    if let fallImpactAt {
-      let age = Date().timeIntervalSince(fallImpactAt)
-      if age > 60 {
-        self.fallImpactAt = nil
-        fallQuietSince = nil
-      } else if age >= 2 {
-        if rotationMagnitude <= 0.08 && accelerationMagnitude <= 0.22 {
-          fallQuietSince = fallQuietSince ?? Date()
-          if let quietSince = fallQuietSince,
-             Date().timeIntervalSince(quietSince) >= 10 {
-            self.fallImpactAt = nil
-            fallQuietSince = nil
-            DispatchQueue.main.async { [weak self] in
-              self?.beginWarning(kind: "fall_stillness")
+    if phase == .monitoring {
+      if meaningfulMovement { noteMeaningfulMotion() }
+      if totalAcceleration >= impactThreshold,
+         fallImpactAt.map({ now.timeIntervalSince($0) >= Self.impactSettleDuration }) ?? true {
+        beginImpactCheck(at: now)
+      }
+      if let impactAt = fallImpactAt {
+        let age = now.timeIntervalSince(impactAt)
+        if age >= Self.impactCheckDuration {
+          clearImpactCheck()
+        } else if age >= Self.impactSettleDuration {
+          if rotationMagnitude <= 0.08 && accelerationMagnitude <= 0.22 {
+            if sampleGap > Self.motionSampleGapLimit || fallQuietSince == nil {
+              fallQuietSince = now
             }
+            if let quietSince = fallQuietSince,
+               now.timeIntervalSince(quietSince) >= Self.impactQuietDuration {
+              beginWarning(kind: "fall_stillness")
+            }
+          } else {
+            fallQuietSince = nil
           }
-        } else {
-          fallQuietSince = nil
         }
       }
     }
+    publishTelemetry()
+  }
 
-    DispatchQueue.main.async { [weak self] in
-      guard let self else { return }
-      if meaningfulMovement && self.phase == .monitoring {
-        self.noteMeaningfulMotion()
-      }
-      self.publishTelemetry()
-    }
+  private func beginImpactCheck(at now: Date) {
+    let wasChecking = fallImpactAt != nil
+    fallImpactAt = now
+    fallQuietSince = nil
+    if wasChecking { return }
+    impactCheckChanged()
+    guard UIApplication.shared.applicationState != .active else { return }
+    let content = UNMutableNotificationContent()
+    content.title = "Possible fall detected"
+    content.body = "Checking for movement"
+    UNUserNotificationCenter.current().add(UNNotificationRequest(
+      identifier: Self.impactNotificationIdentifier,
+      content: content,
+      trigger: nil
+    ))
+  }
+
+  private func clearImpactCheck() {
+    guard fallImpactAt != nil else { return }
+    fallImpactAt = nil
+    fallQuietSince = nil
+    let center = UNUserNotificationCenter.current()
+    center.removePendingNotificationRequests(withIdentifiers: [Self.impactNotificationIdentifier])
+    center.removeDeliveredNotifications(withIdentifiers: [Self.impactNotificationIdentifier])
+    impactCheckChanged()
   }
 
   private func noteMeaningfulMotion() {
@@ -1976,7 +2029,11 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     refreshTerminationWatchdog()
     switch phase {
     case .monitoring:
-      if Date().timeIntervalSince(lastMotionAt) >= longestRestDuration {
+      let now = Date()
+      if let impactAt = fallImpactAt, now.timeIntervalSince(impactAt) >= Self.impactCheckDuration {
+        clearImpactCheck()
+      }
+      if fallImpactAt == nil && now.timeIntervalSince(lastMotionAt) >= longestRestDuration {
         beginWarning(kind: "prolonged_stillness")
       }
     case .warning:
@@ -1990,6 +2047,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
 
   private func beginWarning(kind: String) {
     guard phase == .monitoring, isActive else { return }
+    clearImpactCheck()
     let now = Date()
     eventKind = kind
     eventId = "\(sessionId):\(kind):\(Int(now.timeIntervalSince1970 * 1000))"
@@ -2120,6 +2178,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       return point
     }
     uploadingLocations = true
+    // Update cloud: upload background GPS footprints
     Functions.functions(region: "us-central1").httpsCallable("appendHikeFootprints")
       .call(["sessionId": session, "footprints": points]) { [weak self] result, error in
         DispatchQueue.main.async {

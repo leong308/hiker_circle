@@ -2,6 +2,7 @@ part of 'hiker_circle_firebase_repository.dart';
 
 /// Server-owned downloads share the read-hash batch and never enter a write queue.
 extension CloudReadRepository on HikerCircleFirebaseRepository {
+  // Query named cloud resource
   /// Downloads a named cloud projection or reuses its completed batch validation.
   Future<Map<String, dynamic>> readCloudSnapshot({
     required String resourceType,
@@ -53,6 +54,7 @@ extension CloudReadRepository on HikerCircleFirebaseRepository {
     List<ChatMessage> local,
   ) async {
     final args = <String, Object?>{'chatId': chatId};
+    // Query local: downloaded chat history
     final snapshot = await readCloudSnapshot(
       resourceType: 'chat_messages',
       resourceArgs: args,
@@ -119,6 +121,7 @@ extension CloudReadRepository on HikerCircleFirebaseRepository {
   ) async* {
     final owner = await _cloudReadOwner();
     final args = <String, Object?>{'chatId': chatId};
+    // Update local: register chat history for validation
     final initial = await readCloudSnapshot(
       resourceType: 'chat_messages',
       resourceArgs: args,
@@ -136,10 +139,12 @@ extension CloudReadRepository on HikerCircleFirebaseRepository {
             ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
       yield messages;
     }
+    // Query live chat messages
     await for (final snapshot in _groupChatMessagesFor(
       chatId,
     ).orderBy('sentAtLocal', descending: false).snapshots()) {
       if (await _cloudReadOwner() != owner) throw _accountChangedForChat();
+      // Query local: downloaded chat messages
       final cached = await readCloudSnapshot(
         resourceType: 'chat_messages',
         resourceArgs: args,
@@ -210,6 +215,7 @@ extension CloudReadRepository on HikerCircleFirebaseRepository {
   /// Registers older downloaded snapshots without making individual cloud calls.
   Future<void> _registerDownloadedCloudReads(AppSession session) async {
     if ((await _loadCachedTrails()).isNotEmpty) {
+      // Update local: register cached trail catalogue
       await readCloudSnapshot(
         resourceType: 'trail_catalog',
         id: 'all',
@@ -221,6 +227,7 @@ extension CloudReadRepository on HikerCircleFirebaseRepository {
       entityType: 'community_profile',
     );
     if (profiles.isNotEmpty) {
+      // Update local: register cached hiker profiles
       await _conditionalCache.read(
         owner: session.phoneNumber,
         type: 'public_profiles',
@@ -237,6 +244,7 @@ extension CloudReadRepository on HikerCircleFirebaseRepository {
       limit: 20,
     );
     if (posts.isNotEmpty) {
+      // Update local: register cached community content
       await readCloudSnapshot(
         resourceType: 'community_posts',
         resourceArgs: const {'limit': 20},
@@ -278,6 +286,7 @@ extension CloudReadRepository on HikerCircleFirebaseRepository {
         ownerPhoneNumber: session.phoneNumber,
       );
       if (messages.any((row) => row['send_status'] == 'sent')) {
+        // Update local: register downloaded chat history
         await readCloudSnapshot(
           resourceType: 'chat_messages',
           resourceArgs: {'chatId': id},
@@ -309,6 +318,7 @@ extension CloudReadRepository on HikerCircleFirebaseRepository {
       final trailId = coordinateSuffix
           ? parts.take(parts.length - 2).join(':')
           : row.entityId;
+      // Update local: register cached trail forecast
       await _conditionalCache.read(
         owner: '',
         type: 'trail_weather',

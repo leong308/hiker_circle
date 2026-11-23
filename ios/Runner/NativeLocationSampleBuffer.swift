@@ -49,6 +49,7 @@ final class NativeLocationSampleBuffer {
     }
     sqlite3_busy_timeout(opened, 5000)
     do {
+      // Update local: create GPS sample table and index
       try execute("PRAGMA journal_mode=WAL")
       try execute("""
         CREATE TABLE IF NOT EXISTS samples (
@@ -98,6 +99,7 @@ final class NativeLocationSampleBuffer {
     }
     if files.fileExists(atPath: target.path) {
       let db = try open(target, password: key); defer { sqlite3_close(db) }
+      // Query local: encrypted GPS database integrity
       try run(db, "SELECT count(*) FROM sqlite_master")
       try removeOriginal()
       return
@@ -106,6 +108,7 @@ final class NativeLocationSampleBuffer {
     let pending = URL(fileURLWithPath: target.path + ".pending")
     if files.fileExists(atPath: pending.path) { try files.removeItem(at: pending) }
     let source = try open(original, password: nil)
+    // Update local: export GPS buffer with encryption
     do {
       try run(source, "PRAGMA wal_checkpoint(TRUNCATE)")
       let path = pending.path.replacingOccurrences(of: "'", with: "''")
@@ -115,6 +118,7 @@ final class NativeLocationSampleBuffer {
       sqlite3_close(source)
     } catch { sqlite3_close(source); throw error }
     let encrypted = try open(pending, password: key)
+    // Query local: migrated GPS samples
     do { try run(encrypted, "SELECT count(*) FROM samples"); sqlite3_close(encrypted) }
     catch { sqlite3_close(encrypted); throw error }
     try files.moveItem(at: pending, to: target)
@@ -152,6 +156,7 @@ final class NativeLocationSampleBuffer {
   func append(sessionId: String, ownerUid: String, sampledAt: Int64, location: CLLocation) throws {
     guard !sessionId.isEmpty, !ownerUid.isEmpty else { return }
     lock.lock(); defer { lock.unlock() }
+    // Update local: insert unique GPS sample
     try execute("""
       INSERT OR IGNORE INTO samples (sample_id, session_id, owner_uid, sampled_at,
         captured_at, latitude, longitude, accuracy, altitude, speed) VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -168,6 +173,7 @@ final class NativeLocationSampleBuffer {
     let db = try connection()
     let flag = forCloud ? "cloud_acknowledged" : "local_transferred"
     var statement: OpaquePointer?
+    // Query local: pending GPS sessions
     guard sqlite3_prepare_v2(db, "SELECT session_id FROM samples WHERE owner_uid=? AND \(flag)=0 GROUP BY session_id ORDER BY MIN(sampled_at)", -1, &statement, nil) == SQLITE_OK,
           let statement else { throw DatabaseError(message: String(cString: sqlite3_errmsg(db))) }
     defer { sqlite3_finalize(statement) }
@@ -189,6 +195,7 @@ final class NativeLocationSampleBuffer {
     guard oldSessionId != newSessionId else { return 0 }
     lock.lock(); defer { lock.unlock() }
     let db = try connection()
+    // Update local: move samples to confirmed hike
     try execute("BEGIN IMMEDIATE TRANSACTION")
     do {
       try execute("""
@@ -204,6 +211,7 @@ final class NativeLocationSampleBuffer {
         WHERE session_id=? AND owner_uid=?
         """, values: [oldSessionId, ownerUid, newSessionId, ownerUid])
       var statement: OpaquePointer?
+      // Query local: missing samples after migration
       let check = "SELECT COUNT(*) FROM samples original LEFT JOIN samples destination ON destination.session_id=? AND destination.owner_uid=original.owner_uid AND destination.sampled_at=original.sampled_at WHERE original.session_id=? AND original.owner_uid=? AND destination.sample_id IS NULL"
       guard sqlite3_prepare_v2(db, check, -1, &statement, nil) == SQLITE_OK, let statement else {
         throw DatabaseError(message: String(cString: sqlite3_errmsg(db)))
@@ -213,6 +221,7 @@ final class NativeLocationSampleBuffer {
       guard sqlite3_step(statement) == SQLITE_ROW, sqlite3_column_int(statement, 0) == 0 else {
         throw DatabaseError(message: "The target GPS session belongs to another account.")
       }
+      // Update local: remove old session samples
       try execute("DELETE FROM samples WHERE session_id=? AND owner_uid=?", values: [oldSessionId, ownerUid])
       let moved = Int(sqlite3_changes(db))
       try execute("COMMIT")
@@ -229,6 +238,7 @@ final class NativeLocationSampleBuffer {
     lock.lock(); defer { lock.unlock() }
     let db = try connection()
     let flag = forCloud ? "cloud_acknowledged" : "local_transferred"
+    // Query local: pending GPS samples by time
     let sql = "SELECT sample_id,session_id,sampled_at,captured_at,latitude,longitude,accuracy,altitude,speed,cloud_acknowledged FROM samples WHERE session_id=? AND owner_uid=? AND \(flag)=0 ORDER BY sampled_at LIMIT ?"
     var statement: OpaquePointer?
     guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
@@ -268,10 +278,12 @@ final class NativeLocationSampleBuffer {
     do {
       var changed = 0
       for sampleId in Set(sampleIds) {
+        // Update local: acknowledge GPS sample transfer
         try execute("UPDATE samples SET \(flag)=1 WHERE session_id=? AND owner_uid=? AND sample_id=?",
           values: [sessionId, ownerUid, sampleId])
         changed += Int(sqlite3_changes(db))
       }
+      // Update local: remove fully acknowledged samples
       try execute("DELETE FROM samples WHERE local_transferred=1 AND cloud_acknowledged=1")
       try execute("COMMIT")
       return changed

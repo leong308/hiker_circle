@@ -198,7 +198,7 @@ class SafetyAlertActivity : Activity() {
 
     private fun refreshContent() {
         val prefs = getSharedPreferences("hiker_circle_hike_safety", MODE_PRIVATE)
-        if (prefs.getString("event_id", null).isNullOrBlank() ||
+        if (currentEventId() == null ||
             prefs.getBoolean("event_local_alarm_stopped", false)
         ) {
             finish()
@@ -228,17 +228,17 @@ class SafetyAlertActivity : Activity() {
 
     private fun stopAlert() {
         if (stoppingAlert) return
+        val eventId = currentEventId() ?: return
         stoppingAlert = true
         stopSlider.setStopping(true)
         val awaitingResponse = isAwaitingResponse()
-        val eventId = getSharedPreferences("hiker_circle_hike_safety", MODE_PRIVATE)
-            .getString("event_id", "").orEmpty()
         try {
-            if (awaitingResponse) {
-                startService(Intent(this, HikeSafetyMonitorService::class.java).apply {
-                    action = HikeSafetyMonitorService.ACTION_CANCEL_ALERT
-                })
-            } else if (!HikeSafetyMonitorService.stopTriggeredSafetyAlarm(this, eventId)) {
+            val stopped = if (awaitingResponse) {
+                HikeSafetyMonitorService.requestWarningCancellation(this, eventId)
+            } else {
+                HikeSafetyMonitorService.stopTriggeredSafetyAlarm(this, eventId)
+            }
+            if (!stopped) {
                 throw IllegalStateException("The native alarm could not be stopped.")
             }
         } catch (_: RuntimeException) {
@@ -256,8 +256,16 @@ class SafetyAlertActivity : Activity() {
         finish()
     }
 
-    private fun isAwaitingResponse(): Boolean = getSharedPreferences("hiker_circle_hike_safety", MODE_PRIVATE)
-        .getString("event_phase", null) == "awaiting_response"
+    private fun currentEventId(): String? {
+        val displayedId = intent.getStringExtra("nativeSafetyEventId") ?: return null
+        val activeId = getSharedPreferences("hiker_circle_hike_safety", MODE_PRIVATE)
+            .getString("event_id", null)
+        return activeId?.takeIf { it == displayedId }
+    }
+
+    private fun isAwaitingResponse(): Boolean = currentEventId() != null &&
+        getSharedPreferences("hiker_circle_hike_safety", MODE_PRIVATE)
+            .getString("event_phase", null) == "awaiting_response"
 
     private fun text(value: String, size: Float, color: Int) = TextView(this).apply {
         text = value

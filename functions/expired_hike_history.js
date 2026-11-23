@@ -31,6 +31,7 @@ async function loadExpiredScheduledHikePage({query, ownerPhoneNumber, now, limit
   let scanned = 0, last, more = false;
   while (scanned < 2000 && hikes.length < limit) {
     const take = Math.min(batchSize, 2000 - scanned);
+    // Query paginated expired scheduled hikes
     const snapshot = await query.limit(take + 1).get();
     const rows = snapshot.docs.slice(0, take);
     more = false;

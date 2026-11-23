@@ -63,6 +63,7 @@ class OpenTopoDataService {
     final client = _client ?? http.Client();
     try {
       final locations = coordinates.map((c) => '${c[1]},${c[0]}').join('|');
+      // API: OpenTopoData route elevations
       final response = await client.get(
         Uri.https('api.opentopodata.org', '/v1/aster30m', {
           'locations': locations,

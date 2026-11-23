@@ -92,9 +92,10 @@ class _DetailHeader extends StatelessWidget {
 /// Displays the profile history card.
 class _ProfileHistoryCard extends StatelessWidget {
   /// Creates profile history card.
-  const _ProfileHistoryCard({required this.item});
+  const _ProfileHistoryCard({required this.item, this.trailing});
 
   final _ProfileHistoryItem item;
+  final Widget? trailing;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -103,9 +104,22 @@ class _ProfileHistoryCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: trailing == null
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
           children: [
-            _Glyph(icon: item.icon),
+            if (item.photoURL.isEmpty)
+              _Glyph(icon: item.icon)
+            else
+              ClipOval(
+                child: Image.network(
+                  item.photoURL,
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => _Glyph(icon: item.icon),
+                ),
+              ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -119,19 +133,24 @@ class _ProfileHistoryCard extends StatelessWidget {
                       letterSpacing: 0,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    item.subtitle,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryTextFor(context),
-                      letterSpacing: 0,
+                  if (item.subtitle.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      item.subtitle,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _MeColors.secondaryTextFor(context),
+                        letterSpacing: 0,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  _MiniPill(label: item.meta),
+                  ],
+                  if (item.meta.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    _MiniPill(label: item.meta),
+                  ],
                 ],
               ),
             ),
+            if (trailing != null) trailing!,
           ],
         ),
       ),

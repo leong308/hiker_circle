@@ -147,6 +147,7 @@ class ExpiredHikesRepository {
       'limit': limit.clamp(1, 200),
       'cursor': cursor?.toMap(),
     });
+    // Query paginated expired hike history
     Future<Map<String, dynamic>> read({bool onlyLocal = false}) => _cache.read(
       owner: owner,
       type: 'expired_hike_history_page',
@@ -245,6 +246,7 @@ class ExpiredHikesRepository {
   Future<Map<String, dynamic>> fetchCloudPage(
     Map<String, dynamic> request,
   ) async {
+    // Query expired hikes by cursor
     final response = await (_functions ?? FirebaseFunctions.instance)
         .httpsCallable(
           'listExpiredScheduledHikes',

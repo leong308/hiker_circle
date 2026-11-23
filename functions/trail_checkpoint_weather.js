@@ -45,6 +45,7 @@ function freshForecast(data, now) {
 
 // loadCheckpointWeather: Share provider leases and persist additional forecasts under the trail.
 async function loadCheckpointWeather(db, trailRef, key, {sharedWeather = sharedTrailWeather, now = Date.now} = {}) {
+  // Query trail and checkpoint forecast
   const snapshot = await trailRef.get();
   if (!snapshot.exists) throw new CheckpointWeatherError('not-found', 'This trail no longer exists.');
   const checkpoint = resolveCheckpoint(snapshot.data(), key);
@@ -55,6 +56,7 @@ async function loadCheckpointWeather(db, trailRef, key, {sharedWeather = sharedT
   // The existing coordinate cache prevents simultaneous hikers from duplicating provider requests.
   const weather = await sharedWeather(db, checkpoint.latitude, checkpoint.longitude);
   return db.runTransaction(async (tx) => {
+    // Query current trail and checkpoint
     const currentTrail = await tx.get(trailRef);
     if (!currentTrail.exists) throw new CheckpointWeatherError('not-found', 'This trail no longer exists.');
     const currentCheckpoint = resolveCheckpoint(currentTrail.data(), key);
@@ -62,6 +64,7 @@ async function loadCheckpointWeather(db, trailRef, key, {sharedWeather = sharedT
     if (Date.parse(latest?.weather?.cachedAtLocal || '') >= Date.parse(weather.cachedAtLocal)) {
       return latest.weather;
     }
+    // Update cloud: cache refreshed checkpoint forecast
     tx.set(ref, {
       latitude: currentCheckpoint.latitude,
       longitude: currentCheckpoint.longitude,

@@ -2215,6 +2215,11 @@ class UpcomingHike {
   final int departureReminderCount;
   final bool departureReminderSentByMe;
 
+  bool isHostedBy(String phoneNumber) {
+    final key = _modelPhoneKey(phoneNumber);
+    return key.isNotEmpty && _modelPhoneKey(creatorPhone) == key;
+  }
+
   /// Matches the host and participants without depending on phone formatting.
   bool isParticipant(String phoneNumber) {
     final key = _modelPhoneKey(phoneNumber);

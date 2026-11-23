@@ -60,6 +60,7 @@ function projectUserSnapshot(account, snapshots, modules) {
 async function readUser(reference, modules, transaction) {
   const unique = [...new Set(modules)];
   const refs = [reference, ...unique.map(name => userModule(reference, name))];
+  // Query account and requested modules
   const snapshots = await Promise.all(refs.map(ref => transaction ? transaction.get(ref) : ref.get()));
   return projectUserSnapshot(snapshots[0], snapshots.slice(1), unique);
 }
@@ -72,6 +73,7 @@ async function hydrateUsers(accounts, modules, reader) {
   const references = accounts.flatMap(account => unique.map(name => userModule(account.ref, name)));
   const snapshots = [];
   for (let start = 0; start < references.length; start += 200) {
+    // Query user modules by account batch
     snapshots.push(...await reader.getAll(...references.slice(start, start + 200)));
   }
   return accounts.map((account, index) => projectUserSnapshot(account,
@@ -79,6 +81,7 @@ async function hydrateUsers(accounts, modules, reader) {
 }
 
 async function readUserQuery(query, modules) {
+  // Query filtered accounts and modules
   const snapshot = await query.get();
   const docs = await hydrateUsers(snapshot.docs, modules, query.firestore);
   return {docs, size: docs.length, empty: docs.length === 0};
@@ -86,6 +89,7 @@ async function readUserQuery(query, modules) {
 
 async function readUsers(reader, references, modules) {
   if (!references.length) return [];
+  // Query accounts and modules by reference
   const accounts = await reader.getAll(...references);
   return hydrateUsers(accounts, modules, reader);
 }
@@ -104,6 +108,7 @@ function partitionUserFields(data) {
 function setUser(writer, reference, data, options = {merge: true}) {
   const batch = writer || reference.firestore.batch();
   for (const [module, fields] of partitionUserFields(data)) {
+    // Update cloud: write account and module fields
     batch.set(module ? userModule(reference, module) : reference, fields, options);
   }
   return writer ? writer : batch.commit();
@@ -120,6 +125,7 @@ function updateUser(writer, reference, data) {
       for (const part of parts.slice(0, -1)) cursor = cursor[part] ||= {};
       cursor[parts.at(-1)] = value;
     }
+    // Update cloud: merge account and module updates
     batch.set(module ? userModule(reference, module) : reference, nested, {mergeFields: Object.keys(fields)});
   }
   return writer ? writer : batch.commit();

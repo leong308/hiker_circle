@@ -39,6 +39,7 @@ async function resolveSosShirtColor({db, uid, triggeredAtMillis}) {
   let snapshot;
   try {
     snapshot = await Promise.race([
+      // Query active hiker's SOS shirt colour
       db.collection('hikeSessions').where('userId', '==', uid)
         .where('startedAt', '<=', new Date(triggeredAtMillis)).orderBy('startedAt', 'desc').limit(1).get(),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Clothing lookup timed out.')), 1000); }),

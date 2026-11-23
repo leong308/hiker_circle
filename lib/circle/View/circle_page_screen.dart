@@ -345,8 +345,8 @@ class _CirclePageState extends State<CirclePage> {
       _screenModel.commandDeleteCommunityPost(post);
 
   /// Delegates open community moderation to the ViewModel.
-  Future<void> _openCommunityModeration({bool flags = false}) =>
-      _screenModel.commandOpenCommunityModeration(flags: flags);
+  Future<void> _openCommunityModeration() =>
+      _screenModel.commandOpenCommunityModeration();
 
   /// Delegates moderate community post to the ViewModel.
   Future<bool> _moderateCommunityPost(_CommunityPost post, String status) =>
@@ -824,10 +824,8 @@ class _CirclePageState extends State<CirclePage> {
                         _selectedSection == _CircleSection.community) ...[
                       CommunityModerationToolbar(
                         isAdmin: _isAdmin,
-                        onManagePosts: () =>
-                            unawaited(_openCommunityModeration()),
                         onReviewFlags: () =>
-                            unawaited(_openCommunityModeration(flags: true)),
+                            unawaited(_openCommunityModeration()),
                       ),
                       const SizedBox(height: 18),
                     ],
@@ -964,15 +962,20 @@ class _CirclePageState extends State<CirclePage> {
   );
 
   /// Presents the open community moderation effect1 UI.
-  Future<void> _presentOpenCommunityModerationEffect1(bool flags) =>
+  Future<void> _presentOpenCommunityModerationEffect1() =>
       Navigator.of(context).push<void>(
         MaterialPageRoute(
-          builder: (_) => flags
-              ? _CommunityFlagReviewPage(session: widget.session)
-              : CommunityPostManagementPage(
+          builder: (context) => CommunityFlaggedContentPage(
+            isAdmin: widget.session.isAdmin,
+            onOpenHistory: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => CommunityPostManagementPage(
                   session: widget.session,
                   repository: widget.hikerCircleRepository,
                 ),
+              ),
+            ),
+          ),
         ),
       );
 
@@ -985,8 +988,8 @@ class _CirclePageState extends State<CirclePage> {
       title: Text(removing ? 'Remove this story?' : 'Hide this story?'),
       content: Text(
         removing
-            ? 'This story will be removed from the community. Its record stays in Manage posts for review or restoration.'
-            : 'This story will be hidden from the community. You can restore it from Manage posts.',
+            ? 'This story will be removed from the community. You can restore it from Moderation history in Flagged content.'
+            : 'This story will be hidden from the community. You can restore it from Moderation history in Flagged content.',
       ),
       actions: [
         TextButton(
@@ -1086,18 +1089,6 @@ class _CirclePageState extends State<CirclePage> {
       ),
     ),
   );
-}
-
-/// Displays the community flag review page.
-class _CommunityFlagReviewPage extends StatelessWidget {
-  /// Creates community flag review page.
-  const _CommunityFlagReviewPage({required this.session});
-  final AppSession session;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) =>
-      CommunityFlaggedContentPage(isAdmin: session.isAdmin);
 }
 
 /// Displays the buddy discovery action.

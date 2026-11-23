@@ -2,7 +2,7 @@
 'use strict';
 const {createHash, randomUUID} = require('node:crypto');
 const {MAX_POST_CAPTION_LENGTH} = require('./community_content_limits');
-const {beginIntegrityRun, finishIntegrityRun, releaseIntegrityRun} = require('./community_integrity_schedule');
+const {beginIntegrityRun, finishIntegrityRun} = require('./community_integrity_schedule');
 const {VERSION, POLICY_HASH, categories: CATEGORIES, labels: LABELS,
   keywords: POLICY_KEYWORDS, evidenceLabels: EVIDENCE_LABELS, detect} = require('./community_moderation_policy');
 // Keep invalid records separate from language-policy concerns.
@@ -58,172 +58,111 @@ function prepareContent(path, data) {
   if (!text.trim()) return {skip: true};
   return detect(text) || {};
 }
-// Re-read visibility before a saved check can inspect a source.
-async function eligibleSource(db, path) {
+// Query public content and its current review together.
+async function checkContent(db, ref, now) {
+  const path = ref.path;
   const info = sourceInfo(path);
   if (!info) return null;
-  const source = await db.doc(path).get();
-  if (!source.exists) return null;
-  const parent = info.type === 'post' ? source : await db.doc(`communityPosts/${info.postId}`).get();
-  if (!parent.exists || parent.data()?.visibility !== 'public') return null;
-  return source;
-}
-// Fence source changes and concurrent human decisions before saving a rule verdict.
-async function saveVerdict(db, candidate, verdict, now) {
-  const checkRef = db.collection('communityModerationChecks').doc(candidate.id);
-  const reviewRef = db.collection('communityModerationReviews').doc(candidate.id);
+  const id = sha(path);
+  const checkRef = db.collection('communityModerationChecks').doc(id);
+  const reviewRef = db.collection('communityModerationReviews').doc(id);
   return db.runTransaction(async tx => {
-    const check = await tx.get(checkRef);
-    const existingReview = await tx.get(reviewRef);
-    const source = await tx.get(db.doc(candidate.path));
-    const info = sourceInfo(candidate.path);
-    const parent = info.type === 'post' ? source : await tx.get(db.doc(`communityPosts/${info.postId}`));
-    if (!source.exists || parent.data()?.visibility !== 'public'
-      || check.data()?.fingerprint !== candidate.fingerprint || check.data()?.stage !== 'pending'
-      || contentHash(candidate.path, source.data()) !== candidate.fingerprint) return false;
-    if (existingReview.data()?.fingerprint === candidate.fingerprint
-      && ['dismissed', 'actioned'].includes(existingReview.data()?.status)) {
-      tx.set(checkRef, {stage: 'checked', checkedAtMillis: now}, {merge: true});
-      return false;
+    const parent = await tx.get(info.type === 'post' ? ref : ref.parent.parent);
+    if (parent.get('visibility') !== 'public') return null;
+    const source = info.type === 'post' ? parent : await tx.get(ref);
+    if (!source.exists) return null;
+    const data = source.data();
+    const fingerprint = contentHash(path, data);
+    const identity = sourceFingerprint(path, data);
+    const verdict = prepareContent(path, data);
+    const [check, reviewDoc] = await tx.getAll(checkRef, reviewRef);
+    const review = reviewDoc.data() || {};
+    const preserved = ['dismissed', 'actioned'].includes(review.status)
+      && (review.sourceFingerprint === identity || review.fingerprint === legacyFingerprint(path, data)
+        || review.fingerprint === fingerprint);
+    const status = preserved ? review.status : verdict.manual ? 'pending' : 'clear';
+    if (check.get('fingerprint') === fingerprint && check.get('stage') === 'checked'
+      && review.status === status && (preserved || review.fingerprint === fingerprint)) return status;
+    // Update cloud: archive the previous verdict
+    if (!preserved && review.fingerprint && review.fingerprint !== fingerprint) {
+      tx.set(reviewRef.collection('history').doc(sha(review.fingerprint)), {...review, archivedAtMillis: now});
     }
-    tx.set(checkRef, {stage: verdict.retry ? 'pending' : 'checked',
-      checkedAtMillis: now}, {merge: true});
-    // An in-flight retry must not rewrite a review or fabricate provenance for a legacy row.
-    if (existingReview.data()?.fingerprint === candidate.fingerprint
-      && existingReview.data()?.status === 'pending') return true;
-    if (verdict.flag) tx.set(reviewRef, {
-      sourcePath: candidate.path, postId: info.postId, contentType: info.type,
-      fingerprint: candidate.fingerprint, status: 'pending', severity: verdict.severity,
-      sourceFingerprint: sourceFingerprint(candidate.path, source.data()), policyHash: POLICY_HASH,
-      categories: verdict.categories, reasons: verdict.categories.map(c => LABELS[c]),
-      policyVersion: VERSION, flaggedAtMillis: now,
-      ...verdictProvenance(verdict),
-    });
-    else if (existingReview.data()?.status !== 'pending') {
-      tx.set(reviewRef, {status: 'clear', fingerprint: candidate.fingerprint, checkedAtMillis: now}, {merge: true});
+    // Update cloud: save moderation check
+    tx.set(checkRef, {sourcePath: path, fingerprint, sourceFingerprint: identity, stage: 'checked',
+      checkedAtMillis: now, policyVersion: VERSION, policyHash: POLICY_HASH});
+    if (preserved) {
+      tx.set(reviewRef, {sourceFingerprint: identity, recheckedAtMillis: now, recheckedPolicyHash: POLICY_HASH,
+        recheckResult: 'human_decision_preserved'}, {merge: true});
+    } else if (review.fingerprint !== fingerprint || review.status !== status) {
+      const record = {status, fingerprint, sourceFingerprint: identity, sourcePath: path};
+      if (verdict.manual) {
+        const categories = verdict.categories || [verdict.manual];
+        Object.assign(record, {postId: info.postId, contentType: info.type, severity: verdict.severity || 'medium',
+          categories, reasons: categories.map(c => LABELS[c]), policyVersion: VERSION, policyHash: POLICY_HASH,
+          flaggedAtMillis: now, ...verdictProvenance(verdict)});
+      } else record.checkedAtMillis = now;
+      tx.set(reviewRef, record);
     }
+    return status;
+  });
+}
+
+// Close flags whose source disappeared or became private.
+async function reconcileReview(db, ref, now) {
+  return db.runTransaction(async tx => {
+    const review = (await tx.get(ref)).data();
+    if (review?.status !== 'pending' || !sourceInfo(review.sourcePath)) return false;
+    const source = await tx.get(db.doc(review.sourcePath));
+    const parent = sourceInfo(review.sourcePath).type === 'post' ? source : await tx.get(source.ref.parent.parent);
+    if (source.exists && parent.get('visibility') === 'public'
+      && contentHash(review.sourcePath, source.data()) === review.fingerprint) return false;
+    // Update cloud: close outdated review
+    tx.set(ref, {status: 'superseded', supersededAtMillis: now}, {merge: true});
     return true;
   });
 }
-// Bound discovery work while continuing through the whole collection over successive passes.
-async function scanPage(db, collection, cursor, limit, fieldPath) {
-  let query = collection.orderBy(fieldPath).limit(limit);
-  if (cursor) query = query.startAfter(cursor);
-  const page = await query.get();
-  return {docs: page.docs, cursor: page.size === limit ? page.docs.at(-1).ref.path : null};
-}
-// scanContent: Fingerprint only eligible public post/comment paths; changed text supersedes old verdicts.
-async function scanContent(db, state, now, fieldPath) {
-  const currentPolicy = state.policyHash === POLICY_HASH;
-  const posts = await scanPage(db, db.collection('communityPosts'), currentPolicy ? state.postCursor : null, 100, fieldPath);
-  const comments = await scanPage(db, db.collectionGroup('comments'), currentPolicy ? state.commentCursor : null, 150, fieldPath);
-  let queued = 0, decisionsPreserved = 0;
-  for (const document of [...posts.docs, ...comments.docs]) {
-    const path = document.ref.path;
-    const info = sourceInfo(path);
-    if (!info) continue; // Other collections' comments and private chats are never submitted.
-    const data = document.data();
-    if (info.type === 'post' && data.visibility !== 'public') continue;
-    if (info.type === 'comment' && !(await eligibleSource(db, path))) continue;
-    const fingerprint = contentHash(path, data);
-    const id = sha(path);
-    const ref = db.collection('communityModerationChecks').doc(id);
-    await db.runTransaction(async tx => {
-      const current = await tx.get(ref);
-      if (current.data()?.fingerprint === fingerprint && current.data()?.stage !== 'stale') return;
-      const reviewRef = db.collection('communityModerationReviews').doc(id);
-      const reviewRecord = await tx.get(reviewRef);
-      const review = reviewRecord.data() || {};
-      const identity = sourceFingerprint(path, data);
-      const preserved = ['dismissed', 'actioned'].includes(review.status)
-        && (review.sourceFingerprint === identity || review.fingerprint === legacyFingerprint(path, data)
-          || review.fingerprint === fingerprint);
-      if (!preserved && reviewRecord.exists && review.fingerprint && review.fingerprint !== fingerprint) {
-        // Keep the prior audit, including removals and decisions, before the live queue row is replaced.
-        tx.set(reviewRef.collection('history').doc(sha(review.fingerprint)), {...review, archivedAtMillis: now});
-      }
-      tx.set(ref, {sourcePath: path, fingerprint, sourceFingerprint: identity,
-        stage: preserved ? 'checked' : 'pending', discoveredAtMillis: now, policyVersion: VERSION, policyHash: POLICY_HASH});
-      if (preserved) {
-        tx.set(reviewRef, {sourceFingerprint: identity, recheckedAtMillis: now,
-          recheckedPolicyHash: POLICY_HASH, recheckResult: 'human_decision_preserved'}, {merge: true});
-      } else {
-        tx.set(reviewRef, {status: 'superseded', fingerprint}, {merge: true});
-      }
-      return preserved ? 'preserved' : 'queued';
-    }).then(outcome => { if (outcome === 'preserved') decisionsPreserved++; else if (outcome === 'queued') queued++; });
-  }
-  return {postCursor: posts.cursor ? posts.cursor.split('/').at(-1) : null, commentCursor: comments.cursor,
-    scannedPosts: posts.docs.length, scannedComments: comments.docs.length, queued, decisionsPreserved};
-}
-// Supersede pending flags when their content disappears, becomes private or changes.
-async function reconcilePendingReviews(db, now) {
-  const pending = await db.collection('communityModerationReviews').where('status', '==', 'pending').limit(100).get();
-  let superseded = 0;
-  for (const review of pending.docs) {
-    const data = review.data(); const info = sourceInfo(data.sourcePath);
-    if (!info) continue;
-    const changed = await db.runTransaction(async tx => {
-      const fresh = await tx.get(review.ref);
-      if (fresh.data()?.status !== 'pending' || fresh.data()?.fingerprint !== data.fingerprint) return false;
-      const source = await tx.get(db.doc(data.sourcePath));
-      const parent = info.type === 'post' ? source : await tx.get(db.doc(`communityPosts/${info.postId}`));
-      if (source.exists && parent.data()?.visibility === 'public'
-        && contentHash(data.sourcePath, source.data()) === data.fingerprint) return false;
-      tx.set(review.ref, {status: 'superseded', supersededAtMillis: now}, {merge: true}); return true;
-    });
-    if (changed) superseded++;
-  }
-  return superseded;
-}
-// Share the same lease, matching and thirty-minute deadline for scheduled and manual checks.
-async function runIntegrityCheck({db, fieldPath, now = Date.now, force = false}) {
-  const owner = randomUUID();
-  const acquired = await beginIntegrityRun({db, owner, force, now});
-  if (!acquired.acquired) return acquired.result;
-  let published = false;
-  let result = {status: 'completed', checked: 0, flagged: 0, deferred: 0,
-    policyVersion: VERSION, policyHash: POLICY_HASH};
+
+async function runIntegrityCheck({db, fieldPath, eventId, now = Date.now}) {
+  const eventRef = eventId ? db.doc('maintenanceState/communityModerationRun').collection('events').doc(sha(eventId)) : null;
+  const run = {db, owner: randomUUID(), eventRef, now};
+  const claim = await beginIntegrityRun(run);
+  if (claim.skipped) return claim;
+  const result = claim.progress?.result || {checked: 0, flagged: 0, scannedPosts: 0, scannedComments: 0,
+    decisionsPreserved: 0, superseded: 0, policyVersion: VERSION, policyHash: POLICY_HASH};
+  const queries = [db.collection('communityPosts').where('visibility', '==', 'public'),
+    db.collectionGroup('comments'), db.collection('communityModerationReviews').where('status', '==', 'pending')];
+  let cursor = claim.progress?.cursor;
   try {
-    const scan = await scanContent(db, acquired.state, now(), fieldPath);
-    result = {...result, ...scan, superseded: await reconcilePendingReviews(db, now())};
-    const pending = await db.collection('communityModerationChecks').where('stage', '==', 'pending').limit(24).get();
-    const candidates = [];
-    for (const check of pending.docs) {
-      const data = check.data(); const source = await eligibleSource(db, data.sourcePath);
-      if (!source || contentHash(data.sourcePath, source.data()) !== data.fingerprint) {
-        await check.ref.set({stage: 'stale'}, {merge: true});
-        await db.collection('communityModerationReviews').doc(check.id).set({status: 'superseded'}, {merge: true});
-        continue;
-      }
-      const prepared = prepareContent(data.sourcePath, source.data());
-      const candidate = {id: check.id, path: data.sourcePath, fingerprint: data.fingerprint};
-      if (prepared.skip) {
-        if (await saveVerdict(db, candidate, {flag: false, severity: 'low', categories: []}, now())) result.checked++;
-      } else if (prepared.manual) {
-        if (await saveVerdict(db, candidate, {flag: true, severity: prepared.severity || 'medium',
-          categories: prepared.categories || [prepared.manual],
-          detectionSource: prepared.detectionSource, detectionEvidence: prepared.detectionEvidence,
-          matchedKeywords: prepared.matchedKeywords}, now())) {
-          result.checked++; result.flagged++;
+    for (let phase = claim.progress?.phase ?? 0; phase < queries.length; phase++) {
+      do {
+        // Query the next page of posts, comments or flags
+        let query = queries[phase].orderBy(fieldPath).select().limit(100);
+        if (cursor) query = query.startAfter(db.doc(cursor));
+        const page = await query.get();
+        for (let i = 0; i < page.size; i += 8) {
+          const docs = page.docs.slice(i, i + 8);
+          if (phase === 2) {
+            const changed = await Promise.all(docs.map(doc => reconcileReview(db, doc.ref, now())));
+            result.superseded += changed.filter(Boolean).length;
+          } else {
+            const outcomes = await Promise.all(docs.map(doc => checkContent(db, doc.ref, now())));
+            for (const status of outcomes.filter(Boolean)) {
+              result[phase === 0 ? 'scannedPosts' : 'scannedComments']++;
+              result.checked++;
+              if (status === 'pending') result.flagged++;
+              if (['dismissed', 'actioned'].includes(status)) result.decisionsPreserved++;
+            }
+          }
         }
-      } else candidates.push({...candidate, ...prepared});
+        cursor = page.size === 100 ? page.docs.at(-1).ref.path : null;
+        // Update cloud: resume this event after a retry
+        if (eventRef) await eventRef.set({phase: cursor ? phase : phase + 1, cursor, result});
+      } while (cursor);
     }
-    for (const candidate of candidates) {
-      if (await saveVerdict(db, candidate, {flag: false, severity: 'low', categories: []}, now())) result.checked++;
-    }
-    result.remainingPending = (await db.collection('communityModerationChecks').where('stage', '==', 'pending').limit(1).get()).size > 0;
-    const completed = await finishIntegrityRun({db, owner, result, force, now});
-    published = completed != null;
-    return completed ?? {skipped: true, reason: 'lease-lost',
-      ...(await db.doc('communityModerationStatus/current').get()).data(), serverNowMillis: now()};
+    return await finishIntegrityRun({...run, result: {...result, status: 'completed'}});
   } catch (error) {
-    const failed = await finishIntegrityRun({db, owner, force, now,
-      result: {status: 'failed', errorCode: 'scan-failed', checked: result.checked, flagged: result.flagged}});
-    published = failed != null;
+    await finishIntegrityRun({...run, result: {...result, status: 'failed', errorCode: 'scan-failed'}});
     throw error;
-  } finally {
-    if (!published) await releaseIntegrityRun({db, owner});
   }
 }
 // reviewContent: Apply a human decision only while its source fingerprint still matches.
@@ -231,6 +170,7 @@ async function reviewContent({db, reviewId, action, adminId, now = Date.now()}) 
   if (!/^[a-f0-9]{64}$/.test(reviewId || '') || !['dismiss', 'hide'].includes(action)) throw new Error('invalid-review');
   return db.runTransaction(async tx => {
     const ref = db.collection('communityModerationReviews').doc(reviewId);
+    // Query flagged review and source post
     const review = await tx.get(ref); const data = review.data() || {};
     if (!review.exists || data.status !== 'pending') return {status: 'already-reviewed'};
     const info = sourceInfo(data.sourcePath);
@@ -239,6 +179,7 @@ async function reviewContent({db, reviewId, action, adminId, now = Date.now()}) 
     const postRef = db.doc(`communityPosts/${info.postId}`);
     const parent = info.type === 'post' ? source : await tx.get(postRef);
     if (!source.exists || parent.data()?.visibility !== 'public' || contentHash(data.sourcePath, source.data()) !== data.fingerprint) {
+      // Update cloud: apply moderation decision
       tx.set(ref, {status: 'superseded', reviewedAtMillis: now, reviewedBy: adminId}, {merge: true});
       return {status: 'superseded'};
     }
@@ -259,4 +200,4 @@ async function reviewContent({db, reviewId, action, adminId, now = Date.now()}) 
   });
 }
 module.exports = {VERSION, POLICY_HASH, CATEGORIES, sourceInfo, sourceFingerprint, contentHash, prepareContent,
-  saveVerdict, runIntegrityCheck, reviewContent};
+  runIntegrityCheck, reviewContent};

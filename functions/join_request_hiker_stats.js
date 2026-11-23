@@ -37,6 +37,7 @@ function hikingStats(hikes, user, unlockedAchievements = 0) {
 // Query only the requester's completed metrics; raw profile, timestamps and coordinates never leave this module.
 async function loadJoinRequesterDetails(db, userId) {
   if (typeof userId !== 'string' || !userId || userId.length > 200 || /[\/\u0000-\u001f]/.test(userId)) return unavailableDetails();
+  // Query requester's profile, hikes and achievements
   const account = await readUser(db.collection('users').doc(userId), ['profile', 'achievements']);
   const user = account.data();
   if (!account.exists || user?.accountDisabled === true || user?.status === 'disabled') return unavailableDetails();

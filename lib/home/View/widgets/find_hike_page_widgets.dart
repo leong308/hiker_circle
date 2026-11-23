@@ -11,6 +11,7 @@ class UpcomingHikeCard extends StatefulWidget {
     required this.session,
     required this.repository,
     required this.onJoin,
+    this.onDeleted,
   });
 
   final UpcomingHike hike;
@@ -19,6 +20,7 @@ class UpcomingHikeCard extends StatefulWidget {
   final AppSession session;
   final HikerCircleFirebaseRepository repository;
   final VoidCallback onJoin;
+  final VoidCallback? onDeleted;
 
   /// Creates the presentation state for this widget.
   @override
@@ -297,6 +299,34 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard>
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
+    if (!_isParticipating) {
+      return _buildCard(context, null);
+    }
+    final isHost = widget.hike.isHostedBy(widget.session.phoneNumber);
+    return UpcomingHikeDeleteCard(
+      key: ValueKey(widget.hike.id),
+      trailName: widget.hike.trailName,
+      isHost: isHost,
+      onDelete: () async {
+        final confirmed = await widget.repository.cancelUpcomingHike(
+          hikeId: widget.hike.id,
+          withdrawSelf: !isHost,
+          snapshot: widget.hike,
+        );
+        if (!mounted) return;
+        if (!confirmed && !isHost) {
+          _showMessage(
+            'Withdrawal queued. The group roster will update after sync.',
+          );
+        }
+        _joinedLocally = false;
+        (widget.onDeleted ?? widget.onJoin)();
+      },
+      builder: (button) => _buildCard(context, button),
+    );
+  }
+
+  Widget _buildCard(BuildContext context, Widget? deleteButton) {
     final distKm = widget.userLat != null && widget.userLng != null
         ? widget.hike.distanceFrom(widget.userLat!, widget.userLng!)
         : widget.hike.distanceKm;
@@ -393,6 +423,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard>
                           : _AppColors.orange,
                     ),
                   ],
+                  if (deleteButton != null) deleteButton,
                 ],
               ),
               if (isOverdue) ...[

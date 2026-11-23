@@ -1,7 +1,7 @@
 part of '../community_post_management_page_feature.dart';
 
 /// Defines the post filter choices.
-enum _PostFilter { all, public, hidden, removed }
+enum _PostFilter { all, hidden, removed }
 
 /// Displays the community post management page.
 class CommunityPostManagementPage extends StatefulWidget {
@@ -105,7 +105,7 @@ class _CommunityPostManagementPageState
       child: Scaffold(
         backgroundColor: AdminUi.background(context),
         appBar: PageHeaderAppBar(
-          title: const Text('Moderate posts'),
+          title: const Text('Moderation history'),
           actions: [
             IconButton(
               tooltip: 'Refresh posts',
@@ -121,7 +121,7 @@ class _CommunityPostManagementPageState
             padding: const EdgeInsets.all(16),
             children: [
               const Text(
-                'Review any community post. Hidden and removed posts stay here for review and can be restored.',
+                'Review hidden and removed posts. Restore a post to show it in Circle again.',
               ),
               const SizedBox(height: 16),
               TextField(
@@ -144,7 +144,6 @@ class _CommunityPostManagementPageState
                       onSelected: (_) => setState(() => _filter = filter),
                       label: Text(switch (filter) {
                         _PostFilter.all => 'All',
-                        _PostFilter.public => 'Public',
                         _PostFilter.hidden => 'Hidden',
                         _PostFilter.removed => 'Removed',
                       }),
@@ -196,7 +195,7 @@ class _CommunityPostManagementPageState
                   padding: const EdgeInsets.all(20),
                   child: Text(
                     _search.isEmpty
-                        ? 'No posts available.'
+                        ? 'No hidden or removed posts in this view.'
                         : 'No matching posts in the loaded list.',
                   ),
                 ),
@@ -226,17 +225,11 @@ class _CommunityPostManagementPageState
                           runSpacing: 6,
                           children: [
                             AdminTag(
-                              label: switch (post['visibility']) {
-                                'hidden' => 'Hidden from feed',
-                                'removed' => 'Removed from feed',
-                                _ => 'Public',
-                              },
-                              icon: post['visibility'] == 'public'
-                                  ? Icons.visibility_outlined
-                                  : Icons.visibility_off_outlined,
-                              color: post['visibility'] == 'public'
-                                  ? AdminUi.green(context)
-                                  : Theme.of(context).colorScheme.error,
+                              label: post['visibility'] == 'removed'
+                                  ? 'Removed from feed'
+                                  : 'Hidden from feed',
+                              icon: Icons.visibility_off_outlined,
+                              color: Theme.of(context).colorScheme.error,
                             ),
                           ],
                         ),
@@ -277,22 +270,13 @@ class _CommunityPostManagementPageState
                               icon: const Icon(Icons.edit_outlined),
                               label: const Text('Edit post'),
                             ),
-                            if (post['visibility'] != 'public')
-                              OutlinedButton.icon(
-                                onPressed: _loading || _saving
-                                    ? null
-                                    : () => _visibility(post, 'approved'),
-                                icon: const Icon(Icons.visibility_outlined),
-                                label: const Text('Restore'),
-                              ),
-                            if (post['visibility'] == 'public')
-                              OutlinedButton.icon(
-                                onPressed: _loading || _saving
-                                    ? null
-                                    : () => _visibility(post, 'hidden'),
-                                icon: const Icon(Icons.visibility_off_outlined),
-                                label: const Text('Hide'),
-                              ),
+                            OutlinedButton.icon(
+                              onPressed: _loading || _saving
+                                  ? null
+                                  : () => _visibility(post, 'approved'),
+                              icon: const Icon(Icons.visibility_outlined),
+                              label: const Text('Restore'),
+                            ),
                             if (post['visibility'] != 'removed')
                               OutlinedButton.icon(
                                 onPressed: _loading || _saving

@@ -43,6 +43,7 @@ function createMobileWriteSync({database, authorize, HttpsError, timestamp, prev
     const hash = contentHash(message);
     const db = database(), chat = db.collection('groupChats').doc(chatId), ref = chat.collection('messages').doc(messageId);
     return db.runTransaction(async tx => {
+      // Query chat and message by stable ID
       const [c, existing] = await Promise.all([tx.get(chat), tx.get(ref)]);
       const data = c.data() || {};
       if (!c.exists || !data.participantPhones?.includes(phoneNumber) || data.isDeleted === true
@@ -55,6 +56,7 @@ function createMobileWriteSync({database, authorize, HttpsError, timestamp, prev
         if (!saved.payloadHash) { delete original.sentAtLocal; delete incoming.sentAtLocal; }
         if (saved.senderPhone !== phoneNumber || contentHash(original) !== contentHash(incoming)) throw new HttpsError('already-exists', 'This message identity has different content.');
       } else {
+        // Update cloud: save message and update chat
         tx.create(ref, {...message, createdAt: timestamp(), cloudCreatedAtMillis: now, payloadHash: hash, senderUserId: uid});
       }
       if (!Number.isFinite(Date.parse(data.lastMessageAtLocal)) || sent > Date.parse(data.lastMessageAtLocal)) {
@@ -71,6 +73,7 @@ function createMobileWriteSync({database, authorize, HttpsError, timestamp, prev
     if (!Number.isFinite(requested)) fail('Invalid read time.');
     const db = database(), chat = db.collection('groupChats').doc(chatId), key = phoneNumber.replace(/\D/g, '');
     return db.runTransaction(async tx => {
+      // Query messages after read cutoff
       const snapshot = await tx.get(chat), data = snapshot.data() || {};
       if (!snapshot.exists || !data.participantPhones?.includes(phoneNumber)) throw new HttpsError('permission-denied', 'This conversation is unavailable.');
       const cutoff = Math.max(Date.parse(data.lastReadAt?.[key]) || 0, Math.min(clock(), requested));
@@ -82,6 +85,7 @@ function createMobileWriteSync({database, authorize, HttpsError, timestamp, prev
       if (messages.docs.length > 1000) throw new HttpsError('resource-exhausted', 'Open the conversation to refresh its unread state.');
       const unread = messages.docs.filter(doc => { const m = doc.data(); return m.senderPhone !== phoneNumber
         && m.isSystemMessage !== true && !atOrBefore(doc.createTime, Timestamp.fromMillis(cutoff)) && !m.seenBy?.includes(phoneNumber); }).length;
+      // Update cloud: save chat read position
       tx.set(chat, {lastReadAt: {[key]: new Date(cutoff).toISOString()}, unreadCount: {[key]: unread},
         unreadReconciledThrough: {[key]: messages.readTime || snapshot.readTime}}, {merge: true});
       return {confirmed: true, readAtLocal: new Date(cutoff).toISOString(), unreadCount: unread};
@@ -111,6 +115,7 @@ function createMobileWriteSync({database, authorize, HttpsError, timestamp, prev
     const sessionId = request.auth?.token?.mobileSessionId || 'owner';
     const ref = database().collection('users').doc(uid).collection('modules').doc('sos');
     return database().runTransaction(async tx => {
+      // Query safety preferences and mobile session
       const snapshot = await tx.get(ref), data = snapshot.data() || {};
       if (request.auth?.token?.mobileSessionId) {
         const active = await tx.get(database().collection('mobileSessions').doc(uid));
@@ -123,6 +128,7 @@ function createMobileWriteSync({database, authorize, HttpsError, timestamp, prev
         if (operation.sequence > sequence) return {confirmed: true, superseded: true, contentHash: contentHash(previous)};
         if (operation.sequence === sequence && operation.contentHash !== hash) throw new HttpsError('already-exists', 'This note revision has different content.');
       }
+      // Update cloud: merge safety settings
       if (changed) tx.set(ref, mode ? {sosWhatsappNotes: {[mode]: value}, sosWhatsappNotesUpdatedAt: timestamp()}
         : {sos_contacts: value, sosContactsCount: value.length, sosContactsUpdatedAt: timestamp()}, {merge: true});
       if (mode) tx.set(ref, {sosNoteOperations: {[mode]: {sessionId, sequence, contentHash: hash}}}, {merge: true});

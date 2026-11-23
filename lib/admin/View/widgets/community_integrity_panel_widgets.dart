@@ -11,7 +11,6 @@ class CommunityIntegrityPanel extends StatefulWidget {
     this.loadReviews,
     this.openReview,
     this.runChecks,
-    this.clock,
   });
   final VoidCallback? onReviewed;
   final Stream<QuerySnapshot<Map<String, dynamic>>>? reviews;
@@ -20,7 +19,6 @@ class CommunityIntegrityPanel extends StatefulWidget {
   loadReviews;
   final Future<bool?> Function(CommunityFlag flag)? openReview;
   final Future<Map<String, dynamic>> Function()? runChecks;
-  final DateTime Function()? clock;
 
   /// Binds the queue's presentation lifecycle.
   @override
@@ -42,7 +40,6 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
       readLoadReviews: () => widget.loadReviews,
       readReviews: () => widget.reviews,
       readRunChecks: () => widget.runChecks,
-      clock: widget.clock,
     )..addListener(_render);
     _screenModel.readOpenReview = () => widget.openReview;
     _screenModel.readOnReviewed = () => widget.onReviewed;
@@ -92,7 +89,7 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const SectionLabel(label: 'Automatic checks'),
+      const SectionLabel(label: 'Community checks'),
       const SizedBox(height: 8),
       AdminPanel(
         padding: const EdgeInsets.all(16),
@@ -130,7 +127,7 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
             ),
             const SizedBox(height: 10),
             Text(
-              'Keyword, pattern and record checks · every 30 minutes',
+              'Each new public post triggers a check of all public posts and their comments.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: AdminUi.muted(context),
                 height: 1.4,
@@ -209,42 +206,27 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
     );
   }
 
-  /// Shows the shared server deadline without rebuilding the queue on every timer tick.
+  /// Shows the latest scan status.
   Widget _checkStatus(CommunityIntegrityStatus? status) {
     final style = Theme.of(
       context,
     ).textTheme.bodySmall?.copyWith(color: AdminUi.muted(context), height: 1.4);
     if (_screenModel.stateRefreshing) {
-      return Text(
-        'Refreshing checks…',
-        key: const ValueKey('community-next-check'),
-        style: style,
-      );
+      return Text('Refreshing checks…', style: style);
     }
     if (status == null) {
       return Text('Scan status unavailable while offline.', style: style);
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (!status.isRunning && status.lastRunAt != null) ...[
-          Text(
-            status.isFailed
-                ? 'The last scan was incomplete.'
-                : 'Last checked ${_date(status.lastRunAt)}',
-            style: style,
-          ),
-          const SizedBox(height: 4),
-        ],
-        ValueListenableBuilder<DateTime>(
-          valueListenable: _screenModel.stateClock,
-          builder: (context, now, _) => Text(
-            status.nextCheckLabel(now),
-            key: const ValueKey('community-next-check'),
-            style: style,
-          ),
-        ),
-      ],
+    if (status.isRunning) return Text('Checking now…', style: style);
+    if (status.isFailed) {
+      return Text('The last scan was incomplete.', style: style);
+    }
+    final last = status.lastRunAt;
+    return Text(
+      last == null
+          ? 'Waiting for the first check'
+          : 'Last checked ${_date(last)}',
+      style: style,
     );
   }
 

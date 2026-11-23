@@ -347,6 +347,7 @@ class StaticHazardDatasetService {
     _RouteSample sample,
     String token,
   ) async {
+    // API: Mapbox nearby trail features
     final uri = Uri.https(
       'api.mapbox.com',
       '/v4/$_tilesetId/tilequery/${sample.longitude},${sample.latitude}.json',

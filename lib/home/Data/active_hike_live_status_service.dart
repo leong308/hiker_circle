@@ -17,14 +17,40 @@ class ActiveHikeLiveStatusService {
   );
 
   /// Sets native safety event handler.
-  void setNativeSafetyEventHandler(Future<void> Function()? handler) {
+  void setNativeSafetyEventHandler(
+    Future<void> Function()? handler, {
+    Future<void> Function()? onFallImpactCheckChanged,
+  }) {
     _channel.setMethodCallHandler(
       handler == null
           ? null
           : (call) async {
-              if (call.method == 'onNativeSafetyEvent') await handler();
+              switch (call.method) {
+                case 'onNativeSafetyEvent':
+                  await handler();
+                case 'onFallImpactCheckChanged':
+                  await onFallImpactCheckChanged?.call();
+              }
             },
     );
+  }
+
+  /// Reads the current impact check for the active hike.
+  Future<bool> isCheckingFallImpact({
+    required String sessionId,
+    required String ownerUid,
+  }) async {
+    try {
+      return await _channel.invokeMethod<bool>('isCheckingFallImpact', {
+            'sessionId': sessionId,
+            'ownerUid': ownerUid,
+          }) ??
+          false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
   }
 
   /// Send the current session identity and recording interval to native background tracking.
@@ -185,15 +211,11 @@ class ActiveHikeLiveStatusService {
   }
 
   /// Cancels native safety alert.
-  Future<void> cancelNativeSafetyAlert() async {
-    try {
-      await _channel.invokeMethod<void>('cancelNativeSafetyAlert');
-    } on MissingPluginException {
-      // Native monitoring is Android-only.
-    } on PlatformException {
-      // The system notification keeps its own cancel action as a fallback.
-    }
-  }
+  Future<bool> cancelNativeSafetyAlert(String eventId) async =>
+      await _channel.invokeMethod<bool>('cancelNativeSafetyAlert', {
+        'eventId': eventId,
+      }) ??
+      false;
 
   /// Silence this triggered event without deleting its durable dispatch work.
   /// False means the native event no longer matches; the caller can re-read it.

@@ -57,6 +57,7 @@ class MultiFactorAuthService {
 
   /// Begins totp enrollment.
   Future<TotpEnrollment> beginTotpEnrollment({String? mfaToken}) async {
+    // Update cloud: create TOTP enrollment challenge
     final data = await _call(
       'beginTotpEnrollment',
       mfaToken == null ? const {} : {'mfaToken': mfaToken},
@@ -77,6 +78,7 @@ class MultiFactorAuthService {
     required String code,
     String? mfaToken,
   }) async {
+    // Update cloud: verify and save TOTP factor
     final data = await _call('finishTotpEnrollment', {
       'challengeId': challengeId,
       'code': code,
@@ -89,6 +91,7 @@ class MultiFactorAuthService {
   Future<AppSession?> enrollPasskey({String? mfaToken, String? label}) async {
     AuthFlowDiagnostics.event('passkey-enrollment', 'start');
     _requirePasskeysEnabled();
+    // Update cloud: create passkey enrollment challenge
     final begin = await _call(
       'beginPasskeyEnrollment',
       mfaToken == null ? const {} : {'mfaToken': mfaToken},
@@ -98,6 +101,7 @@ class MultiFactorAuthService {
       operation: 'register',
       callback: () => _passkeys.register(RegisterRequestType.fromJson(options)),
     );
+    // Update cloud: save enrolled passkey
     final completed = await _call('finishPasskeyEnrollment', {
       'challengeId': _requiredString(begin, 'challengeId'),
       'response': platformResponse.toJson(),
@@ -113,6 +117,7 @@ class MultiFactorAuthService {
     required String mfaToken,
     required String code,
   }) async {
+    // Update cloud: verify TOTP login session
     final data = await _call('verifyTotpLogin', {
       'mfaToken': mfaToken,
       'code': code,
@@ -123,6 +128,7 @@ class MultiFactorAuthService {
   /// Exchange the server's passkey challenge and assertion result for the verified app session.
   Future<AppSession> verifyPasskeyLogin({required String mfaToken}) async {
     _requirePasskeysEnabled();
+    // Update cloud: create passkey login challenge
     final begin = await _call('beginPasskeyLogin', {'mfaToken': mfaToken});
     final platformResponse = await _runPasskeyOperation(
       operation: 'authenticate',
@@ -130,6 +136,7 @@ class MultiFactorAuthService {
         AuthenticateRequestType.fromJson(_requiredMap(begin, 'options')),
       ),
     );
+    // Update cloud: verify passkey login session
     final data = await _call('finishPasskeyLogin', {
       'mfaToken': mfaToken,
       'challengeId': _requiredString(begin, 'challengeId'),
@@ -141,6 +148,7 @@ class MultiFactorAuthService {
   /// Computes verify password reset passkey.
   Future<void> verifyPasswordResetPasskey({required String resetToken}) async {
     _requirePasskeysEnabled();
+    // Update cloud: create recovery passkey challenge
     final begin = await _call('beginPasswordResetPasskey', {
       'resetToken': resetToken,
     });
@@ -150,6 +158,7 @@ class MultiFactorAuthService {
         AuthenticateRequestType.fromJson(_requiredMap(begin, 'options')),
       ),
     );
+    // Update cloud: verify recovery passkey
     await _call('finishPasswordResetPasskey', {
       'resetToken': resetToken,
       'challengeId': _requiredString(begin, 'challengeId'),
@@ -159,6 +168,7 @@ class MultiFactorAuthService {
 
   /// Loads status.
   Future<MfaStatus> loadStatus() async {
+    // Query enrolled MFA factors and status
     final data = await _call('getMfaStatus', const {});
     final rawFactors = data['factors'];
     final factors = rawFactors is List
@@ -186,6 +196,7 @@ class MultiFactorAuthService {
 
   /// Removes factor.
   Future<void> removeFactor(String factorId) async {
+    // Update cloud: remove enrolled MFA factor
     await _call('removeMfaFactor', {'factorId': factorId});
   }
 

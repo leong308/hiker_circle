@@ -7,6 +7,7 @@ const LEASE_MILLIS = 5 * 60000;
 async function claimOutbox(db, ref, timestamp, now = Date.now()) {
   const attemptId = randomUUID();
   return db.runTransaction(async tx => {
+    // Query FCM outbox entry and lease
     const snapshot = await tx.get(ref);
     const data = snapshot.data() || {};
     if (!snapshot.exists) return null;
@@ -17,6 +18,7 @@ async function claimOutbox(db, ref, timestamp, now = Date.now()) {
       // An expired outbound lease cannot distinguish process death before FCM
       // from death after acceptance. Record that uncertainty without resending.
       if (data.deliveryPhase !== 'preflight') {
+        // Update cloud: claim or skip FCM delivery
         tx.update(ref, { status: 'delivery_uncertain', error: 'expired_outbound_lease',
           processedAt: timestamp(), processedAtLocal: new Date(now).toISOString() });
         return null;
@@ -34,9 +36,11 @@ async function claimOutbox(db, ref, timestamp, now = Date.now()) {
 // updateClaim: Only the lease-owning attempt may advance delivery state.
 async function updateClaim(db, ref, attemptId, update, expectedPhase) {
   return db.runTransaction(async tx => {
+    // Query current FCM delivery claim
     const snapshot = await tx.get(ref), current = snapshot.data() || {};
     if (!snapshot.exists || current.status !== 'sending' || current.deliveryAttemptId !== attemptId
         || (expectedPhase && current.deliveryPhase !== expectedPhase)) return false;
+    // Update cloud: record FCM delivery result
     tx.update(ref, update);
     return true;
   });

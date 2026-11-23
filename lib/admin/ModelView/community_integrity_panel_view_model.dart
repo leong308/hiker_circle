@@ -8,14 +8,7 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
     required this.readLoadReviews,
     required this.readReviews,
     required this.readRunChecks,
-    DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now {
-    stateClock = ValueNotifier(_clock().toUtc());
-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_disposed && stateClock.hasListeners) {
-        stateClock.value = _clock().toUtc().add(_serverOffset);
-      }
-    });
+  }) {
     _replaceStreams();
   }
 
@@ -25,10 +18,6 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
   readLoadReviews;
   final Stream<QuerySnapshot<Map<String, dynamic>>>? Function() readReviews;
   final Future<Map<String, dynamic>> Function()? Function() readRunChecks;
-  final DateTime Function() _clock;
-  late final ValueNotifier<DateTime> stateClock;
-  late final Timer _clockTimer;
-  Duration _serverOffset = Duration.zero;
   CommunityIntegrityStatus? stateManualHealth;
   bool stateRefreshing = false;
   String? stateRefreshError;
@@ -56,7 +45,7 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
   bool get commandCanRunChecks =>
       !stateRefreshing && (Firebase.apps.isNotEmpty || readRunChecks() != null);
 
-  /// Runs immediately, coalesces repeated taps and applies only a server-confirmed deadline.
+  /// Runs a manual scan and displays its result.
   Future<void> commandRunChecks() async {
     if (!commandCanRunChecks) return;
     _publish(() {
@@ -68,11 +57,6 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
           await (readRunChecks() ??
               const CommunityIntegrityRepository().runChecks)();
       if (_disposed) return;
-      final serverNow = parseCommunityFlagTimestamp(result['serverNowMillis']);
-      if (serverNow != null) {
-        _serverOffset = serverNow.difference(_clock().toUtc());
-      }
-      stateClock.value = _clock().toUtc().add(_serverOffset);
       _publish(() {
         stateManualHealth = CommunityIntegrityStatus.fromMap(result);
         stateError = null;
@@ -98,6 +82,7 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
         readLoadReviews()?.call(stateLimit) ??
         readReviews() ??
         (connected
+            // Query live pending moderation reviews
             ? FirebaseFirestore.instance
                   .collection('communityModerationReviews')
                   .where('status', isEqualTo: 'pending')
@@ -107,6 +92,7 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
     stateHealth =
         readHealth() ??
         (connected
+            // Query latest moderation health
             ? FirebaseFirestore.instance
                   .doc('communityModerationStatus/current')
                   .snapshots()
@@ -190,8 +176,6 @@ class _CommunityIntegrityPanelStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _clockTimer.cancel();
-    stateClock.dispose();
     super.dispose();
   }
 }

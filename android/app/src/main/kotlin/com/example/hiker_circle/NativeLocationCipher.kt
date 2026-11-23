@@ -19,6 +19,7 @@ object NativeLocationCipher {
         val original = context.getDatabasePath("native_hike_locations.db")
         val target = context.getDatabasePath(NAME)
         if (target.exists()) {
+            // Query local: encrypted GPS database availability
             SQLiteDatabase.openDatabase(target.path, key, null, SQLiteDatabase.OPEN_READONLY, preserveOnError, null).use {
                 it.rawQuery("SELECT count(*) FROM sqlite_master", emptyArray<String>()).use { cursor -> check(cursor.moveToFirst()) }
             }
@@ -29,6 +30,7 @@ object NativeLocationCipher {
         val pending = File(target.path + ".pending")
         if (pending.exists()) check(pending.delete())
         SQLiteDatabase.openDatabase(original.path, "", null, SQLiteDatabase.OPEN_READWRITE, preserveOnError, null).use { source ->
+            // Update local: export GPS data to SQLCipher
             source.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", emptyArray<String>()).use { it.moveToFirst() }
             val version = source.version
             source.execSQL("ATTACH DATABASE ? AS encrypted KEY ?", arrayOf(pending.path, key))
@@ -36,6 +38,7 @@ object NativeLocationCipher {
             source.execSQL("PRAGMA encrypted.user_version=$version")
             source.execSQL("DETACH DATABASE encrypted")
         }
+        // Query local: encrypted GPS database integrity
         SQLiteDatabase.openDatabase(pending.path, key, null, SQLiteDatabase.OPEN_READONLY, preserveOnError, null).use {
             it.rawQuery("PRAGMA integrity_check", emptyArray<String>()).use { cursor ->
                 check(cursor.moveToFirst() && cursor.getString(0) == "ok")

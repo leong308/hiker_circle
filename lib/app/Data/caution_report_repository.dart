@@ -38,6 +38,7 @@ extension CautionReportRepository on HikerCircleFirebaseRepository {
             )
             .timeout(const Duration(seconds: 30));
         _requireSameAccount(session, uid);
+        // Update cloud: upload queued trail caution
         final result = await _resolvedFunctions
             .httpsCallable(
               'submitTrailCaution',

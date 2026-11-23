@@ -207,6 +207,7 @@ class WeatherAreaService {
               .replaceAll('{z}', '${WeatherAreaGrid.zoom}')
               .replaceAll('{x}', '${x % WeatherAreaGrid.tilesPerWorld}')
               .replaceAll('{y}', '$y');
+          // API: OpenWeatherMap overlay tiles
           final response =
               await (_client == null
                       ? PrivateProviderClient.request('weatherTile', {

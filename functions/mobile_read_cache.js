@@ -193,6 +193,7 @@ function createMobileReadCacheService({handlers, readOwnerResource, authorize, H
   const resolve = async (request, callable, args) => {
     const clean = validateArguments(callable, args, HttpsError);
     const child = {...request, data: {...clean, expectedOwner: request.auth.uid, forcePayload: true}};
+    // Query owner or public resource
     const result = callable === 'readMobileResource'
       ? await readOwnerResource(child, clean.resourceType, clean.resourceArgs)
       : await handlers[callable](child);
@@ -202,6 +203,7 @@ function createMobileReadCacheService({handlers, readOwnerResource, authorize, H
   async function readProjection(request, callable) {
     authorize(request);
     const args = validateArguments(callable, request.data || {}, HttpsError);
+    // Query saved resource manifest
     const result = manifests
       ? await manifests.read(request, callable, args, () => resolve(request, callable, args))
       : await resolve(request, callable, args).then(payload => ({payload, hash: contentHash(payload)}));
@@ -259,6 +261,7 @@ function createMobileReadCacheService({handlers, readOwnerResource, authorize, H
             reads.set(identity, read);
             return read;
           };
+          // Query registered resources and revisions
           const resolved = manifests
             ? await manifests.read({...request, data: {knownContentHash: row.knownContentHash}},
               row.callable, row.arguments, readPayload, manifestContext)

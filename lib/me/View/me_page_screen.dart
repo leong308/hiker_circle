@@ -251,7 +251,7 @@ class _MePageState extends State<MePage> {
       case 'My buddies':
         _openHistoryPage(
           title: 'My Buddies',
-          subtitle: 'People from past hikes and QR adds',
+          subtitle: '',
           icon: Icons.person_add_alt_1_rounded,
           collection: _ProfileCollection.buddies,
         );
@@ -333,6 +333,10 @@ class _MePageState extends State<MePage> {
     required IconData icon,
     required _ProfileCollection collection,
   }) {
+    final isBuddyList = collection == _ProfileCollection.buddies;
+    if (isBuddyList) {
+      unawaited(_screenModel.loadCollection(collection, force: true));
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => ListenableBuilder(
@@ -342,7 +346,9 @@ class _MePageState extends State<MePage> {
             subtitle: subtitle,
             icon: icon,
             history: _screenModel.history[collection],
-            retry: () => _screenModel.loadCollection(collection),
+            buddyModel: isBuddyList ? _screenModel : null,
+            retry: () =>
+                _screenModel.loadCollection(collection, force: isBuddyList),
           ),
         ),
       ),
@@ -839,7 +845,7 @@ IconData _achievementIconFor(String iconName) {
 }
 
 /// Displays the profile history page.
-class _ProfileHistoryPage extends StatelessWidget {
+class _ProfileHistoryPage extends StatefulWidget {
   /// Creates profile history page.
   const _ProfileHistoryPage({
     required this.title,
@@ -847,6 +853,7 @@ class _ProfileHistoryPage extends StatelessWidget {
     required this.icon,
     required this.history,
     required this.retry,
+    this.buddyModel,
   });
 
   final String title;
@@ -854,10 +861,158 @@ class _ProfileHistoryPage extends StatelessWidget {
   final IconData icon;
   final AsyncSnapshot<List<_ProfileHistoryItem>>? history;
   final VoidCallback retry;
+  final _MePageStateViewModel? buddyModel;
+
+  @override
+  State<_ProfileHistoryPage> createState() => _ProfileHistoryPageState();
+}
+
+class _ProfileHistoryPageState extends State<_ProfileHistoryPage> {
+  StreamSubscription<Set<String>>? _buddyChanges;
+  bool _buddyActionPending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final model = widget.buddyModel;
+    if (model == null) return;
+    final session = model.readSession();
+    _buddyChanges = model.stateFirebaseRepository
+        .watchBuddyRelationships(session: session)
+        .map((relationships) => relationships.buddyPhoneNumbers)
+        .distinct(setEquals)
+        .skip(1)
+        .listen((_) {
+          if (_isCurrentSession(model, session)) {
+            unawaited(
+              model.loadCollection(_ProfileCollection.buddies, force: true),
+            );
+          }
+        }, onError: (Object _) {});
+  }
+
+  @override
+  void dispose() {
+    unawaited(_buddyChanges?.cancel());
+    super.dispose();
+  }
+
+  bool _isCurrentSession(_MePageStateViewModel model, AppSession session) =>
+      mounted &&
+      model.mounted &&
+      model.readSession().phoneNumber == session.phoneNumber;
+
+  Future<void> _runBuddyAction(
+    Future<void> Function(_MePageStateViewModel, AppSession) action,
+    String failureMessage,
+  ) async {
+    final model = widget.buddyModel;
+    if (model == null || !model.mounted || _buddyActionPending) return;
+    final session = model.readSession();
+    setState(() => _buddyActionPending = true);
+    try {
+      await action(model, session);
+    } catch (error) {
+      if (_isCurrentSession(model, session)) {
+        HikerCircleToast.show(
+          context,
+          error is HikerCircleFirebaseRepositoryException
+              ? error.message
+              : failureMessage,
+          tone: HikerCircleToastTone.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _buddyActionPending = false);
+    }
+  }
+
+  Future<void> _openBuddyConversation(_ProfileHistoryItem item) =>
+      _runBuddyAction((model, session) async {
+        final repository = model.stateFirebaseRepository;
+        final chat = await repository.openDirectChat(
+          session: session,
+          otherPhoneNumber: item.buddyPhoneNumber,
+          otherDisplayName: item.title,
+        );
+        if (!_isCurrentSession(model, session) ||
+            ModalRoute.of(context)?.isCurrent != true) {
+          return;
+        }
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => GroupChatDetailPage(
+              chat: chat,
+              session: session,
+              repository: repository,
+            ),
+          ),
+        );
+      }, 'Unable to open this conversation.');
+
+  Future<void> _confirmRemoveBuddy(_ProfileHistoryItem item) =>
+      _runBuddyAction((model, session) async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) {
+            final colors = Theme.of(dialogContext).colorScheme;
+            return AlertDialog(
+              title: Text('Remove ${item.title}?'),
+              content: const Text(
+                'You’ll be removed from each other’s buddy lists.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colors.error,
+                    foregroundColor: colors.onError,
+                  ),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Remove'),
+                ),
+              ],
+            );
+          },
+        );
+        if (confirmed == true && _isCurrentSession(model, session)) {
+          await model.removeBuddy(session, item);
+        }
+      }, 'Unable to remove this buddy.');
+
+  Widget _buddyActions(_ProfileHistoryItem item) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: 'Open conversation with ${item.title}',
+          icon: const Icon(Icons.chat_bubble_outline_rounded),
+          color: colors.primary,
+          onPressed: _buddyActionPending
+              ? null
+              : () => unawaited(_openBuddyConversation(item)),
+        ),
+        IconButton(
+          tooltip: 'Remove ${item.title} from buddies',
+          icon: const Icon(Icons.person_remove_outlined),
+          color: colors.error,
+          onPressed: _buddyActionPending
+              ? null
+              : () => unawaited(_confirmRemoveBuddy(item)),
+        ),
+      ],
+    );
+  }
 
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
+    final isBuddyList = widget.buddyModel != null;
+    final history = widget.history;
     final items = history?.data;
     return Scaffold(
       backgroundColor: _MeColors.backgroundFor(context),
@@ -871,54 +1026,64 @@ class _ProfileHistoryPage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _DetailHeader(
-                    title: title,
-                    subtitle: subtitle,
+                    title: widget.title,
+                    subtitle: widget.subtitle,
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
                   if (items == null)
                     if (history?.hasError == true) ...[
-                      const Text('Couldn’t load this history.'),
+                      Text(
+                        isBuddyList
+                            ? 'Couldn’t load your buddies.'
+                            : 'Couldn’t load this history.',
+                      ),
                       TextButton(
-                        onPressed: retry,
+                        onPressed: widget.retry,
                         child: const Text('Try again'),
                       ),
                     ] else
-                      const Center(
+                      Center(
                         child: CircularProgressIndicator(
-                          semanticsLabel: 'Loading history',
+                          semanticsLabel: isBuddyList
+                              ? 'Loading buddies'
+                              : 'Loading history',
                         ),
                       )
                   else ...[
-                    _InsetGroup(
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Row(
-                          children: [
-                            _Glyph(icon: icon),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                '${items.length} history item${items.length == 1 ? '' : 's'} from profile activity.',
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(
-                                      color: _MeColors.textFor(context),
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: 0,
-                                    ),
+                    if (!isBuddyList) ...[
+                      _InsetGroup(
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(
+                            children: [
+                              _Glyph(icon: widget.icon),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  '${items.length} history item${items.length == 1 ? '' : 's'} from profile activity.',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: _MeColors.textFor(context),
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 0,
+                                      ),
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 14),
+                      const SizedBox(height: 14),
+                    ],
                     if (items.isEmpty)
                       _InsetGroup(
                         child: Padding(
                           padding: const EdgeInsets.all(18),
                           child: Text(
-                            'No profile activity is available here yet.',
+                            isBuddyList
+                                ? 'No buddies yet.'
+                                : 'No profile activity is available here yet.',
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(
@@ -930,7 +1095,10 @@ class _ProfileHistoryPage extends StatelessWidget {
                       )
                     else
                       for (final item in items) ...[
-                        _ProfileHistoryCard(item: item),
+                        _ProfileHistoryCard(
+                          item: item,
+                          trailing: isBuddyList ? _buddyActions(item) : null,
+                        ),
                         const SizedBox(height: 10),
                       ],
                   ],

@@ -76,6 +76,7 @@ class PrivacyConsentRepository {
       final profile = userModuleDocument(account, UserModule.profile);
       await profile.firestore
           .runTransaction((transaction) async {
+            // Query saved consent version
             final saved = await transaction.get(profile);
             // An accepted cloud receipt survives retries, reinstall and device changes.
             if (PrivacyConsentReceipt.fromMap(
@@ -84,6 +85,7 @@ class PrivacyConsentRepository {
                 null) {
               return;
             }
+            // Update cloud: save privacy consent
             transaction.set(profile, {
               'privacyConsent': {
                 ...receipt.toMap(),

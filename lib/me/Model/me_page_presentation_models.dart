@@ -427,14 +427,18 @@ class _ProfileHistoryItem {
   const _ProfileHistoryItem({
     required this.title,
     required this.subtitle,
-    required this.meta,
     required this.icon,
+    this.meta = '',
+    this.photoURL = '',
+    this.buddyPhoneNumber = '',
   });
 
   final String title;
   final String subtitle;
   final String meta;
   final IconData icon;
+  final String photoURL;
+  final String buddyPhoneNumber;
 }
 
 /// Retired badges stay hidden while their previously awarded points remain part of the hiker's rank.

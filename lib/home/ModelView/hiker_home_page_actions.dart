@@ -217,7 +217,7 @@ abstract final class _HikerHomePageDataActions {
       receiver.loadTrailHazardAssessment;
 
   /// Binds cancel upcoming hike to the selected data source.
-  static Future<void> Function({
+  static Future<bool> Function({
     String? hazardId,
     required String hikeId,
     bool withdrawSelf,

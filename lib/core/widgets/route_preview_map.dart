@@ -387,6 +387,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     final ownerUid = FirebaseAuth.instance.currentUser?.uid;
     final trailId = widget.trail.trailId;
     if (ownerUid == null || trailId.isEmpty) return;
+    // Query trail hazards for map preview
     _communityHazardSubscription = FirebaseFirestore.instance
         .collection('hazardReports')
         .where('trailId', isEqualTo: trailId)

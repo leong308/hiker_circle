@@ -6,12 +6,10 @@ class CommunityModerationToolbar extends StatelessWidget {
   const CommunityModerationToolbar({
     super.key,
     required this.isAdmin,
-    required this.onManagePosts,
     required this.onReviewFlags,
   });
 
   final bool isAdmin;
-  final VoidCallback onManagePosts;
   final VoidCallback onReviewFlags;
 
   /// Builds this widget from its current presentation state.
@@ -45,27 +43,19 @@ class CommunityModerationToolbar extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Review flagged content or manage posts. Use a story’s menu to moderate it here.',
+            'Use a story’s menu to moderate it in the feed.',
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
           ),
           const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.tonalIcon(
-                onPressed: onReviewFlags,
-                icon: const Icon(Icons.flag_outlined, size: 18),
-                label: const Text('Flagged content'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onManagePosts,
-                icon: const Icon(Icons.article_outlined, size: 18),
-                label: const Text('Manage posts'),
-              ),
-            ],
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: FilledButton.tonalIcon(
+              onPressed: onReviewFlags,
+              icon: const Icon(Icons.flag_outlined, size: 18),
+              label: const Text('Flagged content'),
+            ),
           ),
         ],
       ),

@@ -420,6 +420,7 @@ class _TrailCautionsHistoryState extends State<TrailCautionsHistory> {
           ],
         )
       : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          // Query live hazards on this trail
           stream: FirebaseFirestore.instance
               .collection('hazardReports')
               .where('trailId', isEqualTo: widget.trailId)

@@ -10,6 +10,7 @@ class NextHikeBriefing extends StatefulWidget {
     this.plannedHike,
     this.trail,
     this.onReview,
+    this.onDelete,
     this.isVisible = true,
     this.weatherService,
     this.isNextHike = true,
@@ -19,6 +20,7 @@ class NextHikeBriefing extends StatefulWidget {
   final PlannedHike? plannedHike;
   final Trail? trail;
   final Future<void> Function()? onReview;
+  final Future<void> Function()? onDelete;
   final bool isVisible;
   final HikeBriefingWeatherService? weatherService;
   final bool isNextHike;
@@ -145,6 +147,17 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
+    final remove = widget.onDelete;
+    if (remove == null) return _buildCard(context, null);
+    return UpcomingHikeDeleteCard(
+      trailName: widget.hike.trailName,
+      isHost: widget.hike.isHostedBy(widget.phoneNumber),
+      onDelete: remove,
+      builder: (button) => _buildCard(context, button),
+    );
+  }
+
+  Widget _buildCard(BuildContext context, Widget? deleteButton) {
     final scheme = Theme.of(context).colorScheme;
     final hike = widget.hike;
     final plan = widget.plannedHike?.withGearProgress();
@@ -197,6 +210,7 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
                     ],
                   ),
                 ),
+                if (deleteButton != null) deleteButton,
               ],
             ),
           ),

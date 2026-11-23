@@ -6,7 +6,7 @@ class CommunityIntegrityRepository {
   /// Defers Firebase access until an administrator explicitly refreshes.
   const CommunityIntegrityRepository();
 
-  /// Waits for the protected scan result without queuing an offline action or choosing its deadline.
+  /// Waits for the protected scan result from the backend.
   Future<Map<String, dynamic>> runChecks() async {
     final owner = FirebaseAuth.instance.currentUser?.uid;
     if (owner == null) {
@@ -15,10 +15,11 @@ class CommunityIntegrityRepository {
         message: 'Sign in again to run checks.',
       );
     }
+    // Update cloud: run and save moderation scan
     final result = await FirebaseFunctions.instance
         .httpsCallable(
           'refreshCommunityContentIntegrity',
-          options: HttpsCallableOptions(timeout: const Duration(seconds: 270)),
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 570)),
         )
         .call<Map<String, dynamic>>({'expectedOwner': owner});
     if (FirebaseAuth.instance.currentUser?.uid != owner) {

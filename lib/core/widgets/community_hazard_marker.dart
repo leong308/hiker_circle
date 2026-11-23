@@ -87,7 +87,6 @@ Future<Uint8List> communityHazardMarkerImage(
   int count, {
   String? type,
   bool seriousRisk = false,
-  bool badgeBright = true,
 }) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
@@ -96,7 +95,6 @@ Future<Uint8List> communityHazardMarkerImage(
     count,
     type: type,
     seriousRisk: seriousRisk,
-    badgeBright: badgeBright,
   );
   final picture = recorder.endRecording();
   final image = await picture.toImage(80, 76);
@@ -144,7 +142,6 @@ void _paintCommunityHazardMarker(
   int count, {
   String? type,
   bool seriousRisk = false,
-  bool badgeBright = true,
 }) {
   canvas.drawCircle(const Offset(36, 40), 27, Paint()..color = Colors.white);
   canvas.drawCircle(
@@ -175,10 +172,7 @@ void _paintCommunityHazardMarker(
     canvas.drawCircle(
       const Offset(58, 17),
       13,
-      Paint()
-        ..color = const Color(
-          0xFFD32F2F,
-        ).withValues(alpha: badgeBright ? 1 : .25),
+      Paint()..color = const Color(0xFFD32F2F),
     );
     // Draw the small exclamation directly so its shape stays crisp at map scale.
     canvas.drawLine(
@@ -219,6 +213,7 @@ mapbox.PointAnnotationOptions communityHazardAnnotation(
   CommunityHazardCluster cluster,
   Uint8List image, {
   double iconSize = .65,
+  bool placeBelowLocation = false,
 }) => mapbox.PointAnnotationOptions(
   geometry: mapbox.Point(
     coordinates: mapbox.Position(cluster.longitude, cluster.latitude),
@@ -226,7 +221,10 @@ mapbox.PointAnnotationOptions communityHazardAnnotation(
   image: image,
   iconSize: iconSize,
   iconOpacity: cluster.isResolved ? .35 : 1,
-  iconAnchor: mapbox.IconAnchor.CENTER,
+  iconAnchor: placeBelowLocation
+      ? mapbox.IconAnchor.TOP
+      : mapbox.IconAnchor.CENTER,
+  iconOffset: placeBelowLocation ? const [0, 16] : null,
 );
 
 /// Shows community hazard details.
@@ -319,13 +317,17 @@ class CautionMarkerSizer {
 /// playback controller are never cleared or restarted by a vote or expiry.
 class CommunityCautionMapLayer with WidgetsBindingObserver {
   /// Creates community caution map layer.
-  CommunityCautionMapLayer({required this.onTap}) {
+  CommunityCautionMapLayer({
+    required this.onTap,
+    this.placeBelowLocation = false,
+  }) {
     WidgetsBinding.instance.addObserver(this);
     _foreground =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
   }
   final void Function(CommunityHazardCluster) onTap;
+  final bool placeBelowLocation;
   final _sizer = CautionMarkerSizer();
   final _byId = <String, CommunityHazardCluster>{};
   List<CommunityHazardCluster> _reports = const [];
@@ -336,8 +338,7 @@ class CommunityCautionMapLayer with WidgetsBindingObserver {
   int _generation = 0, _styleGeneration = -1, _revision = 0;
   double _factor = 1;
   bool _dirty = false, _disposed = false;
-  final _badgeMarkers =
-      <String, (mapbox.PointAnnotation, Uint8List, Uint8List)>{};
+  final _badgeMarkers = <mapbox.PointAnnotation>[];
   Timer? _badgeTimer;
   Future<void>? _badgeUpdate;
   bool _animationsEnabled = true, _foreground = true, _badgeBright = true;
@@ -390,15 +391,13 @@ class CommunityCautionMapLayer with WidgetsBindingObserver {
         (() async {
           while (_badgeDirty && !_disposed && generation == _generation) {
             _badgeDirty = false;
-            final bright = _badgeBright;
-            for (final entry in _badgeMarkers.values.toList()) {
+            final opacity = _badgeBright ? 1.0 : .72;
+            for (final annotation in _badgeMarkers.toList()) {
               if (_disposed || generation != _generation) return;
-              entry.$1.image = bright ? entry.$2 : entry.$3;
-              // Reuse two native image names instead of allocating one per blink.
-              entry.$1.iconImage =
-                  'community-risk-$generation-${entry.$1.id}-${bright ? 'bright' : 'dim'}';
+              // Pulse the registered icon without replacing its image.
+              annotation.iconOpacity = opacity;
               try {
-                await manager.update(entry.$1);
+                await manager.update(annotation);
               } catch (_) {
                 // A style change may have removed this annotation.
               }
@@ -507,17 +506,6 @@ class CommunityCautionMapLayer with WidgetsBindingObserver {
                     ),
                   ),
                 );
-                final dimImages = await Future.wait([
-                  for (var i = 0; i < reports.length; i++)
-                    reports[i].hasSeriousRisk
-                        ? communityHazardMarkerImage(
-                            reports[i].confirmations,
-                            type: reports[i].leadReport.type,
-                            seriousRisk: true,
-                            badgeBright: false,
-                          )
-                        : Future<Uint8List>.value(images[i]),
-                ]);
                 if (_disposed || generation != _generation) return;
                 final annotations = await manager.createMulti([
                   for (var i = 0; i < reports.length; i++)
@@ -525,6 +513,7 @@ class CommunityCautionMapLayer with WidgetsBindingObserver {
                       reports[i],
                       images[i],
                       iconSize: .65 * _factor,
+                      placeBelowLocation: placeBelowLocation,
                     ),
                 ]);
                 if (_disposed || generation != _generation) return;
@@ -534,11 +523,7 @@ class CommunityCautionMapLayer with WidgetsBindingObserver {
                     _byId[annotation.id] = reports[i];
                     _sizer.add(annotation, .65);
                     if (reports[i].hasSeriousRisk) {
-                      _badgeMarkers[annotation.id] = (
-                        annotation,
-                        images[i],
-                        dimImages[i],
-                      );
+                      _badgeMarkers.add(annotation);
                     }
                   }
                 }

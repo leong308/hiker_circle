@@ -27,6 +27,7 @@ function createAdminUsers({database, authorization, HttpsError, username, timest
     const {limit, cursor} = pageArgs(request.data);
     let query = database().collection('users').orderBy(FieldPath.documentId());
     if (cursor) query = query.startAfter(cursor);
+    // Query paginated user accounts and profiles
     const snapshot = await query.limit(limit + 1).get();
     const docs = snapshot.docs.slice(0, limit);
     const profiles = docs.length ? await database().getAll(...docs.map(doc => doc.ref.collection('modules').doc('profile'))) : [];
@@ -46,6 +47,7 @@ function createAdminUsers({database, authorization, HttpsError, username, timest
     const db = database(), actor = db.doc(`users/${actorId}`), target = db.doc(`users/${targetUserId}`);
     const audit = db.collection('userRoleHistory').doc(contentHash([actorId, operationId]));
     return db.runTransaction(async tx => {
+      // Query accounts and previous role change
       const [actorDoc, targetDoc, previous, actorProfile, targetProfile, session] = await tx.getAll(actor, target, audit,
         actor.collection('modules').doc('profile'), target.collection('modules').doc('profile'), db.doc(`mobileSessions/${actorId}`));
       if (session.data()?.activeSessionId !== sessionId) fail('unauthenticated', 'Your secure session changed. Sign in again.');
@@ -60,6 +62,7 @@ function createAdminUsers({database, authorization, HttpsError, username, timest
       if (fromRole === 'superadmin') fail('permission-denied', 'Superadmin roles cannot be changed here.');
       if (fromRole === role) return {role, changed: false};
       if (fromRole !== expectedRole) fail('failed-precondition', 'This role changed. Refresh the list and try again.');
+      // Update cloud: save account role and audit entry
       tx.update(target, {isAdmin: role === 'admin', isSuperAdmin: false, role, roles: [role]});
       tx.create(audit, {actorUserId: actorId, actorUsername: username(actorProfile.data() || {}, 'Hiker').slice(0, 160),
         actorPhoneNumber: actorId, targetUserId,
@@ -75,6 +78,7 @@ function createAdminUsers({database, authorization, HttpsError, username, timest
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || (cursor != null && !/^[a-f0-9]{64}$/.test(cursor))) fail('invalid-argument', 'Invalid role-history page.');
     let query = database().collection('userRoleHistory').orderBy('changedAt', 'desc').orderBy(FieldPath.documentId(), 'desc');
     if (cursor) {
+      // Query paginated role change history
       const doc = await database().doc(`userRoleHistory/${cursor}`).get();
       if (!doc.exists) fail('not-found', 'This history page is unavailable.');
       query = query.startAfter(doc);

@@ -75,6 +75,8 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
     const type = request.data?.resourceType;
     const args = validateCloudArguments(type, request.data?.resourceArgs ?? {}, HttpsError);
     const db = database();
+
+    // Query trail
     if (type === 'trail_catalog') {
       const snapshot = await db.collection('trails').orderBy('isVerifiedTrail', 'desc')
         .orderBy('ratingAverage', 'desc').limit(MAX_CATALOG_ROWS + 1).get();
@@ -82,6 +84,7 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
         .map(doc => ({...sanitize(doc.data()), trailId: doc.id}))};
     }
     if (type === 'trail_weather' || type === 'checkpoint_weather') {
+      // Query trail or checkpoint weather
       let ref = db.collection('trails').doc(args.trailId);
       if (type === 'checkpoint_weather') ref = ref.collection('checkpointWeather').doc(args.checkpointKey);
       const snapshot = await ref.get();
@@ -93,6 +96,7 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
       return {weather: sanitize(weather)};
     }
     if (type === 'trail_hazards') {
+      // Query trail hazards by trail ID
       const snapshot = await db.collection('hazardReports').where('trailId', '==', args.trailId)
         .limit(MAX_HAZARD_ROWS + 1).get();
       const reports = requireComplete(snapshot, MAX_HAZARD_ROWS, HttpsError);
@@ -107,6 +111,7 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
         const risk = serverPolicy ? report.riskLevel : policy.riskLevel;
         let reportUpdates = [];
         if (isActiveHazard(report) && category === 'Weather' && risk === 'fatal') {
+          // Query fatal weather hazard updates
           const updates = await doc.ref.collection('updates').limit(MAX_REPORT_UPDATES - updateRows + 1).get();
           const rows = requireComplete(updates, MAX_REPORT_UPDATES - updateRows, HttpsError);
           updateRows += rows.length;
@@ -117,6 +122,7 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
       return {hazards};
     }
     if (type === 'chat_messages') {
+      // Query chat membership
       const chat = db.collection('groupChats').doc(args.chatId);
       const snapshot = await chat.get();
       const phone = identity?.phoneNumber || request.auth.uid;
@@ -125,12 +131,14 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
         || !snapshot.data().participantPhones.includes(phone)) {
         throw new HttpsError('permission-denied', 'This conversation is unavailable.');
       }
+      // Query chat messages newest first
       const messages = await chat.collection('messages').orderBy('sentAtLocal', 'desc')
         .orderBy(FieldPath.documentId(), 'desc').limit(MAX_CHAT_MESSAGES + 1).get();
       return {messages: requireComplete(messages, MAX_CHAT_MESSAGES, HttpsError)
         .map(doc => ({...sanitize(doc.data()), messageId: doc.id}))};
     }
     if (type === 'community_post' || type === 'community_comments') {
+      // Query community post by ID
       const ref = db.collection('communityPosts').doc(args.postId);
       const snapshot = await ref.get();
       if (!snapshot.exists) throw new HttpsError('not-found', 'The post is unavailable.');
@@ -138,13 +146,16 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
       if (data.visibility !== 'public' && data.authorId !== request.auth.uid) {
         throw new HttpsError('permission-denied', 'The post is unavailable.');
       }
+      // Query viewer's post reaction
       const liked = data.visibility === 'public'
         ? (await ref.collection('reactions').doc(request.auth.uid).get()).exists : false;
       const post = {...sanitize(data), postId: snapshot.id, isLiked: liked};
       if (type === 'community_post') return {post};
+      // Query paginated comments by post
       let query = ref.collection('comments').orderBy('createdAt', 'desc')
         .orderBy(FieldPath.documentId(), 'desc');
       if (args.afterCommentId) {
+        // Query comment pagination cursor
         const cursor = await ref.collection('comments').doc(args.afterCommentId).get();
         if (!cursor.exists) return {post, comments: [], pageComplete: true};
         query = query.startAfter(cursor);
@@ -156,12 +167,14 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
     }
     // Shared feeds are public. An author may also view their own non-public posts,
     // with their reaction state isolated by the authenticated owner's cache key.
+    // Query community feed by visibility or author
     let query = db.collection('communityPosts');
     if (args.authorId) query = query.where('authorId', '==', args.authorId);
     const ownPosts = args.authorId === request.auth.uid;
     if (!ownPosts) query = query.where('visibility', '==', 'public');
     query = query.orderBy('createdAt', 'desc').orderBy(FieldPath.documentId(), 'desc');
     if (args.afterPostId) {
+      // Query post pagination cursor
       const cursor = await db.collection('communityPosts').doc(args.afterPostId).get();
       if (!cursor.exists) return {posts: [], pageComplete: true};
       if (cursor.data()?.visibility !== 'public' && cursor.data()?.authorId !== request.auth.uid) {
@@ -173,6 +186,7 @@ function createCloudResourceReader({database, authorize, sanitize = cloudPlainVa
     const snapshot = await query.limit(limit).get();
     const posts = await Promise.all(snapshot.docs.map(async doc => {
       const data = doc.data();
+      // Query feed viewer reactions
       const liked = data.visibility === 'public'
         ? (await doc.ref.collection('reactions').doc(request.auth.uid).get()).exists : false;
       return {...sanitize(data), postId: doc.id, isLiked: liked};

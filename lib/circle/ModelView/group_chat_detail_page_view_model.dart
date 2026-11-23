@@ -63,6 +63,7 @@ class _GroupChatDetailPageStateViewModel extends ChangeNotifier {
       owner: owner,
       readOwner: () => readSession().phoneNumber,
       changes: readRepository().cachedReadUpdates,
+      // Query local: conversation preferences
       readCached: () => readRepository().readMobileSnapshot(
         owner: owner,
         resourceType: 'preferences',

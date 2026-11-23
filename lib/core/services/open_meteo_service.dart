@@ -33,6 +33,7 @@ class OpenMeteoService {
   }) async {
     final client = _client ?? http.Client();
     try {
+      // API: Open-Meteo trail forecast
       final response = await client
           .get(
             Uri.https('api.open-meteo.com', '/v1/forecast', {

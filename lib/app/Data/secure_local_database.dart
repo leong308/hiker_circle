@@ -52,6 +52,7 @@ abstract final class SecureLocalDatabase {
           singleInstance: false,
         );
         try {
+          // Query local: encrypted SQLite schema
           await check.rawQuery('SELECT count(*) FROM sqlite_master');
         } finally {
           await check.close();
@@ -104,6 +105,7 @@ abstract final class SecureLocalDatabase {
           singleInstance: false,
         );
         try {
+          // Query local: recovered database integrity
           await check.rawQuery('SELECT count(*) FROM sqlite_master');
         } finally {
           await check.close();
@@ -119,6 +121,7 @@ abstract final class SecureLocalDatabase {
       singleInstance: false,
     );
     try {
+      // Update local: export legacy SQLite data with encryption
       await original.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
       final oldVersion = await original.getVersion();
       final quotedPath = target.path.replaceAll("'", "''");
@@ -138,6 +141,7 @@ abstract final class SecureLocalDatabase {
       singleInstance: false,
     );
     try {
+      // Query local: encrypted replacement database integrity
       final integrity = await check.rawQuery('PRAGMA integrity_check');
       if (integrity.isEmpty || integrity.first.values.first != 'ok') {
         throw StateError(

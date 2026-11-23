@@ -61,6 +61,7 @@ class AccountDeletionService extends ChangeNotifier {
     }
     _set(AccountDeletionPhase.requesting);
     try {
+      // Update cloud: delete hiker account
       final result = await _call('deleteHikerCircleAccount', {
         'expectedOwner': owner,
         'confirmation': 'DELETE',

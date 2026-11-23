@@ -127,7 +127,10 @@ function scheduledTeamLaunchCanResume(
     && teamId
     && String(team.phase || '') === 'completed'
     && !require('./team_launch_lifecycle').teamTrackingStarted(team)
-    && String(upcoming.teamHikeSessionId || '').trim() === teamId
+    && (String(upcoming.teamHikeSessionId || '').trim() === teamId
+      || (!upcoming.teamHikeSessionId && !upcoming.teamLaunchConsumed
+        && team.sourceUpcomingHikeId === sourceId
+        && ['launch_cancelled', 'invitation_expired'].includes(team.completionReason)))
     && !startedPhones.some((phone) => Boolean(String(phone || '').trim()))
   );
 }

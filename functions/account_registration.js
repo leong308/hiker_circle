@@ -21,6 +21,7 @@ function belongsToAccount(account, artifact) {
 // Old account modules and history survive deletion; reset only sign-in state.
 async function createSignupAccountIfMissing({db, auth, uid, phoneNumber, HttpsError, timestamp}) {
   const reference = db.collection('users').doc(uid);
+  // Query signup account and Auth identity
   if ((await reference.get()).exists) return false;
   try {
     const previous = await auth.getUser(uid);
@@ -28,16 +29,19 @@ async function createSignupAccountIfMissing({db, auth, uid, phoneNumber, HttpsEr
       throw new HttpsError('permission-denied', 'This account is disabled.');
     }
     // Repair an orphan left by the earlier document-only deletion behaviour.
+    // Update cloud: remove orphaned Auth identity
     await auth.deleteUser(uid);
   } catch (error) {
     if (error.code !== 'auth/user-not-found') throw error;
   }
   const now = new Date().toISOString();
   await db.runTransaction(async transaction => {
+    // Query signup account in transaction
     const current = await transaction.get(reference);
     if (current.exists) {
       throw new HttpsError('failed-precondition', 'Account setup changed. Start registration again.');
     }
+    // Update cloud: create account, modules and session
     transaction.create(reference, {
       phoneNumber, createdAt: timestamp(), createdAtLocal: now,
       role: 'hiker', isAdmin: false, isSuperAdmin: false,

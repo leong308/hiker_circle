@@ -100,6 +100,7 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     implementation("net.zetetic:sqlcipher-android:4.10.0@aar")
     implementation("androidx.sqlite:sqlite:2.5.2")
     implementation(platform("com.google.firebase:firebase-bom:34.17.0"))

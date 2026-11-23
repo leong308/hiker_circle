@@ -179,6 +179,7 @@ final class HikeArrivalSafety {
           let session = state["sessionId"] as? String, let event = state["eventId"] as? String else { return }
     acknowledgementInFlight = true; lastAcknowledgementAttempt = nowMillis()
     let reason = (state["proof"] as? [String: Any])?["arrivedAtMillis"] != nil ? "recorded_arrival" : "hiker_confirmation"
+    // Update cloud: confirm safe hike arrival
     Functions.functions().httpsCallable("confirmHikeArrivalSafety").call(["sessionId": session, "eventId": event, "reason": reason]) { [weak self] _, error in
       DispatchQueue.main.async {
         guard let self else { return }

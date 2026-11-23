@@ -199,7 +199,9 @@ class BuddyRelationships {
     required String phoneNumber,
     required String displayName,
   }) {
-    final hiker = displayName.trim().isEmpty ? 'This hiker' : displayName.trim();
+    final hiker = displayName.trim().isEmpty
+        ? 'This hiker'
+        : displayName.trim();
     return switch (requestDispositionFor(phoneNumber)) {
       BuddyRequestDisposition.available => null,
       BuddyRequestDisposition.alreadyBuddies => '$hiker is already your buddy.',
@@ -759,10 +761,12 @@ class HikerCircleFirebaseRepository {
     }
     final device = _moduleFor(session, UserModule.devices);
     await _resolvedFirestore.runTransaction((transaction) async {
+      // Query device push token registration
       final snapshot = await transaction.get(device);
       if (snapshot.data()?['boundAppInstanceId'] != session.appInstanceId) {
         return;
       }
+      // Update cloud: register device push token
       transaction.set(device, {
         'fcmTokenByAppId': {session.appInstanceId: token},
         'fcmTokenByAppIdCapabilities': {
@@ -782,6 +786,7 @@ class HikerCircleFirebaseRepository {
     }
     final device = _moduleFor(session, UserModule.devices);
     await _resolvedFirestore.runTransaction((transaction) async {
+      // Query registered device push token
       final snapshot = await transaction.get(device);
       if (!snapshot.exists) {
         return;
@@ -792,6 +797,7 @@ class HikerCircleFirebaseRepository {
       if (snapshot.data()?['boundAppInstanceId'] == session.appInstanceId) {
         updates['boundAppInstanceId'] = FieldValue.delete();
       }
+      // Update cloud: remove device push token
       transaction.update(device, updates);
     });
   }
@@ -811,6 +817,7 @@ class HikerCircleFirebaseRepository {
     final now = DateTime.now().toUtc();
     final reference = _hikeSessions.doc(activeHike.sessionId);
     await _resolvedFirestore.runTransaction((transaction) async {
+      // Query active hike monitoring state
       final snapshot = await transaction.get(reference);
       _requireSameAccount(session, uid);
       final data = snapshot.data();
@@ -822,6 +829,7 @@ class HikerCircleFirebaseRepository {
       }
       // A concurrent completion causes Firestore to retry this read; its
       // terminal status then prevents a late heartbeat from re-arming it.
+      // Update cloud: save monitoring heartbeat
       transaction.update(reference, {
         'monitoringHeartbeatAt': FieldValue.serverTimestamp(),
         'monitoringHeartbeatAtLocal': now.toIso8601String(),
@@ -848,6 +856,7 @@ class HikerCircleFirebaseRepository {
     final now = DateTime.now().toUtc();
     final reference = _hikeSessions.doc(activeHike.sessionId);
     await _resolvedFirestore.runTransaction((transaction) async {
+      // Query active hike interruption state
       final snapshot = await transaction.get(reference);
       _requireSameAccount(session, uid);
       final data = snapshot.data();
@@ -857,6 +866,7 @@ class HikerCircleFirebaseRepository {
           data?['userPhoneNumber'] != session.phoneNumber) {
         return;
       }
+      // Update cloud: record monitoring interruption
       transaction.update(reference, {
         'terminationSignalNonce':
             '${now.microsecondsSinceEpoch}_${session.phoneNumber.hashCode}',
@@ -947,6 +957,7 @@ class HikerCircleFirebaseRepository {
   /// A content hash avoids rewriting an unchanged local catalogue.
   Future<List<Trail>> loadTrails() async {
     try {
+      // Query trail list via trail_catalog
       final data = await readCloudSnapshot(
         resourceType: 'trail_catalog',
         id: 'all',
@@ -970,6 +981,7 @@ class HikerCircleFirebaseRepository {
   Stream<List<Trail>> watchTrails() async* {
     yield await loadTrails();
     if (!_firebaseBootstrapResult.isAvailable) return;
+    // Query trail list in real time
     yield* _trails
         .orderBy('isVerifiedTrail', descending: true)
         .orderBy('ratingAverage', descending: true)
@@ -1005,6 +1017,7 @@ class HikerCircleFirebaseRepository {
 
   /// Loads cached trails.
   Future<List<Trail>> _loadCachedTrails() async {
+    // Query local: offline trail list
     try {
       final rows = await _localDatabase.loadCachedEntities(
         ownerPhoneNumber: '',
@@ -1028,6 +1041,7 @@ class HikerCircleFirebaseRepository {
     );
     if (_trailCacheHash == hash) return;
     final now = DateTime.now().toUtc();
+    // Update local: cache trail list
     await _localDatabase.replaceCachedEntitySet(
       ownerPhoneNumber: '',
       entityType: 'trail',
@@ -1055,6 +1069,7 @@ class HikerCircleFirebaseRepository {
       trails.map((trail) async {
         if (!trail.weather.isStale) return;
         try {
+          // Query trail weather by coordinates
           final data = await _conditionalCache.read(
             owner: '',
             type: 'trail_weather',
@@ -1093,6 +1108,7 @@ class HikerCircleFirebaseRepository {
 
   /// Refreshes trail weather via cloud.
   Future<Trail> refreshTrailWeatherViaCloud(Trail trail) async {
+    // Query refreshed trail weather
     final data = await _conditionalCache.read(
       owner: '',
       type: 'trail_weather',
@@ -1119,6 +1135,7 @@ class HikerCircleFirebaseRepository {
         'A saved trail is required for this forecast.',
       );
     }
+    // Query trail forecast by ID
     var data = await _conditionalCache.read(
       owner: '',
       type: 'trail_weather',
@@ -1139,6 +1156,7 @@ class HikerCircleFirebaseRepository {
         TrailWeather.fromPersistence(
           Map<String, dynamic>.from(savedWeather),
         ).isStale) {
+      // Query expired trail forecast refresh
       data = await _conditionalCache.read(
         owner: '',
         type: 'trail_weather',
@@ -1163,12 +1181,14 @@ class HikerCircleFirebaseRepository {
     Trail trail,
     TrailWeatherLocation location,
   ) => TrailCheckpointWeatherRepository(
+    // Query trail checkpoint weather
     readCached: (trailId, checkpointKey) => readCloudSnapshot(
       resourceType: 'checkpoint_weather',
       resourceArgs: {'trailId': trailId, 'checkpointKey': checkpointKey},
       freshness: TrailWeather.cacheFreshness,
     ),
     fetchWeather: (trailId, checkpointKey) async {
+      // Query refreshed checkpoint forecast
       final result = await _resolvedFunctions
           .httpsCallable('fetchWeatherForTrailCheckpoint')
           .call({'trailId': trailId, 'checkpointKey': checkpointKey})
@@ -1194,6 +1214,7 @@ class HikerCircleFirebaseRepository {
       return const [];
     }
     try {
+      // Query public upcoming hike previews
       final response = await _resolvedFunctions
           .httpsCallable('listUpcomingHikePreviews')
           .call(<String, dynamic>{})
@@ -1223,6 +1244,7 @@ class HikerCircleFirebaseRepository {
     }
     final normalizedHikeId = hikeId.trim();
     try {
+      // Query upcoming hike preview by ID
       final response = await _resolvedFunctions
           .httpsCallable('listUpcomingHikePreviews')
           .call(<String, dynamic>{'hikeId': normalizedHikeId})
@@ -1250,6 +1272,7 @@ class HikerCircleFirebaseRepository {
       );
     }
     try {
+      // Query upcoming hike safety access
       final snapshot = await _upcomingHikes
           .doc(hikeId)
           .get(const GetOptions(source: Source.server))
@@ -1295,6 +1318,7 @@ class HikerCircleFirebaseRepository {
       } catch (_) {
         /* A missing device cache does not prevent a cloud read. */
       }
+      // Query local: downloaded upcoming hikes
       var data = await readMobileSnapshot(
         owner: phoneNumber,
         resourceType: 'my_upcoming_hikes',
@@ -1303,6 +1327,7 @@ class HikerCircleFirebaseRepository {
       if (!cacheOnly) {
         if (data.containsKey('hikes') || states.isNotEmpty) {
           unawaited(
+            // Query hiker's upcoming hikes
             readMobileSnapshot(
               owner: phoneNumber,
               resourceType: 'my_upcoming_hikes',
@@ -1357,6 +1382,7 @@ class HikerCircleFirebaseRepository {
       var createdFromServer = false;
       var joinedFromServer = false;
       var emissionRevision = 0;
+      var receivedLiveRoster = false;
 
       /// Computes emit.
       Future<void> emit() async {
@@ -1389,6 +1415,7 @@ class HikerCircleFirebaseRepository {
             }
           }
           results.sort((a, b) => b.departureTime.compareTo(a.departureTime));
+          if (createdFromServer && joinedFromServer) receivedLiveRoster = true;
           onSourceChanged?.call(createdFromServer && joinedFromServer);
           controller.add(results);
         } catch (error, stack) {
@@ -1396,6 +1423,7 @@ class HikerCircleFirebaseRepository {
         }
       }
 
+      // Query upcoming hikes by host
       final sub1 = _upcomingHikes
           .where('creatorPhone', isEqualTo: phoneNumber)
           .snapshots(includeMetadataChanges: true)
@@ -1408,6 +1436,7 @@ class HikerCircleFirebaseRepository {
             unawaited(emit());
           }, onError: controller.addError);
 
+      // Query upcoming hikes by participant
       final sub2 = _upcomingHikes
           .where('participantPhones', arrayContains: phoneNumber)
           .snapshots(includeMetadataChanges: true)
@@ -1426,6 +1455,7 @@ class HikerCircleFirebaseRepository {
         }
         try {
           final rows = await loadMyUpcomingHikes(phoneNumber, cacheOnly: true);
+          if (receivedLiveRoster || controller.isClosed) return;
           onSourceChanged?.call(false);
           controller.add(rows);
         } catch (_) {
@@ -1448,6 +1478,7 @@ class HikerCircleFirebaseRepository {
       return false;
     }
     try {
+      // Update cloud: join upcoming hike
       final callable = _resolvedFunctions.httpsCallable('joinUpcomingHike');
       final result = await callable.call(<String, dynamic>{'hikeId': hikeId});
       final data = result.data;
@@ -1464,6 +1495,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Update cloud: change hike join policy
       await _resolvedFunctions
           .httpsCallable('setUpcomingHikeJoinPolicy')
           .call(<String, dynamic>{
@@ -1483,6 +1515,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Update cloud: request host reminder
       final result = await _resolvedFunctions
           .httpsCallable('remindUpcomingHikeHost')
           .call(<String, dynamic>{'hikeId': hikeId.trim()});
@@ -1498,6 +1531,7 @@ class HikerCircleFirebaseRepository {
   Future<String> requestToJoinUpcomingHike({required String hikeId}) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Update cloud: submit hike join request
       final result = await _resolvedFunctions
           .httpsCallable('requestToJoinUpcomingHike')
           .call(<String, dynamic>{'hikeId': hikeId.trim()});
@@ -1533,6 +1567,7 @@ class HikerCircleFirebaseRepository {
     _throwIfFirebaseUnavailable();
     if (hikeIds.isEmpty) return {};
     try {
+      // Query pending join request counts
       final result = await _resolvedFunctions
           .httpsCallable('listUpcomingHikeJoinRequests')
           .call({'mode': 'counts', 'hikeIds': hikeIds});
@@ -1556,6 +1591,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Query paginated hike join requests
       final result = await _resolvedFunctions
           .httpsCallable('listUpcomingHikeJoinRequests')
           .call({
@@ -1579,6 +1615,7 @@ class HikerCircleFirebaseRepository {
   ) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Query hike join request details
       final result = await _resolvedFunctions
           .httpsCallable('loadUpcomingHikeJoinRequest')
           .call(<String, dynamic>{'requestId': requestId.trim()});
@@ -1603,6 +1640,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Update cloud: save host's join decision
       final result = await _resolvedFunctions
           .httpsCallable('resolveUpcomingHikeJoinRequest')
           .call(<String, dynamic>{
@@ -1634,6 +1672,7 @@ class HikerCircleFirebaseRepository {
         if (userId.trim().isNotEmpty) 'userId': userId.trim(),
         if (phoneNumber.trim().isNotEmpty) 'phoneNumber': phoneNumber.trim(),
       };
+      // Query public hiker profile
       return await _conditionalCache.read(
         owner: await _cloudReadOwner(),
         type: 'public_hiker_profile',
@@ -1654,6 +1693,7 @@ class HikerCircleFirebaseRepository {
   /// Cached conversations are display data; message reads and membership remain server checked.
   Future<List<GroupChat>> loadUserGroupChats(String phoneNumber) async {
     try {
+      // Query local: downloaded chat list
       var data = await readMobileSnapshot(
         owner: phoneNumber,
         resourceType: 'chat_list',
@@ -1662,6 +1702,7 @@ class HikerCircleFirebaseRepository {
       final legacy = await _loadCachedGroupChats(phoneNumber);
       if (!data.containsKey('chats') && legacy.isNotEmpty) {
         unawaited(
+          // Query hiker's conversations
           readMobileSnapshot(
             owner: phoneNumber,
             resourceType: 'chat_list',
@@ -1694,6 +1735,7 @@ class HikerCircleFirebaseRepository {
       }.contains(error.code)) {
         rethrow;
       }
+      // Query local: cached chat list owner
       await readMobileSnapshot(
         owner: phoneNumber,
         resourceType: 'chat_list',
@@ -1717,6 +1759,7 @@ class HikerCircleFirebaseRepository {
       return null;
     }
     try {
+      // Query group chat by ID
       final snapshot = await _groupChats.doc(chatId.trim()).get();
       final data = snapshot.data();
       if (!snapshot.exists || data == null) {
@@ -1741,6 +1784,7 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
     }
+    // Query group chats by participant
     yield* _groupChats
         .where('participantPhones', arrayContains: phoneNumber)
         .orderBy('createdAtLocal', descending: true)
@@ -1809,6 +1853,7 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return Stream<List<GroupChat>>.value(const []);
     }
+    // Query group chats by host
     return _groupChats
         .where('creatorPhone', isEqualTo: phoneNumber.trim())
         .snapshots()
@@ -1834,6 +1879,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Update cloud: name hike group chat
       final callable = _resolvedFunctions.httpsCallable(
         'nameFormedHikeGroupChat',
       );
@@ -1855,6 +1901,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Update cloud: mark naming prompt seen
       final result = await _resolvedFunctions
           .httpsCallable('markFormedHikeGroupNamingPromptShown')
           .call<Map<String, dynamic>>(<String, dynamic>{
@@ -1883,6 +1930,7 @@ class HikerCircleFirebaseRepository {
       );
     }
     try {
+      // Update cloud: open direct chat
       final response = await _resolvedFunctions
           .httpsCallable('openDirectChat')
           .call<Map<String, dynamic>>({
@@ -1967,6 +2015,7 @@ class HikerCircleFirebaseRepository {
     Map<String, dynamic> request, {
     bool force = false,
   }) async {
+    // Query public hiker profiles
     final payload = await _conditionalCache.read(
       owner: await _cloudReadOwner(),
       type: 'public_profiles',
@@ -2017,24 +2066,59 @@ class HikerCircleFirebaseRepository {
       session: session,
       force: true,
     );
-    final raw = relationships.buddyPhoneNumbers;
+    return _resolveBuddyProfiles(session, relationships.buddyPhoneNumbers);
+  }
+
+  /// Load accepted buddy profiles in batches for the profile list.
+  Future<List<TeamHikeBuddy>> loadBuddyProfiles({
+    required AppSession session,
+    bool force = false,
+  }) async {
+    // Query accepted buddies
+    final social = await readMobileSnapshot(
+      owner: session.phoneNumber,
+      resourceType: 'social',
+      force: force,
+    );
+    if (social['buddyPhoneNumbers'] is! List) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Unable to load your buddies.',
+      );
+    }
+    return _resolveBuddyProfiles(
+      session,
+      _buddyRelationshipsFromData(social).buddyPhoneNumbers,
+      force: force,
+    );
+  }
+
+  Future<List<TeamHikeBuddy>> _resolveBuddyProfiles(
+    AppSession session,
+    Set<String> buddyPhones, {
+    bool force = false,
+  }) async {
     final ownKey = TeamHikeIdentity.key(session.phoneNumber);
-    final phones = raw
-        .whereType<String>()
-        .map((phone) => phone.trim())
-        .where((phone) => RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone))
-        .where((phone) => TeamHikeIdentity.key(phone) != ownKey)
-        .toSet()
-        .toList()
-      ..sort();
+    final phones =
+        buddyPhones
+            .map((phone) => phone.trim())
+            .where((phone) => RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone))
+            .where((phone) => TeamHikeIdentity.key(phone) != ownKey)
+            .toSet()
+            .toList()
+          ..sort();
     final profiles = <Map<String, dynamic>>[];
     for (var offset = 0; offset < phones.length; offset += 50) {
-      profiles.addAll(await _getPublicProfiles({
-        'phoneNumbers': phones.sublist(
-          offset,
-          math.min(offset + 50, phones.length),
+      profiles.addAll(
+        await _getPublicProfiles(
+          {
+            'phoneNumbers': phones.sublist(
+              offset,
+              math.min(offset + 50, phones.length),
+            ),
+          },
+          force: force,
         ),
-      }));
+      );
     }
     final accepted = {
       for (final phone in phones) TeamHikeIdentity.key(phone): phone,
@@ -2099,6 +2183,7 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return Stream.value(const []);
     }
+    // Query incoming and outgoing buddy requests
     return _moduleFor(session, UserModule.social).snapshots().map((snapshot) {
       final raw = snapshot.data()?['buddyRequestsIncoming'];
       return _buddyRequestsFromRaw(raw);
@@ -2113,6 +2198,7 @@ class HikerCircleFirebaseRepository {
     if (force) {
       _throwIfFirebaseUnavailable();
       // A decision to send a request must not use a stale offline fallback.
+      // Query current buddy relationships
       final snapshot = await _moduleFor(
         session,
         UserModule.social,
@@ -2143,10 +2229,8 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return Stream.value(_buddyRelationshipsFromData(const {}));
     }
-    return _moduleFor(
-      session,
-      UserModule.social,
-    ).snapshots().map(
+    // Query buddy relationship changes
+    return _moduleFor(session, UserModule.social).snapshots().map(
       (snapshot) => _buddyRelationshipsFromData(snapshot.data() ?? const {}),
     );
   }
@@ -2203,6 +2287,19 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Removes an accepted buddy from both accounts.
+  Future<void> removeBuddy({
+    required AppSession session,
+    required String buddyPhoneNumber,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    await _manageBuddyRequest(
+      action: 'remove',
+      phoneNumber: buddyPhoneNumber.trim(),
+      owner: session.phoneNumber,
+    );
+  }
+
   /// Declines buddy request.
   Future<void> declineBuddyRequest({
     required AppSession session,
@@ -2229,6 +2326,7 @@ class HikerCircleFirebaseRepository {
     required String owner,
   }) async {
     try {
+      // Update cloud: update buddy relationship
       await _resolvedFunctions.httpsCallable('manageBuddyRequest').call({
         'action': action,
         'phoneNumber': phoneNumber,
@@ -2261,6 +2359,7 @@ class HikerCircleFirebaseRepository {
     required bool enabled,
   }) async {
     _throwIfFirebaseUnavailable();
+    // Update cloud: save chat notification preferences
     await _moduleFor(session, UserModule.preferences).set({
       'groupChatNotificationsEnabled': enabled,
       'groupChatNotificationSettingsUpdatedAt': FieldValue.serverTimestamp(),
@@ -2293,6 +2392,7 @@ class HikerCircleFirebaseRepository {
         'Select a valid timezone before saving.',
       );
     }
+    // Update cloud: save preferred time zone
     await _moduleFor(session, UserModule.preferences).set({
       'preferredTimeZone': preferredTimeZone.trim(),
       'preferredTimeZoneUpdatedAt': FieldValue.serverTimestamp(),
@@ -2309,6 +2409,7 @@ class HikerCircleFirebaseRepository {
     required Map<String, dynamic> preferences,
   }) async {
     _throwIfFirebaseUnavailable();
+    // Update cloud: save team safety preferences
     await _moduleFor(session, UserModule.safety).set({
       'teamSafetyPreferences': preferences,
       'teamSafetyPreferencesUpdatedAt': FieldValue.serverTimestamp(),
@@ -2323,6 +2424,7 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
   }) async {
     try {
+      // Query team safety preferences
       final data = await readMobileSnapshot(
         owner: session.phoneNumber,
         resourceType: 'preferences',
@@ -2376,6 +2478,7 @@ class HikerCircleFirebaseRepository {
     if (normalizedChatId.isEmpty) {
       return;
     }
+    // Update cloud: update pinned chats
     await _moduleFor(session, UserModule.preferences).set({
       'pinnedChats': {
         normalizedChatId: pinned
@@ -2395,6 +2498,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Update cloud: remove chat for hiker
       await _resolvedFunctions.httpsCallable('deleteChatForUser').call({
         'chatId': chatId.trim(),
         'expectedOwner': session.phoneNumber,
@@ -2444,6 +2548,7 @@ class HikerCircleFirebaseRepository {
       );
     }
     try {
+      // Update cloud: request group chat reminder
       final response = await _resolvedFunctions
           .httpsCallable('sendChatReminder')
           .call<Map<String, dynamic>>({
@@ -2553,6 +2658,7 @@ class HikerCircleFirebaseRepository {
       final reference = _resolvedStorage.ref(
         'group_chats/$chatId/attachments/$objectName',
       );
+      // Update cloud: upload chat attachment
       final upload = reference.putData(
         bytes,
         SettableMetadata(
@@ -2570,6 +2676,7 @@ class HikerCircleFirebaseRepository {
         await upload.cancel();
         rethrow;
       }
+      // Query chat attachment URL
       return ChatAttachment(
         type: type,
         url: await reference.getDownloadURL().timeout(
@@ -2629,6 +2736,7 @@ class HikerCircleFirebaseRepository {
       final reference = _resolvedStorage.ref(
         'profile_photos/$userId/$objectName',
       );
+      // Update cloud: upload profile photo
       await reference.putData(
         bytes,
         SettableMetadata(
@@ -2639,6 +2747,7 @@ class HikerCircleFirebaseRepository {
           },
         ),
       );
+      // Query profile photo URL
       return await reference.getDownloadURL();
     } on FirebaseAuthException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
@@ -2667,6 +2776,7 @@ class HikerCircleFirebaseRepository {
       return;
     }
     try {
+      // Update cloud: mark chat message seen
       await _groupChatMessagesFor(chatId).doc(messageId).update({
         'seenBy': FieldValue.arrayUnion([phoneNumber]),
       });
@@ -2890,6 +3000,7 @@ class HikerCircleFirebaseRepository {
       return null;
     }
     try {
+      // Query scheduled hike linked to chat
       final doc = await _upcomingHikes.doc(hikeSessionId).get();
       if (!doc.exists) {
         return null;
@@ -2906,7 +3017,7 @@ class HikerCircleFirebaseRepository {
   }
 
   /// Cancels upcoming hike.
-  Future<void> cancelUpcomingHike({
+  Future<bool> cancelUpcomingHike({
     required String hikeId,
     bool withdrawSelf = false,
     String? hazardId,
@@ -3017,6 +3128,7 @@ class HikerCircleFirebaseRepository {
             hikeId =
                 await (request != null
                         ? request(payload)
+                        // Update cloud: upload queued hike plan
                         : _resolvedFunctions
                               .httpsCallable('scheduleUpcomingHike')
                               .call<Map<String, dynamic>>(payload)
@@ -3053,6 +3165,7 @@ class HikerCircleFirebaseRepository {
           }
           _requireSameAccount(session, uid);
           final request = _reminderPreferenceRequest;
+          // Update cloud: save hike reminder preference
           await (request != null
                   ? request(hikeId, preference)
                   : _upcomingHikes
@@ -3118,6 +3231,7 @@ class HikerCircleFirebaseRepository {
       return const HikeReminderPreference();
     }
     try {
+      // Query planned hike reminder preference
       final snapshot = await _upcomingHikes
           .doc(hikeId.trim())
           .collection('reminderPreferences')
@@ -3200,6 +3314,7 @@ class HikerCircleFirebaseRepository {
     }
 
     try {
+      // Update cloud: start active hike session
       final response = await _resolvedFunctions
           .httpsCallable('startActiveHikeSession')
           .call<Map<String, dynamic>>({
@@ -3238,6 +3353,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     try {
+      // Update cloud: send emergency contact location notices
       final response = await _resolvedFunctions
           .httpsCallable('notifyEmergencyContactsOfLiveLocation')
           .call<Map<String, dynamic>>({
@@ -3292,6 +3408,7 @@ class HikerCircleFirebaseRepository {
     /// Computes submit.
     Future<TeamHikeSession> submit(String key) async =>
         _teamHikeSessionFromCallable(
+          // Update cloud: create team hike session
           await _callTeamHikeFunction(
             callableName: 'createTeamHikeSession',
             data: {
@@ -3323,6 +3440,7 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
       return Stream<TeamHikeSession?>.value(null);
     }
+    // Query live team hike by ID
     return _teamHikeSessions
         .doc(teamHikeSessionId)
         .snapshots(includeMetadataChanges: true)
@@ -3342,6 +3460,7 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable || normalizedPhone.isEmpty) {
       return Stream<List<TeamHikeSession>>.value(const []);
     }
+    // Query team readiness by participant
     return _teamHikeSessions
         .where('participantPhoneNumbers', arrayContains: normalizedPhone)
         .snapshots(includeMetadataChanges: true)
@@ -3373,6 +3492,7 @@ class HikerCircleFirebaseRepository {
     required String phoneNumber,
   }) async {
     _throwIfFirebaseUnavailable();
+    // Query team session for upcoming hike
     final snapshot = await _teamHikeSessions
         .where('participantPhoneNumbers', arrayContains: phoneNumber.trim())
         .get(const GetOptions(source: Source.server))
@@ -3473,6 +3593,7 @@ class HikerCircleFirebaseRepository {
       );
     }
     try {
+      // Update cloud: reconcile active hike session
       final response = await _resolvedFunctions
           .httpsCallable('ensureActiveHikeSessionInCloud')
           .call<Map<String, dynamic>>({
@@ -3819,6 +3940,7 @@ class HikerCircleFirebaseRepository {
         if (points.isEmpty || !_accountStillMatches(session, uid)) {
           break;
         }
+        // Update cloud: upload pending GPS footprints
         final response = await _resolvedFunctions
             .httpsCallable('appendHikeFootprints')
             .call({
@@ -3899,6 +4021,7 @@ class HikerCircleFirebaseRepository {
         continue;
       }
       try {
+        // Update cloud: submit queued check-in
         await _resolvedFunctions
             .httpsCallable('recordActiveHikeCheckIn')
             .call(operation.payload)
@@ -3944,6 +4067,7 @@ class HikerCircleFirebaseRepository {
       return;
     }
     final now = DateTime.now().toUtc();
+    // Update cloud: record path deviation alert
     await _hikeSessions.doc(activeHike.sessionId).set({
       'lastPathDeviation': {
         'coordinate': coordinate.toFirestore(),
@@ -4336,6 +4460,7 @@ class HikerCircleFirebaseRepository {
       summary: summary,
     );
     try {
+      // Update cloud: complete active hike
       final response = await waitForHikeCompletion(
         _resolvedFunctions
             .httpsCallable(
@@ -4431,6 +4556,7 @@ class HikerCircleFirebaseRepository {
       );
     }
     try {
+      // Update cloud: submit trail rating
       await _resolvedFunctions.httpsCallable('submitCompletedHikeRating').call({
         'sessionId': sessionId.trim(),
         'trailId': trailId.trim(),
@@ -4596,6 +4722,7 @@ class HikerCircleFirebaseRepository {
     required bool liked,
   }) async {
     final uid = _communityAccount(this, session);
+    // Update cloud: update community post like
     final result = await _communityCall(this, 'setCommunityPostLike', {
       'postId': postId,
       'liked': liked,
@@ -4623,6 +4750,7 @@ class HikerCircleFirebaseRepository {
     String? commentId,
   }) async {
     final uid = _communityAccount(this, session);
+    // Update cloud: add community comment
     final result = await _communityCall(this, 'writeCommunityComment', {
       'postId': postId,
       'commentId': commentId ?? _communityCommentsFor(postId).doc().id,
@@ -4657,6 +4785,7 @@ class HikerCircleFirebaseRepository {
     required String postId,
   }) async {
     final uid = _communityAccount(this, session);
+    // Update cloud: delete community post
     await _communityCall(this, 'deleteCommunityPost', {'postId': postId});
     _requireSameAccount(session, uid);
     try {
@@ -4715,6 +4844,7 @@ class HikerCircleFirebaseRepository {
         'Sign in again to view safety reports.',
       );
     }
+    // Query live admin hazard reports
     await for (final snapshot in _hazardReports.snapshots()) {
       if (!_accountStillMatches(session, uid)) {
         yield const [];
@@ -4740,6 +4870,7 @@ class HikerCircleFirebaseRepository {
         'This safety report is unavailable.',
       );
     }
+    // Query latest hazard report updates
     await for (final snapshot
         in _hazardReports
             .doc(hazardId)
@@ -4762,9 +4893,16 @@ class HikerCircleFirebaseRepository {
   /// Loads admin community posts.
   Future<List<Map<String, dynamic>>> loadAdminCommunityPosts({
     required AppSession session,
+    bool historyOnly = false,
   }) {
     _throwIfAdminUnavailable(session);
-    return _readCommunityPosts(this, session: session, limit: 50, admin: true);
+    return _readCommunityPosts(
+      this,
+      session: session,
+      limit: 50,
+      admin: true,
+      historyOnly: historyOnly,
+    );
   }
 
   /// Loads admin dashboard analytics.
@@ -4774,6 +4912,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfAdminUnavailable(session);
     try {
+      // Query admin dashboard statistics
       final response = await _resolvedFunctions
           .httpsCallable(
             'getAdminDashboardAnalytics',
@@ -4799,6 +4938,7 @@ class HikerCircleFirebaseRepository {
   Future<List<Trail>> loadAdminTrails({required AppSession session}) async {
     _throwIfAdminUnavailable(session);
     try {
+      // Query trail list for admins
       final snapshot = await _trails
           .orderBy('isVerifiedTrail', descending: true)
           .orderBy('ratingAverage', descending: true)
@@ -4914,6 +5054,7 @@ class HikerCircleFirebaseRepository {
     List<Map<String, dynamic>> rows;
     var fresh = false;
     try {
+      // Query hazards for a trail
       final data = await readCloudSnapshot(
         resourceType: 'trail_hazards',
         resourceArgs: {'trailId': trailId},
@@ -4928,6 +5069,7 @@ class HikerCircleFirebaseRepository {
       fresh = data['cacheFallback'] != true;
     } catch (_) {
       try {
+        // Query hazard reports by trail ID
         final cached = await _hazardReports
             .where('trailId', isEqualTo: trailId)
             .get(const GetOptions(source: Source.cache))
@@ -4972,6 +5114,7 @@ class HikerCircleFirebaseRepository {
     if (!session.isAdmin || !_firebaseBootstrapResult.isAvailable) {
       return Stream.value(false);
     }
+    // Query live pending trail requests
     return _resolvedFirestore
         .collection('trailRequests')
         .where('status', isEqualTo: 'pending')
@@ -4986,6 +5129,7 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
   }) async {
     _throwIfAdminUnavailable(session);
+    // Query pending trail requests for review
     final query = await _resolvedFirestore
         .collection('trailRequests')
         .where('status', isEqualTo: 'pending')
@@ -5008,6 +5152,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfAdminUnavailable(session);
     final ref = _resolvedFirestore.collection('trailRequests').doc(requestId);
+    // Query recorded request and route chunks
     final meta = await ref.get();
     final chunks = await ref.collection('routeChunks').orderBy('index').get();
     final raw = <Map<String, dynamic>>[
@@ -5038,6 +5183,7 @@ class HikerCircleFirebaseRepository {
     required String note,
   }) async {
     _throwIfAdminUnavailable(session);
+    // Update cloud: reject recorded trail request
     await _resolvedFirestore.collection('trailRequests').doc(requestId).update({
       'status': 'rejected',
       'reviewNote': note.trim(),
@@ -5127,6 +5273,7 @@ class HikerCircleFirebaseRepository {
         'Your hike completion must sync before this route can be submitted. Your GPS track remains saved on this phone.',
       );
     }
+    // Update cloud: open recorded trail request
     final data = await _recordedTrailCallable('beginRecordedTrailRequest', {
       'sessionId': completion.sessionId,
       'pointCount': points.length,
@@ -5148,6 +5295,7 @@ class HikerCircleFirebaseRepository {
       _requireSameAccount(session, uid);
       final batch = _resolvedFirestore.batch();
       for (var i = offset; i < raw.length && i < offset + 5000; i += 500) {
+        // Update cloud: upload recorded route chunks
         batch.set(ref.collection('routeChunks').doc('${i ~/ 500}'), {
           'index': i ~/ 500,
           'points': raw.sublist(i, math.min(i + 500, raw.length)),
@@ -5157,6 +5305,7 @@ class HikerCircleFirebaseRepository {
       onProgress?.call(math.min(offset + 5000, raw.length) / raw.length);
     }
     _requireSameAccount(session, uid);
+    // Update cloud: finalize recorded trail request
     await _recordedTrailCallable('finalizeRecordedTrailRequest', {
       'requestId': id,
     }, timeoutSeconds: 120);
@@ -5191,6 +5340,7 @@ class HikerCircleFirebaseRepository {
           ? null
           : _resolvedFirestore.collection('trailRequests').doc(trailRequestId);
       if (requestReference != null) {
+        // Query trail request and current geometry
         final request = await transaction.get(requestReference);
         if (!request.exists || request.data()?['status'] != 'pending') {
           throw const HikerCircleFirebaseRepositoryException(
@@ -5238,6 +5388,7 @@ class HikerCircleFirebaseRepository {
         } else {
           metadata = geometry.metadata(geometryReference.path, now);
           writeGeometry = true;
+          // Update cloud: save trail geometry and chunks
           transaction.set(geometryReference, geometry.document(now));
         }
       } else {
@@ -5252,6 +5403,7 @@ class HikerCircleFirebaseRepository {
         });
       }
       if (requestReference != null) {
+        // Update cloud: approve request and publish trail
         transaction.update(requestReference, {
           'status': 'approved',
           'publishedTrailId': trail.trailId,
@@ -5321,14 +5473,17 @@ class HikerCircleFirebaseRepository {
             'uploadedByAdminPhoneNumber': session.phoneNumber,
           },
         );
+        // Update cloud: upload trail cover image
         await reference.putData(image.bytes, metadata);
         uploadedReferences.add(reference);
+        // Query trail cover URL
         downloadUrls.add(await reference.getDownloadURL());
       }
       return downloadUrls;
     } on FirebaseException catch (error) {
       for (final reference in uploadedReferences) {
         try {
+          // Update cloud: delete failed trail cover upload
           await reference.delete();
         } catch (_) {
           // Cleanup is best effort if a later image fails.
@@ -5340,6 +5495,7 @@ class HikerCircleFirebaseRepository {
     } catch (error) {
       for (final reference in uploadedReferences) {
         try {
+          // Update cloud: clean up remaining cover uploads
           await reference.delete();
         } catch (_) {
           // Cleanup is best effort if a later image fails.
@@ -5364,6 +5520,7 @@ class HikerCircleFirebaseRepository {
     }
 
     try {
+      // Update cloud: delete trail
       await _trails.doc(trail.trailId).delete();
     } on FirebaseException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
@@ -5378,6 +5535,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfAdminUnavailable(session);
     try {
+      // Query recent SOS alerts
       final snapshot = await _sosAlerts
           .orderBy('triggeredAtLocal', descending: true)
           .limit(100)
@@ -5396,6 +5554,7 @@ class HikerCircleFirebaseRepository {
   Future<List<Map<String, dynamic>>> loadMoreAdminCommunityPosts({
     required AppSession session,
     required String afterPostId,
+    bool historyOnly = false,
   }) {
     _throwIfAdminUnavailable(session);
     return _readCommunityPosts(
@@ -5404,6 +5563,7 @@ class HikerCircleFirebaseRepository {
       limit: 50,
       afterPostId: afterPostId,
       admin: true,
+      historyOnly: historyOnly,
     );
   }
 
@@ -5415,6 +5575,7 @@ class HikerCircleFirebaseRepository {
     final uid = _communityAccount(this, session);
     if (!_isValidCloudDocumentId(postId)) return null;
     try {
+      // Query community post by ID
       final result = await readCloudSnapshot(
         resourceType: 'community_post',
         resourceArgs: {'postId': postId},
@@ -5475,6 +5636,7 @@ class HikerCircleFirebaseRepository {
       return null;
     }
     try {
+      // Query community post and viewer reaction
       final snapshot = await _communityPosts
           .doc(postId)
           .get()
@@ -5576,6 +5738,7 @@ class HikerCircleFirebaseRepository {
         'Only existing post photos can be retained.',
       );
     }
+    // Update cloud: save community post edits
     final result = await _communityCall(this, 'editCommunityPost', {
       'postId': original['postId'],
       'caption': caption,
@@ -5610,6 +5773,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfAdminUnavailable(session);
     final uid = _communityAccount(this, session);
+    // Update cloud: change post moderation status
     await _communityCall(this, 'moderateCommunityPost', {
       'postId': postId,
       'status': moderationStatus.trim().toLowerCase(),
@@ -5632,6 +5796,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfAdminUnavailable(session);
     final uid = _communityAccount(this, session);
+    // Update cloud: remove reported comment
     await _communityCall(this, 'removeCommunityComment', {
       'postId': postId,
       'commentId': commentId,
@@ -5743,6 +5908,7 @@ class HikerCircleFirebaseRepository {
         if (!closed) output.addError(error, stack);
       }
 
+      // Query live achievement definitions
       final definitionSubscription = _achievements
           .orderBy('sortOrder')
           .snapshots()
@@ -5757,6 +5923,7 @@ class HikerCircleFirebaseRepository {
               ),
             );
           }, onError: report);
+      // Query hiker's achievement progress
       final awardSubscription = _userAchievements
           .where('userId', isEqualTo: uid)
           .snapshots()
@@ -5808,6 +5975,7 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
   }) async {
     try {
+      // Query signed-in hiker's progress
       final data = await readMobileSnapshot(
         owner: session.phoneNumber,
         resourceType: 'achievement_progress',
@@ -5823,6 +5991,7 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
   }) async {
     try {
+      // Query achievement definitions and awards
       final data = await readMobileSnapshot(
         owner: session.phoneNumber,
         resourceType: 'achievement_progress',
@@ -5863,6 +6032,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     try {
       final selectedPeriod = period == 'year' ? 'year' : 'month';
+      // Query achievement leaderboard
       final data = await _conditionalCache.read(
         owner: await _cloudReadOwner(),
         type: 'achievement_leaderboard',
@@ -5888,6 +6058,7 @@ class HikerCircleFirebaseRepository {
   }
 
   /// Watches common team snapshot versions so open history pages refresh after another member finishes.
+  // Query team hike history changes
   Stream<String> watchTeamHistoryChanges(String phone) => _teamHikeSessions
       .where('participantPhoneNumbers', arrayContains: phone)
       .snapshots()
@@ -5943,6 +6114,7 @@ class HikerCircleFirebaseRepository {
             NetworkReachabilityState.offline;
     final verifyReceipts = beforeRead.isNotEmpty && !cacheOnly && online;
     Future<Map<String, dynamic>> readHistory(bool localOnly) =>
+        // Query completed hike history
         _conditionalCache.read(
           owner: owner,
           type: 'hike_history_list',
@@ -6035,6 +6207,7 @@ class HikerCircleFirebaseRepository {
       );
     }
     final owner = await _historyCacheOwner();
+    // Query selected hike history details
     final data = await _conditionalCache.read(
       owner: owner,
       type: 'hike_history_detail',
@@ -6056,6 +6229,7 @@ class HikerCircleFirebaseRepository {
     }
 
     try {
+      // Update cloud: seed achievement definitions
       await _resolvedFunctions
           .httpsCallable('manageAchievementDefinition')
           .call({'action': 'seed'})
@@ -6069,6 +6243,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfAdminUnavailable(session);
     await ensureAchievementSeeds();
+    // Query admin achievement definitions
     final snapshot = await _achievements.orderBy('sortOrder').get();
     return snapshot.docs
         .map((document) => {'achievementId': document.id, ...document.data()})
@@ -6084,6 +6259,7 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfAdminUnavailable(session);
     try {
+      // Update cloud: save achievement definition
       final response = await _resolvedFunctions
           .httpsCallable('manageAchievementDefinition')
           .call<Map<String, dynamic>>({
@@ -6116,6 +6292,7 @@ class HikerCircleFirebaseRepository {
       return;
     }
     try {
+      // Update cloud: change achievement active status
       await _resolvedFunctions
           .httpsCallable('manageAchievementDefinition')
           .call({
@@ -6495,6 +6672,7 @@ class HikerCircleFirebaseRepository {
         'capturedAtMillis': value.capturedAt!.toUtc().millisecondsSinceEpoch,
     };
     try {
+      // Update cloud: report nearby SOS incident
       final response = await _resolvedFunctions
           .httpsCallable('forwardNearbySosIncident')
           .call<Map<String, dynamic>>({
@@ -6560,6 +6738,7 @@ class HikerCircleFirebaseRepository {
     Map<String, dynamic> data = const {},
   }) async {
     _throwIfFirebaseUnavailable();
+    // Update cloud: update team hike session
     final response = await _callTeamHikeFunction(
       callableName: 'manageTeamHikeSession',
       data: {'action': action, 'teamHikeSessionId': teamHikeSessionId, ...data},
@@ -6614,6 +6793,7 @@ class HikerCircleFirebaseRepository {
           ..sort((left, right) => left.pinnedAt.compareTo(right.pinnedAt));
     final storedManualPins = _evenlyDownsample(validManualPins, maxPoints: 250);
 
+    // Update cloud: save recorded hike route
     await _hikeRouteCaptures.doc(activeHike.sessionId).set({
       'sessionId': activeHike.sessionId,
       'userId': _userIdFor(session),

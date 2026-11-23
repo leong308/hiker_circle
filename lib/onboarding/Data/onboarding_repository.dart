@@ -82,6 +82,7 @@ class OnboardingRepository {
     bool cacheOnly = false,
   }) async {
     try {
+      // Query onboarding profile
       final data = await _cache.read(
         owner: session.phoneNumber,
         type: 'profile',
@@ -119,6 +120,7 @@ class OnboardingRepository {
     _ensureFirebaseAvailable();
     try {
       final now = DateTime.now().toUtc();
+      // Update cloud: save onboarding profile
       await _userDocument(session).set({
         'profile': profile.toFirestore(),
         'profileSetupCompleted': true,
@@ -137,6 +139,7 @@ class OnboardingRepository {
     try {
       final userDocument = _userDocument(session);
       await _resolvedFirestore.runTransaction((transaction) async {
+        // Query onboarding profile and emergency contacts
         final snapshot = await transaction.get(userDocument);
         final sosSnapshot = await transaction.get(
           userModuleDocument(userDocument.parent.parent!, UserModule.sos),
@@ -170,6 +173,7 @@ class OnboardingRepository {
         }
 
         final now = DateTime.now().toUtc();
+        // Update cloud: save completed onboarding profile
         transaction.set(userDocument, {
           'requiresOnboarding': false,
           'onboardingCompletedAt': FieldValue.serverTimestamp(),

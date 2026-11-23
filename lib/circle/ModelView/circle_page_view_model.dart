@@ -80,6 +80,7 @@ class _CirclePageStateViewModel extends ChangeNotifier {
       owner: owner,
       readOwner: () => readSession().phoneNumber,
       changes: readHikerCircleRepository().cachedReadUpdates,
+      // Query local: chat display preferences
       readCached: () => readHikerCircleRepository().readMobileSnapshot(
         owner: owner,
         resourceType: 'preferences',
@@ -531,7 +532,7 @@ class _CirclePageStateViewModel extends ChangeNotifier {
   )
   effectPresentOpenGroupChatEffect1;
 
-  late final Future<void> Function(bool flags)
+  late final Future<void> Function()
   effectPresentOpenCommunityModerationEffect1;
 
   final Set<String> stateDeletingPostIds = {};
@@ -683,9 +684,9 @@ class _CirclePageStateViewModel extends ChangeNotifier {
   }
 
   /// Opens community moderation.
-  Future<void> commandOpenCommunityModeration({bool flags = false}) async {
+  Future<void> commandOpenCommunityModeration() async {
     if (!commandIsAdmin) return;
-    await effectPresentOpenCommunityModerationEffect1(flags);
+    await effectPresentOpenCommunityModerationEffect1();
     if (mounted) await commandLoadCommunityPosts();
   }
 
@@ -902,6 +903,7 @@ class _CircleSettingsPageStateViewModel extends ChangeNotifier {
       owner: owner,
       readOwner: () => readSession().phoneNumber,
       changes: readRepository().cachedReadUpdates,
+      // Query local: group chat notification preference
       readCached: () => readRepository().readMobileSnapshot(
         owner: owner,
         resourceType: 'preferences',

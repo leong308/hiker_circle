@@ -61,7 +61,7 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
   }
 
   /// Hides a cancelled plan locally before any network attempt, retaining a replayable intent.
-  Future<void> _queuePlanCancellation(
+  Future<bool> _queuePlanCancellation(
     String hikeId,
     bool withdrawSelf,
     String? hazardId,
@@ -92,6 +92,7 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
     final intent = <String, Object?>{
       'hikeId': resolvedId,
       'withdrawSelf': withdrawSelf,
+      'cancelledAtLocal': DateTime.now().toUtc().toIso8601String(),
       if (archive) 'archiveAsExpired': true,
       if (archive && state?.scheduleSyncPending == true)
         'uploadCancelledHistory': true,
@@ -112,6 +113,41 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
         'joinPolicy': state.joinPolicy,
       },
     };
+    if (withdrawSelf &&
+        (_firebaseBootstrapResult.isAvailable || _syncRequest != null) &&
+        NetworkReachabilityService.instance.latest.state !=
+            NetworkReachabilityState.offline) {
+      try {
+        // Update cloud: withdraw from the shared hike
+        final result =
+            await _syncWrite('cancelUpcomingHike', session.phoneNumber, {
+              'hikeId': resolvedId,
+              'withdrawSelf': true,
+              'cancelledAtLocal': intent['cancelledAtLocal'],
+              if (hazardId != null) 'hazardId': hazardId,
+            });
+        if (result['withdrawn'] != true) {
+          throw const HikerCircleFirebaseRepositoryException(
+            'The withdrawal was not confirmed. Refresh the hike and try again.',
+          );
+        }
+        await _localDatabase.removeWithdrawnPlan(
+          owner: session.phoneNumber,
+          hikeId: resolvedId,
+        );
+        await _invalidateReadModel(session.phoneNumber, 'my_upcoming_hikes');
+        HikerCircleFirebaseRepository._planningChanges.add(session.phoneNumber);
+        return true;
+      } on FirebaseFunctionsException catch (error) {
+        if (!{'unavailable', 'deadline-exceeded'}.contains(error.code)) {
+          throw HikerCircleFirebaseRepositoryException(
+            error.message ?? 'Unable to leave this hike.',
+          );
+        }
+      } on TimeoutException {
+        // Retry the same withdrawal on reconnect.
+      }
+    }
     await _localDatabase.queuePlannedHikeCancellation(
       owner: session.phoneNumber,
       hikeId: resolvedId,
@@ -122,6 +158,7 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
     if (_firebaseBootstrapResult.isAvailable) {
       unawaited(_flushPlanCancellations(session).catchError((Object _) {}));
     }
+    return false;
   }
 
   /// Cloud lifecycle decisions override a pending cancellation if the hike already started.
@@ -147,6 +184,7 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
             : 'upcoming_${crypto.sha256.convert(utf8.encode('$owner:$creationKey')).toString().substring(0, 40)}';
         var cancellationCommitted = false;
         try {
+          // Update cloud: submit queued cancellation or withdrawal
           final cancellation = await _syncWrite('cancelUpcomingHike', owner, {
             'hikeId': cloudId,
             'withdrawSelf': intent['withdrawSelf'],
@@ -174,6 +212,7 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
               'offlineRecovery': {'createdAtLocal': intent['createdAtLocal']},
             };
             final request = _scheduleHikeRequest;
+            // Update cloud: retry queued hike scheduling
             final confirmedId =
                 await (request != null
                         ? request(payload)
@@ -198,12 +237,21 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
               cloudHikeId: confirmedId,
             );
           }
-          final acknowledged = await _localDatabase.clearLocalPreferenceIfValue(
-            ownerPhoneNumber: owner,
-            key: entry.key,
-            expectedValue: entry.value,
+          final rejoined =
+              intent['withdrawSelf'] == true &&
+              cancellation['rejoined'] == true;
+          if (intent['withdrawSelf'] == true &&
+              cancellation['withdrawn'] != true &&
+              !rejoined) {
+            throw StateError('Withdrawal was not confirmed.');
+          }
+          final acknowledged = await _localDatabase.finishPlannedCancellation(
+            owner: owner,
+            preferenceKey: entry.key,
+            intent: intent,
+            restore: rejoined,
           );
-          if (acknowledged) synced.add(cloudId);
+          if (acknowledged && !rejoined) synced.add(cloudId);
           await _invalidateReadModel(owner, 'my_upcoming_hikes');
           await _conditionalCache.invalidateTypes(
             owner: owner,
@@ -222,18 +270,12 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
           }.contains(error.code)) {
             rethrow;
           }
-          await _localDatabase.saveLocalPreference(
-            ownerPhoneNumber: owner,
-            key: entry.key,
-            value: null,
+          await _localDatabase.finishPlannedCancellation(
+            owner: owner,
+            preferenceKey: entry.key,
+            intent: intent,
+            restore: error.code != 'not-found',
           );
-          if (error.code != 'not-found') {
-            await _localDatabase.restoreRejectedPlannedCancellation(
-              owner: owner,
-              hikeId: localId,
-              intent: intent,
-            );
-          }
         }
         HikerCircleFirebaseRepository._planningChanges.add(owner);
       }
@@ -250,6 +292,7 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
   ) async {
     if (await _cloudReadOwner() != owner) throw _accountChangedForChat();
     final request = _syncRequest;
+    // Update cloud: submit queued sync operation
     final result =
         await (request != null
                 ? request(name, {...data, 'expectedOwner': owner})
@@ -399,6 +442,7 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
           attachment: attachment,
           sharedPost: _sharedPostFromLocalRow(row),
         );
+        // Update cloud: send queued chat message
         final response = await _syncWrite('appendChatMessage', owner, {
           'chatId': chatId,
           'messageId': cloudId,
@@ -453,6 +497,7 @@ extension OfflineSyncRepository on HikerCircleFirebaseRepository {
   ) async {
     if (!_firebaseBootstrapResult.isAvailable && _syncRequest == null) return;
     try {
+      // Update cloud: acknowledge chat read position
       final response = await _syncWrite('acknowledgeChatRead', owner, {
         'chatId': chatId,
         'readAtLocal': read.toUtc().toIso8601String(),

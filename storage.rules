@@ -2,6 +2,7 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    // Query mobile session for Storage access
     function signedIn() {
       return request.auth != null
         && request.auth.token.phoneNumber == request.auth.uid
@@ -28,6 +29,7 @@ service firebase.storage {
             ])));
     }
 
+    // Query account role for Storage access
     function admin() {
       return signedIn()
         && administratorAccount(
@@ -35,6 +37,7 @@ service firebase.storage {
         );
     }
 
+    // Query chat membership for attachments
     function chatMember(chatId) {
       return signedIn()
         && firestore.get(
@@ -146,6 +149,7 @@ service firebase.storage {
       allow update: if false;
       // Owner cleanup uses the session and post documents; check it before
       // administrator access to stay within Storage's two-document budget.
+      // Query post existence for image deletion
       allow delete: if (signedIn() && request.auth.uid == userId
         && resource.metadata.ownerUserId == userId
         && !firestore.exists(/databases/(default)/documents/communityPosts/$(postId)))
@@ -170,6 +174,7 @@ service firebase.storage {
 
     match /app_feedback/{uid}/{reportId}/screenshot.png {
       allow read: if signedIn() && (request.auth.uid == uid || admin());
+      // Query feedback existence for screenshot upload
       allow create, update: if signedIn() && request.auth.uid == uid
         && request.resource.size > 0 && request.resource.size <= 5 * 1024 * 1024
         && request.resource.contentType == 'image/png'

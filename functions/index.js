@@ -171,16 +171,19 @@ exports.deleteHikerCircleAccount = onCall({region: 'us-central1'}, async request
     throw new HttpsError('invalid-argument', 'Confirm account deletion first.');
   }
   const uid = request.auth.uid;
+  // Query account by UID
   const account = await getFirestore().collection('users').doc(uid).get();
   if (isSuperAdminUser(account.data())) {
     throw new HttpsError('permission-denied', 'Account deletion is unavailable for superadmins.');
   }
   try {
+    // Update cloud: delete Firebase Auth identity
     await getAuth().deleteUser(uid);
   } catch (error) {
     if (error.code !== 'auth/user-not-found') throw error;
   }
   await getFirestore().runTransaction(async transaction => {
+    // Update cloud: delete account and revoke session
     transaction.delete(getFirestore().collection('users').doc(uid));
     mobileSessionSecurity.revokeInTransaction(transaction, uid, 'account-deleted');
   });
@@ -196,8 +199,10 @@ exports.listUserRoleHistory = onCall({}, adminUsers.history);
 // deliverSessionSecurityNotice: Claim a session-change notice before FCM/WhatsApp sends; uncertain provider acceptance is not retried blindly.
 async function deliverSessionSecurityNotice(reference) {
   const notice = await getFirestore().runTransaction(async transaction => {
+    // Query session alert and recipient devices
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists || snapshot.data()?.status !== 'pending') return null;
+    // Update cloud: save session alert delivery status
     transaction.update(reference, {status: 'sending', attemptedAt: FieldValue.serverTimestamp()});
     return snapshot.data();
   });
@@ -215,6 +220,7 @@ async function deliverSessionSecurityNotice(reference) {
   }
   try {
     const credentials = greenApiCredentials();
+    // API: WhatsApp session security alert
     const response = await fetch(greenApiEndpoint('sendMessage', credentials), {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({chatId: `${notice.phoneNumber.replace(/\D/g, '')}@c.us`,
@@ -234,16 +240,19 @@ async function deliverSessionSecurityNotice(reference) {
   }
 }
 
+// Listen for new session security alerts
 exports.deliverSessionSecurityNotice = onDocumentCreated({
   document: 'sessionSecurityOutbox/{noticeId}', retry: true, region: 'asia-southeast1',
   secrets: [defineSecret('GREEN_API_INSTANCE_ID'), defineSecret('GREEN_API_TOKEN')],
 }, event => deliverSessionSecurityNotice(event.data.ref));
 
+// Listen for account changes
 exports.endDisabledAccountSession = onDocumentWritten({document: 'users/{userId}', region: 'asia-southeast1'}, async event => {
   const after = event.data?.after;
   if (!after?.exists || after.data()?.accountDisabled === true || after.data()?.status === 'disabled') {
     await getFirestore().runTransaction(async transaction => {
       // Re-read to avoid a delayed trigger invalidating a subsequently restored account.
+      // Query disabled account status
       const current = await transaction.get(getFirestore().collection('users').doc(event.params.userId));
       if (!current.exists || current.data()?.accountDisabled === true || current.data()?.status === 'disabled') {
         mobileSessionSecurity.revokeInTransaction(transaction, event.params.userId, 'account-disabled');
@@ -273,19 +282,20 @@ const greenApiInstanceId = defineSecret('GREEN_API_INSTANCE_ID');
 const greenApiToken = defineSecret('GREEN_API_TOKEN');
 const mfaTotpEncryptionKey = defineSecret('MFA_TOTP_ENCRYPTION_KEY');
 
-// checkCommunityContentIntegrity: Scan only public community text and preserve pending human review decisions.
-exports.checkCommunityContentIntegrity = onSchedule({
-  schedule: 'every 1 minutes', secrets: [], timeoutSeconds: 240,
-  memory: '256MiB', maxInstances: 1, concurrency: 1,
-}, async () => {
+// Check the public feed when a post is published.
+exports.checkCommunityFeedOnPostCreated = onDocumentCreated({
+  document: 'communityPosts/{postId}', region: 'asia-southeast1', retry: true,
+  timeoutSeconds: 540, memory: '256MiB', maxInstances: 1, concurrency: 1,
+}, async event => {
+  if (event.data?.get('visibility') !== 'public') return;
   const result = await require('./community_moderation').runIntegrityCheck({
-    db: admin.firestore(), fieldPath: FieldPath.documentId(),
+    db: admin.firestore(), fieldPath: FieldPath.documentId(), eventId: event.id,
   });
   if (!result.skipped) logger.log('Community integrity check finished.', result);
 });
 
-// Run the same protected rule scan immediately and restart its shared thirty-minute deadline.
-exports.refreshCommunityContentIntegrity = onCall({timeoutSeconds: 240, memory: '256MiB', maxInstances: 2}, async request => {
+// Run the same full scan on administrator request.
+exports.refreshCommunityContentIntegrity = onCall({timeoutSeconds: 540, memory: '256MiB', maxInstances: 2}, async request => {
   try {
     return await require('./community_integrity_schedule').runManualIntegrityCheck({
       request, authorization: adminAuthorization, db: admin.firestore(), fieldPath: FieldPath.documentId(),
@@ -329,6 +339,7 @@ for (const [name, handler] of Object.entries({submitTrailCaution:'submit', updat
   });
 }
 // Legacy direct reports and reopened cycles receive the same server policy and affected-hiker delivery.
+// Listen for hazard report changes
 exports.notifyUpcomingHikersAboutTrailHazard = onDocumentWritten({
   document: 'hazardReports/{hazardId}', region: 'asia-southeast1', retry: true,
   timeoutSeconds: 540, memory: '256MiB', maxInstances: 4,
@@ -365,6 +376,7 @@ async function sendArrivalFootprintFile({phone, image, caption, fileName}) {
   let response;
   try {
     const url = greenApiEndpoint('sendFileByUpload').replace('https://api.green-api.com/', 'https://media.green-api.com/');
+    // API: WhatsApp arrival footprint image
     response = await fetch(url, {method: 'POST', body: form, signal: AbortSignal.timeout(12000)});
   } catch (error) {
     return providerFailureWasDefinitelyUnsent(error)
@@ -401,6 +413,7 @@ exports.checkHikeArrivalSafety = onCall({timeoutSeconds: 120, secrets: [greenApi
 exports.processOverdueHikeArrivals = onSchedule({schedule: 'every 1 minutes', region: 'asia-southeast1',
   timeoutSeconds: 540, maxInstances: 1, concurrency: 1, secrets: [greenApiInstanceId, greenApiToken]}, async () => {
   const db = admin.firestore();
+  // Query hikes due for arrival checks
   const snapshot = await db.collection('hikeSessions').where('status', '==', 'active')
     .where('arrivalSafety.enabled', '==', true).where('arrivalSafety.responseDeadlineMillis', '<=', Date.now()).get();
   const failures = [];
@@ -413,6 +426,7 @@ exports.processOverdueHikeArrivals = onSchedule({schedule: 'every 1 minutes', re
 });
 
 // Both admin-added and approved recorded trails use this same missing-cover pipeline.
+// Listen for trail changes
 exports.generateMissingTrailCover = onDocumentWritten({
   document: 'trails/{trailId}', region: 'asia-southeast1', retry: true,
   timeoutSeconds: 120, memory: '512MiB', concurrency: 4, maxInstances: 4,
@@ -472,6 +486,7 @@ function communityContext(request, adminOnly = false) {
     input: request.data || {}, ErrorType: HttpsError, timestamp: millis => Timestamp.fromMillis(millis) };
 }
 async function communityAuthor(context) {
+  // Query community author profile
   const user = await readUser(context.db.collection('users').doc(context.uid), ['profile']);
   if (!user.exists || user.data()?.accountDisabled === true) throw new HttpsError('permission-denied', 'This account cannot post to the community.');
   return require('./community_posts').authorSnapshot(user.data());
@@ -492,6 +507,7 @@ exports.editCommunityPost = onCall({timeoutSeconds: 60}, async request => {
   if (removedImages.length) {
     // Stored paths are validated at creation/migration. Cleanup failures do
     // not turn an already committed edit into a misleading failed response.
+    // Query edited community post
     const post = await context.db.collection('communityPosts').doc(result.postId).get();
     try { await require('./community_posts').removeImages(context.bucket, removedImages, post.data()?.authorId, result.postId); }
     catch (error) { logger.warn('Removed community photos could not be cleaned up.', { code: String(error.code || 'cleanup-failed') }); }
@@ -500,6 +516,7 @@ exports.editCommunityPost = onCall({timeoutSeconds: 60}, async request => {
 });
 exports.moderateCommunityPost = onCall({}, async request => require('./community_posts').moderatePost(communityContext(request, true)));
 exports.deleteCommunityPost = onCall({}, async request => require('./community_posts').deletePost(communityContext(request)));
+// Listen for deleted community posts
 exports.cleanupDeletedCommunityPost = onDocumentDeleted(
   { document: 'communityPosts/{postId}', retry: true, region: 'asia-southeast1' },
   async event => require('./community_posts').cleanupDeletedPost({ db: admin.firestore(), bucket: getStorage().bucket(),
@@ -510,6 +527,7 @@ exports.cleanupDeletedCommunityPost = onDocumentDeleted(
 // aggregate-only. A completed team hike contributes one session and its
 // recorded distance for each participant, matching each hiker's history.
 // getPublicHikerCircleStats: Expose aggregate landing-page totals with bounded caching and no account records.
+// API: public trail statistics
 exports.getPublicHikerCircleStats = onRequest(
   { timeoutSeconds: 30, memory: '256MiB' },
   async (request, response) => {
@@ -534,6 +552,7 @@ exports.getPublicHikerCircleStats = onRequest(
           soloHikes,
           groupHikes,
         ] = await Promise.all([
+          // Query account and completed-hike totals
           db.collection('users').count().get(),
           completedHikes.count().get(),
           completedHikes.aggregate({
@@ -556,6 +575,7 @@ exports.getPublicHikerCircleStats = onRequest(
       } catch (error) {
         if (Number(error?.code) !== 9) throw error;
         logger.warn('Public stats indexes are not ready; using a field-projection fallback.');
+        // Query completed hike statistics
         const [users, hikes] = await Promise.all([
           db.collection('users').count().get(),
           completedHikes.select('distanceKm', 'checkIns', 'hikeType').get(),
@@ -587,6 +607,7 @@ exports.getPublicHikerCircleStats = onRequest(
       }
       const payload = publicStatsPayload(rawStats);
       try {
+        // Query trail verification and ratings
         const trails = await db.collection('trails').select(
           'isVerifiedTrail', 'ratingAverage', 'checkpoints', 'distanceKm', 'state', 'difficultyVoteCounts'
         ).get();
@@ -636,6 +657,7 @@ exports.forwardNearbySosIncident = onCall(
     let reporterCount = 1;
     let deduplicated = false;
     await firestore.runTransaction(async (transaction) => {
+      // Query SOS incident and reporter
       const [incidentSnapshot, reporterSnapshot] = await Promise.all([
         transaction.get(incidentRef),
         transaction.get(reporterRef),
@@ -646,6 +668,7 @@ exports.forwardNearbySosIncident = onCall(
         + (reporterSnapshot.exists ? 0 : 1);
       const nowIso = new Date().toISOString();
       const location = report.reportedLocation || report.detectorLocation;
+      // Update cloud: save SOS incident and reporter
       transaction.set(incidentRef, {
         incidentId: report.incidentId,
         deviceIdHash: report.deviceIdHash,
@@ -720,11 +743,13 @@ async function reserveOtpChallenge({
 }) {
   const sentAtMillis = Date.now();
   await admin.firestore().runTransaction(async (transaction) => {
+    // Query existing OTP challenge
     const snapshot = await transaction.get(reference);
     const previousSentAt = Number(snapshot.data()?.sentAtMillis || 0);
     if (sentAtMillis - previousSentAt < 60 * 1000) {
       throw new HttpsError('resource-exhausted', cooldownMessage);
     }
+    // Update cloud: reserve OTP challenge
     transaction.set(reference, {
       ...metadata,
       phoneNumber,
@@ -744,6 +769,7 @@ async function markOtpDeliveryFailed(reference, error) {
   const safeError = typeof error === 'string'
     ? error
     : String(error?.code || error?.name || 'transport_error');
+  // Update cloud: mark OTP delivery failed
   await reference.set(
     {
       deliveryState: 'failed',
@@ -757,6 +783,7 @@ async function markOtpDeliveryFailed(reference, error) {
 
 async function markOtpDeliveryUncertain(reference, error) {
   const safeError = String(error?.code || error?.name || 'transport_error');
+  // Update cloud: flag uncertain OTP delivery
   await reference.set(
     {
       deliveryState: 'uncertain',
@@ -781,6 +808,7 @@ async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
     .doc(userDocumentIdForPhone(phoneNumber));
   const nowMillis = Date.now();
   const result = await admin.firestore().runTransaction(async (transaction) => {
+    // Query account security settings
     const snapshot = await readUser(userReference, ["security"], transaction);
     if (!snapshot.exists) {
       return {
@@ -836,6 +864,7 @@ async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
     if (!passwordValid) {
       const failedAttempts = Number(user.loginFailedAttempts || 0) + 1;
       if (failedAttempts >= 5) {
+        // Update cloud: record password check result
         updateUser(transaction, userReference, {
           loginFailedAttempts: 0,
           loginCooldownUntil: new Date(nowMillis + 30 * 60 * 1000),
@@ -881,6 +910,7 @@ async function updateTeamParticipantForHike(hike, nextStatus) {
     .collection('teamHikeSessions')
     .doc(teamHikeSessionId);
   const updatedTeam = await db.runTransaction(async (transaction) => {
+    // Query team participant status
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) {
       return null;
@@ -920,6 +950,7 @@ async function updateTeamParticipantForHike(hike, nextStatus) {
     if (nextStatus === 'ended' && !team.summarySnapshot?.finalized) {
       patch.summarySnapshot = teamHistory.buildSnapshot({...team, ...patch}, nowIso);
     }
+    // Update cloud: update team participant status
     transaction.set(reference, patch, {merge: true});
     return { ...team, ...patch };
   });
@@ -952,6 +983,7 @@ exports.sendGreenApiLoginCode = onAuthenticationCall(
           await requireLoginPasswordBeforeOtp(phoneNumber, String(request.data?.password || ''));
           return;
         }
+        // Query login profile and security settings
         const accountSnapshot = await readUser(admin.firestore()
           .collection('users').doc(userDocumentIdForPhone(phoneNumber)), ['profile', 'security']);
         if (intent === 'sign_up' && accountSnapshot.exists
@@ -1061,6 +1093,7 @@ exports.sendGreenApiLoginCode = onAuthenticationCall(
         'WhatsApp accepted the request but delivery could not be confirmed. Wait one minute before trying again.'
       );
     }
+    // Update cloud: save OTP delivery result
     await timing.measure('deliveryCommit', () => challengeReference.set(
       {
         deliveryState: 'sent',
@@ -1119,6 +1152,7 @@ async function transitionSosDispatch(
   updates
 ) {
   return admin.firestore().runTransaction(async (transaction) => {
+    // Query SOS dispatch status
     const snapshot = await transaction.get(reference);
     const current = snapshot.data() || {};
     if (
@@ -1141,6 +1175,7 @@ async function transitionSosDispatch(
         : updates.status === 'sending' ? patch.confirmationDeadlineMillis : now + 60000;
       sosConfirmation.project(transaction, admin.firestore(), reference.id, {...current, ...patch}, now);
     }
+    // Update cloud: update SOS dispatch status
     transaction.set(reference, patch, {merge: true});
     return true;
   });
@@ -1198,6 +1233,7 @@ async function requireGreenApiReady() {
   const credentials = greenApiCredentials();
   let response;
   try {
+    // API: WhatsApp instance readiness
     response = await fetch(greenApiEndpoint('getStateInstance', credentials), {
       method: 'GET',
       signal: AbortSignal.timeout(8 * 1000),
@@ -1308,6 +1344,7 @@ async function sendValidatedSosDispatch({uid, ownerPhone, dispatch}) {
     const payloadHash = sosDispatchPayloadHash(dispatch);
     const attemptNonce = crypto.randomBytes(24).toString('hex');
     const claim = await db.runTransaction(async (transaction) => {
+      // Query SOS contacts and dispatch limits
       const [userSnapshot, dispatchSnapshot, rateSnapshot] = await Promise.all([
         readUser(userReference, ["preferences","sos"], transaction),
         transaction.get(dispatchReference),
@@ -1363,6 +1400,7 @@ async function sendValidatedSosDispatch({uid, ownerPhone, dispatch}) {
               retryable: false,
               clientMessage: 'The provider result could not be confirmed.',
             };
+            // Update cloud: save SOS dispatch state
             transaction.set(
               dispatchReference,
               {
@@ -1429,6 +1467,7 @@ async function sendValidatedSosDispatch({uid, ownerPhone, dispatch}) {
         );
       }
       if (!isReclaimingUnsentClaim) {
+        // Update cloud: reserve SOS delivery
         transaction.set(
           rateReference,
           {
@@ -1555,6 +1594,7 @@ async function sendValidatedSosDispatch({uid, ownerPhone, dispatch}) {
     const pendingStatuses = new Set(dispatch.isTest ? ['sending'] : ['sending', 'delivery_uncertain']);
     let response;
     try {
+      // API: WhatsApp SOS message
       response = await fetch(
         greenApiEndpoint('sendMessage', credentials),
         {
@@ -1689,12 +1729,14 @@ async function sendValidatedSosDispatch({uid, ownerPhone, dispatch}) {
 exports.reconcileSosConfirmations = onSchedule({schedule: 'every 1 minutes', timeoutSeconds: 120,
   maxInstances: 1, secrets: [greenApiInstanceId, greenApiToken]}, async () => {
   const db = admin.firestore(), now = Date.now();
+  // Query SOS dispatches awaiting confirmation
   const due = await db.collection('sosWhatsAppDispatches').where('nextCheckAtMillis', '<=', now).limit(50).get();
   const records = due.docs.filter(doc => doc.data().confirmationTracking === true && doc.data().isTest !== true);
   if (!records.length) return;
   const credentials = greenApiCredentials();
   let queue = [], journal = [], verified = false;
   try {
+    // API: WhatsApp SOS delivery history
     const responses = await Promise.all(['showMessagesQueue', 'lastOutgoingMessages'].map(method =>
       fetch(greenApiEndpoint(method, credentials), {signal: AbortSignal.timeout(10000)})));
     if (responses.every(response => response.ok)) {
@@ -1742,6 +1784,7 @@ async function sendLiveLocationStartToContact({
       mode === 'standalone' ? `standalone:${shareId}` : sessionId, recipientPhone));
   const attemptNonce = crypto.randomBytes(24).toString('hex');
   const claim = await db.runTransaction(async (transaction) => {
+    // Query live-share notification by ID
     const snapshot = await transaction.get(dispatchReference);
     const previous = snapshot.data() || {};
     const now = Date.now();
@@ -1753,6 +1796,7 @@ async function sendLiveLocationStartToContact({
       }
       if (status === 'sending') {
         if (Number(previous.leaseExpiresAtMillis || 0) <= now) {
+          // Update cloud: record contact notification attempt
           transaction.set(
             dispatchReference,
             {
@@ -1830,6 +1874,7 @@ async function sendLiveLocationStartToContact({
 
   let response;
   try {
+    // API: WhatsApp live location notice
     response = await fetch(greenApiEndpoint('sendMessage', credentials), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1937,6 +1982,7 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
     const shareReference = db
       .collection('live_location_shares')
       .doc(notification.shareId);
+    // Query emergency contacts and live share
     const [userSnapshot, hikeSnapshot, shareSnapshot] = await Promise.all([
       readUser(userReference, ["location","profile","sos", ...(standalone ? ["preferences"] : [])]),
       hikeReference ? hikeReference.get() : null,
@@ -1988,6 +2034,7 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
       );
     }
 
+    // Update cloud: claim live-share notification
     if (!standalone) await hikeReference.set(
       {
         liveLocationShareId: notification.shareId,
@@ -2078,6 +2125,7 @@ exports.activateLiveLocationShare = onCall({}, async (request) => {
 // while Flutter is suspended. Mirror that authenticated telemetry into the
 // public, expiring share rather than relying on a background Dart timer.
 // mirrorActiveHikeLocationToLiveShare: Publish only newer GPS versions while the owning hike/share remain active.
+// Listen for hike session updates
 exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
   { document: 'hikeSessions/{sessionId}', retry: true, region: 'asia-southeast1' },
   async (event) => {
@@ -2114,6 +2162,7 @@ exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
       .collection('live_location_shares')
       .doc(shareId);
     await admin.firestore().runTransaction(async (transaction) => {
+      // Query active hike and live share
       const [shareSnapshot, currentHikeSnapshot] = await Promise.all([
         transaction.get(shareReference),
         transaction.get(admin.firestore().collection('hikeSessions').doc(event.params.sessionId)),
@@ -2138,6 +2187,7 @@ exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
       if (!Number.isFinite(sourceMillis)
           || (Number.isFinite(currentMillis) && sourceMillis <= currentMillis)) return;
       const nowIso = new Date().toISOString();
+      // Update cloud: update shared hike location
       transaction.set(
         shareReference,
         {
@@ -2157,6 +2207,7 @@ exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
 );
 
 // Reuse standalone parent updates and clean derived chunks after revocation/deletion.
+// Listen for live-share changes
 exports.projectLiveLocationFootprints = onDocumentWritten(
   { document: 'live_location_shares/{shareId}', retry: true, region: 'asia-southeast1' },
   async (event) => {
@@ -2199,6 +2250,7 @@ exports.listUpcomingHikePreviews = onCall(
     }
 
     const db = admin.firestore();
+    // Query hike preview eligibility
     const userSnapshot = await readUser(db.collection('users').doc(uid), []);
     const user = userSnapshot.data() || {};
     if (
@@ -2211,6 +2263,7 @@ exports.listUpcomingHikePreviews = onCall(
 
     let documents;
     if (requestedHikeId) {
+      // Query upcoming hikes by departure time
       const snapshot = await db.collection('upcomingHikes')
         .doc(requestedHikeId).get();
       documents = snapshot.exists ? [snapshot] : [];
@@ -2244,6 +2297,7 @@ exports.listUpcomingHikePreviews = onCall(
         return preview ? { document, preview } : null;
       })
       .filter((hike) => hike !== null);
+    // Query viewer join requests
     const requestSnapshots = previewRows.length === 0
       ? []
       : await db.getAll(
@@ -2256,7 +2310,8 @@ exports.listUpcomingHikePreviews = onCall(
       const requestStatus = String(request.status || '').trim();
       return {
         ...preview,
-        ...(requestStatus ? { joinRequestStatus: requestStatus } : {}),
+        ...(requestStatus && (requestStatus !== 'accepted' || preview.participantPhones.includes(phoneNumber))
+          ? { joinRequestStatus: requestStatus } : {}),
       };
     });
     return { hikes };
@@ -2291,6 +2346,7 @@ exports.joinUpcomingHike = onCall({}, async (request) => {
     .doc(`joined_${phoneKeyFor(ownerPhone)}`);
 
   const result = await db.runTransaction(async (transaction) => {
+    // Query hike and chat membership
     const [hikeSnapshot, userSnapshot, chatSnapshot] = await Promise.all([
       transaction.get(hikeReference),
       readUser(userReference, ["preferences","profile"], transaction),
@@ -2386,6 +2442,7 @@ exports.joinUpcomingHike = onCall({}, async (request) => {
         : {};
     participantNames[phoneKeyFor(ownerPhone)] = displayName;
 
+    // Update cloud: add hiker to hike and chat
     transaction.set(
       hikeReference,
       {
@@ -2455,6 +2512,7 @@ exports.requestToJoinUpcomingHike = onCall({}, async (request) => {
   const userReference = db.collection('users').doc(uid);
   const rateReference = db.collection('upcomingHikeJoinRequestRateLimits').doc(uid);
   return db.runTransaction(async (transaction) => {
+    // Query pending request and submission limit
     const [hikeSnapshot, userSnapshot, requestSnapshot, rateSnapshot] =
       await Promise.all([
         transaction.get(hikeReference),
@@ -2497,13 +2555,15 @@ exports.requestToJoinUpcomingHike = onCall({}, async (request) => {
     if (!/^\+[1-9]\d{7,14}$/.test(hostPhone)) {
       throw new HttpsError('failed-precondition', 'This hike host is unavailable.');
     }
-    if (requestSnapshot.exists) {
+    if (requestSnapshot.exists && requestSnapshot.data()?.status !== 'accepted') {
       const lifecycle = joinRequestLifecycle(requestSnapshot.data() || {}, hike);
       return { requestId, ...lifecycle };
     }
 
     const nowIso = new Date().toISOString();
-    transaction.create(requestReference, {
+    // Update cloud: create hike join request
+    // A former member needs a fresh decision after leaving.
+    transaction.set(requestReference, {
       requestId,
       hikeId,
       trailName: String(hike.trailName || 'Upcoming hike').trim().slice(0, 160),
@@ -2546,6 +2606,7 @@ function upcomingHikeJoinRequestResponse(requestId, request, hike, lifecycle) {
 // publicHikerDetails: Assemble public profile, reward, and completed-hike projections from their canonical sources.
 async function publicHikerDetails(db, userId) {
   if (!validFirestoreDocumentId(userId)) return {};
+  // Query public hiker profile and achievements
   const [userDocument, achievementDocuments, historyDocuments] =
     await Promise.all([
       readUser(db.collection('users').doc(userId), ["achievements","profile"]),
@@ -2608,6 +2669,7 @@ exports.loadUpcomingHikeJoinRequest = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'The join request link is invalid.');
   }
   const db = admin.firestore();
+  // Query join request and linked hike
   const requestSnapshot = await db
     .collection('upcomingHikeJoinRequests')
     .doc(requestId)
@@ -2632,6 +2694,7 @@ exports.loadUpcomingHikeJoinRequest = onCall({}, async (request) => {
   }
   const lifecycle = joinRequestLifecycle(joinRequest, hike);
   if (lifecycle.status === 'expired' && String(joinRequest.status) === 'pending') {
+    // Update cloud: update join request status
     await requestSnapshot.ref.set(
       {
         status: 'expired',
@@ -2688,6 +2751,7 @@ exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
   const db = admin.firestore();
   const requestReference = db.collection('upcomingHikeJoinRequests').doc(requestId);
   return db.runTransaction(async (transaction) => {
+    // Query join request and group membership
     const requestSnapshot = await transaction.get(requestReference);
     if (!requestSnapshot.exists) {
       return { requestId, status: 'expired', reason: 'request_missing' };
@@ -2723,6 +2787,7 @@ exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
     }
     const unavailableReason = upcomingHikeUnavailableReason(hike);
     if (unavailableReason) {
+      // Update cloud: save join request decision
       transaction.set(
         requestReference,
         {
@@ -2786,6 +2851,7 @@ exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
       : {};
     participantNames[phoneKeyFor(requesterPhone)] = requesterProfile.name;
     const wasSoloHike = effectiveUpcomingHikeType(hike) === 'solo';
+    // Update cloud: add accepted hiker to group
     transaction.set(
       hikeReference,
       {
@@ -2879,6 +2945,7 @@ exports.setUpcomingHikeJoinPolicy = onCall({}, async (request) => {
   }
   const reference = admin.firestore().collection('upcomingHikes').doc(hikeId);
   await admin.firestore().runTransaction(async (transaction) => {
+    // Query hike join policy
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists || snapshot.data()?.isDeleted === true) {
       throw new HttpsError('not-found', 'This upcoming hike is no longer available.');
@@ -2890,6 +2957,7 @@ exports.setUpcomingHikeJoinPolicy = onCall({}, async (request) => {
     if (upcomingHikeUnavailableReason(hike)) {
       throw new HttpsError('failed-precondition', 'This hike can no longer be changed.');
     }
+    // Update cloud: save hike join policy
     transaction.set(reference, {
       joinPolicy,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2913,6 +2981,7 @@ exports.remindUpcomingHikeHost = onCall(
     const db = admin.firestore();
     const reference = db.collection('upcomingHikes').doc(hikeId);
     const claim = await db.runTransaction(async (transaction) => {
+      // Query pending host reminder
       const snapshot = await transaction.get(reference);
       if (!snapshot.exists || snapshot.data()?.isDeleted === true) {
         throw new HttpsError('not-found', 'This upcoming hike is no longer available.');
@@ -2948,6 +3017,7 @@ exports.remindUpcomingHikeHost = onCall(
         };
       }
       uniquePhones.push(participantPhone);
+      // Update cloud: record host reminder attempt
       transaction.set(reference, {
         departureReminderPhones: uniquePhones,
         departureReminderCount: uniquePhones.length,
@@ -2965,10 +3035,12 @@ exports.remindUpcomingHikeHost = onCall(
 
     let fcmSent = false;
     try {
+      // Query host notification devices
       const host = await readUser(db.collection('users')
         .doc(userDocumentIdForPhone(claim.hostPhone)), ["devices"]);
       const tokens = latestFcmTokensForUser(host.data() || {});
       if (tokens.length > 0) {
+        // API: FCM host reminder
         const delivery = await admin.messaging().sendEachForMulticast({
           tokens,
           notification: {
@@ -2991,6 +3063,7 @@ exports.remindUpcomingHikeHost = onCall(
     let whatsAppSent = false;
     try {
       const credentials = greenApiCredentials();
+      // API: WhatsApp host reminder
       const response = await fetch(greenApiEndpoint('sendMessage', credentials), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3035,6 +3108,7 @@ exports.openUpcomingHikeJoinRequest = onRequest((request, response) => {
 });
 
 // notifyHostAboutUpcomingHikeJoinRequest: Claim host notification delivery before contacting the messaging provider.
+// Listen for new hike join requests
 exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
   {
     document: 'upcomingHikeJoinRequests/{requestId}',
@@ -3060,6 +3134,7 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
       || String(joinRequest.status || '') !== 'pending'
       || String(joinRequest.requesterUserId || '') !== userDocumentIdForPhone(requesterPhone)
     ) {
+      // Update cloud: record host notification status
       await event.data.ref.set(
         {
           hostNotificationStatus: 'failed',
@@ -3071,6 +3146,7 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
       return;
     }
     const db = admin.firestore();
+    // Query hike linked to join request
     const hikeSnapshot = await db.collection('upcomingHikes').doc(hikeId).get();
     const hike = hikeSnapshot.exists ? hikeSnapshot.data() || {} : null;
     const lifecycle = joinRequestLifecycle(joinRequest, hike);
@@ -3107,12 +3183,14 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
     let fcmSuccessCount = 0;
     let fcmFailureCount = 0;
     try {
+      // Query host push tokens
       const hostSnapshot = await readUser(db
         .collection('users')
         .doc(userDocumentIdForPhone(hostPhone)), ["devices"]);
       const tokenList = latestFcmTokensForUser(hostSnapshot.data() || {});
       if (tokenList.length > 0) {
         for (let index = 0; index < tokenList.length; index += 500) {
+          // API: FCM join request notice
           const delivery = await admin.messaging().sendEachForMulticast({
             tokens: tokenList.slice(index, index + 500),
             notification: {
@@ -3149,6 +3227,7 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
     try {
       const credentials = greenApiCredentials();
       const recipientDigits = hostPhone.replace(/\D/g, '');
+      // API: WhatsApp join request buttons
       const providerResponse = await fetch(
         greenApiEndpoint('sendInteractiveButtons', credentials),
         {
@@ -3189,6 +3268,7 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
       });
     }
 
+    // Update cloud: save host notification result
     await event.data.ref.set(
       {
         hostNotificationStatus:
@@ -3259,6 +3339,7 @@ exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
   const db = admin.firestore();
   const chatReference = db.collection('groupChats').doc(chatId);
   const shouldPrompt = await db.runTransaction(async (transaction) => {
+    // Query hike chat and host eligibility
     const snapshot = await transaction.get(chatReference);
     if (!snapshot.exists) {
       throw new HttpsError('not-found', 'This group chat is no longer available.');
@@ -3284,6 +3365,7 @@ exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
     if (chat.hikeEndedAtLocal || chat.isDeleted === true || isLaunching) {
       const fallback = String(chat.customName || '').trim()
         || defaultFormedHikeGroupName(chat);
+      // Update cloud: mark naming prompt shown
       transaction.set(chatReference, {
         customName: fallback,
         requiresHostNaming: false,
@@ -3347,6 +3429,7 @@ async function readLoadAchievementLeaderboard(request) {
     .orderBy('awardedAtLocal').orderBy(admin.firestore.FieldPath.documentId());
   let cursor = null;
   while (true) {
+    // Query paginated achievement leaderboard
     const page = await (cursor ? query.startAfter(cursor) : query).limit(500).get();
     for (const document of page.docs) {
       const row = document.data() || {};
@@ -3418,6 +3501,7 @@ exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
   const chatReference = db.collection('groupChats').doc(chatId);
   const messageReference = chatReference.collection('messages').doc('group_named');
   await db.runTransaction(async (transaction) => {
+    // Query formed hike chat
     const snapshot = await transaction.get(chatReference);
     if (!snapshot.exists) {
       throw new HttpsError('not-found', 'This group chat is no longer available.');
@@ -3456,6 +3540,7 @@ exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
       participantNames[phoneKeyFor(ownerPhone)] || 'Hike host'
     ).trim().slice(0, 80);
     const systemText = `Group named ${customName}`;
+    // Update cloud: rename group and log message
     transaction.set(
       chatReference,
       {
@@ -3556,6 +3641,7 @@ async function readGetPublicProfiles(request) {
   let documents;
   if (requestedPhones.length > 0) {
     const uniquePhones = [...new Set(requestedPhones)].slice(0, 50);
+    // Query public hiker profiles
     documents = await readUsers(db, [...uniquePhones.map((phone) =>
         db.collection('users').doc(userDocumentIdForPhone(phone))
       )], ["achievements","profile"]);
@@ -3938,6 +4024,7 @@ function assertTeamActionRate(transaction, reference, snapshot, action) {
       'Too many team hike updates were submitted. Try again shortly.'
     );
   }
+  // Update cloud: save team action limit
   transaction.set(
     reference,
     {
@@ -3979,6 +4066,7 @@ function queueTeamOutbox(
   ) {
     return;
   }
+  // Update cloud: queue team push notification
   transaction.set(
     db.collection('fcmOutbox').doc(),
     teamOutboxPayload({ type, recipientPhone, senderPhone, teamId, nowIso })
@@ -4075,6 +4163,7 @@ function assertWindowRate(
   if (actionCount >= limit) {
     throw new HttpsError('resource-exhausted', message);
   }
+  // Update cloud: update action rate counter
   transaction.set(
     reference,
     {
@@ -4184,6 +4273,7 @@ async function ensureTeamChatDocument(
   await db.runTransaction(async (transaction) => {
     // A hazard withdrawal may have changed membership since the caller's team
     // transaction. Reading the team here prevents restoring a departed hiker.
+    // Query team session and group chats
     const teamSnapshot = await transaction.get(db.collection('teamHikeSessions').doc(teamId));
     if (!teamSnapshot.exists) return;
     const currentTeam = teamSnapshot.data();
@@ -4231,6 +4321,7 @@ async function ensureTeamChatDocument(
     const phase = String(team.phase || '');
     const shouldArchive = phase === 'completed' && !existing.hikeEndedAtLocal
       && require('./team_launch_lifecycle').teamTrackingStarted(team);
+    // Update cloud: save team group chat
     transaction.set(
       chatReference,
       {
@@ -4302,6 +4393,7 @@ async function ensureTeamChatDocument(
       && String(plannedChat.creatorPhone || '') === String(team.hostPhoneNumber || '')
       && (!plannedName || plannedChat.requiresHostNaming !== false
         || plannedChat.namingPromptShown !== true || plannedChat.namingPromptActive === true)) {
+      // Update cloud: close previous planning chat
       transaction.set(plannedChatReference, {
         customName: plannedName || launchName,
         requiresHostNaming: false,
@@ -4395,6 +4487,7 @@ exports.scheduleUpcomingHike = onCall(
     );
 
     const result = await db.runTransaction(async (transaction) => {
+      // Query hike scheduling records
       const snapshots = await Promise.all([
         readUser(userReference, ["preferences","profile","social"], transaction),
         transaction.get(trailReference),
@@ -4532,6 +4625,7 @@ exports.scheduleUpcomingHike = onCall(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAtLocal: nowIso,
       };
+      // Update cloud: create hike and participant chat
       transaction.create(hikeReference, hike);
       if (participantPhones.length > 1) {
         transaction.set(
@@ -4596,6 +4690,7 @@ exports.openDirectChat = onCall(
       .collection('directChatActionRateLimits')
       .doc(uid);
     const chat = await db.runTransaction(async (transaction) => {
+      // Query direct chat and participants
       const [callerSnapshot, otherSnapshot, chatSnapshot, rateSnapshot] =
         await Promise.all([
           readUser(callerReference, ["preferences","profile"], transaction),
@@ -4654,6 +4749,7 @@ exports.openDirectChat = onCall(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAtLocal: nowIso,
       };
+      // Update cloud: open direct chat
       transaction.set(chatReference, patch, { merge: true });
       assertWindowRate(transaction, rateReference, rateSnapshot, {
         limit: 30,
@@ -4684,6 +4780,7 @@ exports.deleteChatForUser = onCall(
       .collection('directChatActionRateLimits')
       .doc(uid);
     await db.runTransaction(async (transaction) => {
+      // Query chat and team membership
       const [chatSnapshot, rateSnapshot] = await Promise.all([
         transaction.get(chatReference),
         transaction.get(rateReference),
@@ -4718,6 +4815,7 @@ exports.deleteChatForUser = onCall(
         callerUser.data() || {}
       ).name;
       const nowIso = new Date().toISOString();
+      // Update cloud: remove chat member
       transaction.set(
         chatReference,
         {
@@ -4810,6 +4908,7 @@ exports.startActiveHikeSession = onCall(
       : Date.now();
 
     const result = await db.runTransaction(async (transaction) => {
+      // Query hike start and linked plans
       const baseSnapshots = await Promise.all([
         readUser(userReference, ["social"], transaction),
         transaction.get(trailReference),
@@ -4948,6 +5047,7 @@ exports.startActiveHikeSession = onCall(
           throw new HttpsError('failed-precondition', 'This hike has already ended.');
         }
         if (canAdoptLegacyTeamSource) {
+          // Update cloud: link active hike to plan
           transaction.set(
             sessionReference,
             {
@@ -5017,6 +5117,7 @@ exports.startActiveHikeSession = onCall(
         }),
         hikeType: teamHikeSessionId || buddies.length > 0 ? 'team' : 'solo',
       };
+      // Update cloud: create active hike
       transaction.create(
         sessionReference,
         activeHikeDocumentData({
@@ -5139,6 +5240,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
       throw new HttpsError('invalid-argument', 'The saved hike start time is invalid.');
     }
     const result = await db.runTransaction(async (transaction) => {
+      // Query offline hike recovery records
       const snapshots = await Promise.all([
         transaction.get(sessionReference),
         transaction.get(terminalReference),
@@ -5282,6 +5384,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
           );
         }
         if (canAdoptLegacyTeamSource) {
+          // Update cloud: reconcile active hike with plan
           transaction.set(
             sessionReference,
             {
@@ -5309,6 +5412,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
           && startedAtMillis < Date.now() - 30 * 24 * 60 * 60 * 1000
         ) {
           const nowIso = new Date().toISOString();
+          // Update cloud: abandon expired recovery session
           transaction.set(
             sessionReference,
             {
@@ -5374,6 +5478,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
           const participantStatus = String(callerParticipant.status || '');
           if (teamPhase === 'completed' || participantStatus === 'ended') {
             const nowIso = new Date().toISOString();
+            // Update cloud: abandon session after team completion
             transaction.set(
               sessionReference,
               {
@@ -5426,6 +5531,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
             hasTerminalState: terminalSnapshot.exists,
           });
         if (Object.keys(locationSettingsPatch).length > 0) {
+          // Update cloud: restore existing hike session
           transaction.set(sessionReference, locationSettingsPatch, { merge: true });
         }
         return {
@@ -5547,6 +5653,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
         }),
         hikeType: teamHikeSessionId || buddies.length > 0 ? 'team' : 'solo',
       };
+      // Update cloud: create recovered hike session
       transaction.create(
         sessionReference,
         {
@@ -5754,6 +5861,7 @@ exports.completeActiveHikeSession = onCall(
       : null;
 
     const result = await db.runTransaction(async (transaction) => {
+      // Query hike completion records
       const snapshots = await Promise.all([
         transaction.get(sessionReference),
         transaction.get(terminalReference),
@@ -5908,6 +6016,7 @@ exports.completeActiveHikeSession = onCall(
           updatedAtLocal: nowIso,
         });
         const shared = teamHistory.buildSnapshot({...team, participants}, nowIso);
+        // Update cloud: update linked hikes on completion
         transaction.set(teamReference, {participants, summarySnapshot: shared,
           ...(shared.finalized ? {phase: 'completed', endedAtLocal: shared.endedAtLocal} : {}),
           updatedAtLocal: nowIso, updatedAt: admin.firestore.FieldValue.serverTimestamp()}, {merge: true});
@@ -5936,6 +6045,7 @@ exports.completeActiveHikeSession = onCall(
       const forecast = historicalForecastProjection(historicalTrail);
       if (forecast.changed) {
         const archive = sessionReference.collection('snapshotArchives').doc('trailForecast');
+        // Update cloud: archive completed hike
         transaction.create(archive, {
           schemaVersion: 1, weather: forecast.archive, archivedAtLocal: nowIso,
         });
@@ -6030,6 +6140,7 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
   const reviewReference = trailReference.collection('ratings').doc(sessionId);
 
   return db.runTransaction(async (transaction) => {
+    // Query hike and existing trail rating
     const [sessionSnapshot, trailSnapshot, reviewSnapshot] = await Promise.all([
       transaction.get(sessionReference),
       transaction.get(trailReference),
@@ -6054,6 +6165,7 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
     const review = reviewSnapshot.data() || {};
     let ratingBaseline = trailSnapshot.data() || {};
     if (!hasRatingVoteCounts(ratingBaseline)) {
+      // Query previous trail ratings
       const votes = await transaction.get(trailReference.collection('ratings').select('rating'));
       ratingBaseline = {...ratingBaseline,
         ...ratingSummaryFromVotes(votes.docs.map(doc => doc.data().rating))};
@@ -6069,6 +6181,7 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
       difficulty
     );
     const nowIso = new Date().toISOString();
+    // Update cloud: save review and rating totals
     transaction.set(
       reviewReference,
       {
@@ -6131,6 +6244,7 @@ async function readListMyHikeHistory(request) {
   );
   const requestedLimit = Number(request.data?.limit || 100);
   const limit = Math.round(boundedNumber(requestedLimit, 1, 200, 100));
+  // Query completed hikes by owner
   const snapshot = await admin.firestore()
     .collection('hikeSessions')
     .where('userId', '==', uid)
@@ -6173,6 +6287,7 @@ async function readLoadMyHikeHistoryDetail(request) {
     return {detail};
   }
   const sessionReference = db.collection('hikeSessions').doc(sessionId);
+  // Query hike history by session ID
   const sessionSnapshot = await sessionReference.get();
   const session = sessionSnapshot.data() || {};
   if (
@@ -6208,6 +6323,7 @@ async function readLoadMyHikeHistoryDetail(request) {
     teamSnapshot,
   ] =
     await Promise.all([
+      // Query route, check-ins and ratings
       db.collection('hikeRouteCaptures').doc(sessionId).get(),
       db.collection('checkIns').where('sessionId', '==', sessionId).limit(1000).get(),
       require('./footprint_batch').loadFootprints(db, sessionId, session.footprint),
@@ -6280,6 +6396,7 @@ async function readOwnerMobileResource(request, type, args) {
     sos_preferences: ['sos'], profile: ['profile'],
   };
   if (Object.hasOwn(modules, type)) {
+    // Query account profile and settings
     const user = await readUser(db.collection('users').doc(uid), modules[type]);
     if (!user.exists || user.data().accountDisabled === true || user.data().status === 'disabled') {
       throw new HttpsError('unauthenticated', 'Your account is unavailable.');
@@ -6289,6 +6406,7 @@ async function readOwnerMobileResource(request, type, args) {
   if (type === 'my_upcoming_hikes') {
     const {Filter} = require('firebase-admin/firestore');
     const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    // Query hosted or joined hikes
     const snapshot = await db.collection('upcomingHikes')
       .where(Filter.or(Filter.where('creatorUserId', '==', uid),
         Filter.where('participantPhones', 'array-contains', phoneNumber)))
@@ -6298,6 +6416,7 @@ async function readOwnerMobileResource(request, type, args) {
       .map(doc => ({...sanitizedPlainValue(doc.data()), hikeId: doc.id}))};
   }
   if (type === 'chat_list') {
+    // Query chats by participant
     const snapshot = await db.collection('groupChats')
       .where('participantPhones', 'array-contains', phoneNumber)
       .orderBy('createdAtLocal', 'desc').limit(args.limit || 200).get();
@@ -6305,6 +6424,7 @@ async function readOwnerMobileResource(request, type, args) {
       .map(doc => ({...sanitizedPlainValue(doc.data()), chatId: doc.id}))};
   }
   if (type === 'achievement_progress') {
+    // Query achievement definitions and progress
     const [definitions, awards] = await Promise.all([
       db.collection('achievements').orderBy('sortOrder').limit(MAX_ACHIEVEMENT_ROWS + 1).get(),
       db.collection('userAchievements').where('userId', '==', uid).limit(MAX_ACHIEVEMENT_ROWS + 1).get(),
@@ -6316,6 +6436,7 @@ async function readOwnerMobileResource(request, type, args) {
     );
   }
   if (type === 'my_feedback') {
+    // Query feedback by author
     const snapshot = await db.collection('appFeedback').where('uid', '==', uid)
       .orderBy('createdAt', 'desc').limit(args.limit || 100).get();
     const fields = ['uid', 'category', 'message', 'screenshotPath', 'platform', 'status', 'createdAt', 'createdAtLocal'];
@@ -6352,8 +6473,10 @@ const syncManifests = require('./sync_manifests').createSyncManifests({
     authorize: request => authenticatedPhoneFor(request, 'Sign in to refresh your saved data.')}),
 });
 // Ignore internal/security writes; source revisions are monotonic under repeated or reordered events.
+// Listen for root document changes
 exports.updateSyncManifestRoot = onDocumentWritten({document: '{collection}/{documentId}',
   region: 'asia-southeast1', retry: true}, syncManifests.observeWrite);
+// Listen for subcollection changes
 exports.updateSyncManifestChild = onDocumentWritten({document: '{collection}/{documentId}/{subcollection}/{childId}',
   region: 'asia-southeast1', retry: true}, syncManifests.observeWrite);
 
@@ -6447,6 +6570,7 @@ exports.recordActiveHikeCheckIn = onCall(
       .digest('hex');
     const checkInReference = db.collection('checkIns').doc(`checkin_${checkInId}`);
     const result = await db.runTransaction(async (transaction) => {
+      // Query hike and existing check-in
       const [hikeSnapshot, checkInSnapshot] = await Promise.all([
         transaction.get(hikeReference),
         transaction.get(checkInReference),
@@ -6486,6 +6610,7 @@ exports.recordActiveHikeCheckIn = onCall(
         );
       }
       const nowIso = new Date(nowMillis).toISOString();
+      // Update cloud: save hike check-in
       transaction.create(checkInReference, {
         checkInId: checkInReference.id,
         sessionId,
@@ -6583,6 +6708,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
   const rateReference = teamRateReference(db, uid, 'create');
 
   const team = await db.runTransaction(async (transaction) => {
+    // Query team invitees and linked hikes
     const snapshots = await Promise.all([
       readUser(ownerReference, ["profile","social"], transaction),
       transaction.get(trailReference),
@@ -6837,6 +6963,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
     if (resumeExistingScheduledLaunch) {
+      // Update cloud: save team session
       transaction.set(sessionReference, persistedResult);
     } else {
       transaction.create(sessionReference, persistedResult);
@@ -6962,6 +7089,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
     : null;
 
   const result = await db.runTransaction(async (transaction) => {
+    // Query current team and participant state
     const snapshots = await Promise.all([
       transaction.get(teamReference),
       readUser(userReference, ["location","profile","social"], transaction),
@@ -7034,6 +7162,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
           'The trail for this invitation is invalid.'
         );
       }
+      // Query team trail by ID
       const trailSnapshot = await transaction.get(
         db.collection('trails').doc(trailId)
       );
@@ -7242,20 +7371,24 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
       if (isHost || !['inviting', 'readyCheck', 'countdown'].includes(phase)) {
         throw new HttpsError('failed-precondition', 'Only a preparing team member can leave this launch.');
       }
+      if (team.sourceUpcomingHikeId) {
+        if (!validFirestoreDocumentId(team.sourceUpcomingHikeId)) {
+          throw new HttpsError('failed-precondition', 'This team has an invalid scheduled hike.');
+        }
+        const withdrawal = await require('./cancel_upcoming_hike').cancelUpcomingHike(db, {
+          hikeId: team.sourceUpcomingHikeId, uid, phoneNumber: callerPhone, withdrawSelf: true, expectedTeamId: teamId,
+        }, HttpsError, () => FieldValue.serverTimestamp(), transaction);
+        if (!withdrawal.team) throw new HttpsError('failed-precondition', 'Refresh the current team roster.');
+        assertTeamActionRate(transaction, rateReference, rateSnapshot, action);
+        return {teamSession: teamSessionForCallable(teamId, withdrawal.team),
+          everyoneEnded: withdrawal.team.phase === 'completed', newlyJoinedName: ''};
+      }
       participants = participants.filter((_, index) => index !== callerIndex);
       phase = participants.some(p => p.status === 'invited') ? 'inviting' : 'readyCheck';
       const ready = participants.length > 0 && participants.every(p => ['ready', 'active'].includes(p.status));
       phase = ready ? 'countdown' : phase;
       teamPatch.countdownStartedAtLocal = ready ? nowIso : null;
       if (ready) queueTeamOutboxForParticipants(transaction, db, participants, 'team_hike_countdown', hostPhone, teamId, nowIso);
-      if (validFirestoreDocumentId(String(team.sourceUpcomingHikeId || ''))) {
-        transaction.set(db.collection('upcomingHikes').doc(team.sourceUpcomingHikeId), {
-          participantPhones: admin.firestore.FieldValue.arrayRemove(callerPhone),
-          participantCount: participants.length,
-          draft: {teamBuddies: participants.filter(p => !p.isHost).map(p => p.buddy)},
-          updatedAtLocal: nowIso,
-        }, {merge: true});
-      }
       didChange = true;
     } else if (action === 'cancel') {
       if (!isHost) {
@@ -7636,6 +7769,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
         distanceMeters: pathDeviation.distanceMeters,
         detectedAtLocal: nowIso,
       };
+      // Update cloud: save participant and team changes
       transaction.set(
         hikeReference,
         {
@@ -7742,6 +7876,7 @@ async function cleanExpiredTeamHikeInvitationsTask({
   db = admin.firestore(),
   nowMillis = Date.now(),
 } = {}) {
+    // Query expiring team invitations
     const snapshot = await db
       .collection('teamHikeSessions')
       .where('phase', 'in', ['inviting', 'readyCheck', 'countdown'])
@@ -7763,6 +7898,7 @@ async function cleanExpiredTeamHikeInvitationsTask({
         continue;
       }
       const cleanedTeam = await db.runTransaction(async (transaction) => {
+        // Query current team invitation
         const freshSnapshot = await transaction.get(document.ref);
         const team = freshSnapshot.data() || {};
         if (
@@ -7788,6 +7924,7 @@ async function cleanExpiredTeamHikeInvitationsTask({
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAtLocal: nowIso,
         };
+        // Update cloud: expire team invitation
         transaction.set(document.ref, patch, { merge: true });
         queueTeamOutboxForParticipants(
           transaction,
@@ -7855,6 +7992,7 @@ async function readUsableMfaSession(token, { enrollmentOnly = false } = {}) {
     throw new HttpsError('invalid-argument', 'The verification session is invalid.');
   }
   const reference = mfaSessionReference(token);
+  // Query MFA session and account
   const snapshot = await reference.get();
   const session = snapshot.data() || {};
   if (
@@ -7891,6 +8029,7 @@ async function readUsableMfaSession(token, { enrollmentOnly = false } = {}) {
 
 async function factorDocumentsForUser(userId) {
   const reference = admin.firestore().collection('users').doc(userId);
+  // Query enrolled authentication factors
   const [account, snapshot] = await Promise.all([reference.get(), reference.collection('authFactors').get()]);
   return snapshot.docs.filter(document => document.data()?.enabled !== false
     && belongsToAccount(account, document.data()));
@@ -7898,9 +8037,11 @@ async function factorDocumentsForUser(userId) {
 
 async function decrementMfaChallengeAttempt(reference) {
   return admin.firestore().runTransaction(async (transaction) => {
+    // Query remaining MFA attempts
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists || snapshot.data()?.consumed === true) return 0;
     const remaining = Math.max(0, Number(snapshot.data()?.attemptsRemaining || 0) - 1);
+    // Update cloud: update MFA attempt count
     transaction.set(reference, { attemptsRemaining: remaining }, { merge: true });
     return remaining;
   });
@@ -7958,6 +8099,7 @@ function recentMfaAuthentication(request) {
 
 // createMfaCustomToken: Issue full-MFA claims only after preparing the matching server-owned mobile session candidate.
 async function createMfaCustomToken({ userId, phoneNumber, method, loginSession = {} }) {
+  // Query account device and security modules
   const userSnapshot = await readUser(admin.firestore().collection('users').doc(userId), ["devices","security"]);
   const user = userSnapshot.data() || {};
   if (!userSnapshot.exists || user.accountDisabled === true || user.status === 'disabled') {
@@ -7972,6 +8114,7 @@ async function createMfaCustomToken({ userId, phoneNumber, method, loginSession 
     initialSetup: !user.passwordHash && ['sign_up', 'sign_in', 'reauth'].includes(loginSession.loginIntent),
   });
   const nowIso = new Date().toISOString();
+  // Update cloud: save account authentication state
   await setUser(null, userSnapshot.ref, {
     lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
     lastSignedInAtLocal: nowIso,
@@ -8006,6 +8149,7 @@ async function persistEnrolledFactor({
   let nextMethods;
   const nowIso = new Date().toISOString();
   await db.runTransaction(async (transaction) => {
+    // Query factor and enrollment session
     const reads = await Promise.all([
       transaction.get(factorReference),
       readUser(userReference, ["achievements","profile","security"], transaction),
@@ -8038,6 +8182,7 @@ async function persistEnrolledFactor({
       ) {
         throw new HttpsError('deadline-exceeded', 'The verification session has expired.');
       }
+      // Update cloud: save enrolled MFA factor
       transaction.set(context.sessionReference, {
         consumed: true,
         consumedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -8085,6 +8230,7 @@ async function persistEnrolledFactor({
     userId: context.userId,
     phoneNumber: context.phoneNumber,
     method: factor.type,
+    // Query final enrollment session
     loginSession: context.sessionReference ? (await context.sessionReference.get()).data() : {},
   });
   return {
@@ -8129,6 +8275,7 @@ exports.beginTotpEnrollment = onAuthenticationCall(
     const secret = generateTotpSecret();
     const challengeId = randomOpaqueToken(24);
     const expiresAtMillis = Date.now() + MFA_CHALLENGE_TTL_MILLIS;
+    // Update cloud: create TOTP enrollment challenge
     await admin.firestore().collection('mfaEnrollmentChallenges').doc(challengeId).set({
       kind: 'totp',
       contextKey: context.contextKey,
@@ -8160,6 +8307,7 @@ exports.finishTotpEnrollment = onAuthenticationCall(
       throw new HttpsError('invalid-argument', 'Enter the current 6-digit Authenticator code.');
     }
     const reference = admin.firestore().collection('mfaEnrollmentChallenges').doc(challengeId);
+    // Query TOTP enrollment challenge
     const snapshot = await reference.get();
     const challenge = snapshot.data() || {};
     if (
@@ -8181,6 +8329,7 @@ exports.finishTotpEnrollment = onAuthenticationCall(
     );
     const verification = verifyTotp({ secret, code, window: 1 });
     if (!verification.valid) {
+      // Update cloud: record TOTP challenge result
       await reference.set({ attemptsRemaining: attemptsRemaining - 1 }, { merge: true });
       throw new HttpsError('permission-denied', 'The Authenticator code is incorrect.');
     }
@@ -8234,6 +8383,7 @@ exports.beginPasskeyEnrollment = onAuthenticationCall({}, async (request) => {
   });
   const challengeId = randomOpaqueToken(24);
   const expiresAtMillis = Date.now() + MFA_CHALLENGE_TTL_MILLIS;
+  // Update cloud: create passkey enrollment challenge
   await admin.firestore().collection('mfaEnrollmentChallenges').doc(challengeId).set({
     kind: 'passkey',
     contextKey: context.contextKey,
@@ -8257,6 +8407,7 @@ exports.finishPasskeyEnrollment = onAuthenticationCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'The passkey response is invalid.');
   }
   const reference = admin.firestore().collection('mfaEnrollmentChallenges').doc(challengeId);
+  // Query passkey enrollment challenge
   const snapshot = await reference.get();
   const challenge = snapshot.data() || {};
   if (
@@ -8298,6 +8449,7 @@ exports.finishPasskeyEnrollment = onAuthenticationCall({}, async (request) => {
     .update(String(credential.id))
     .digest('hex')
     .slice(0, 32)}`;
+  // Update cloud: consume passkey enrollment challenge
   await reference.set({
     consumed: true,
     consumedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -8335,6 +8487,7 @@ exports.verifyTotpLogin = onAuthenticationCall(
       .collection('users').doc(resolved.userId)
       .collection('authFactors').doc('totp');
     const result = await admin.firestore().runTransaction(async (transaction) => {
+      // Query MFA session and TOTP factor
       const [sessionSnapshot, factorSnapshot] = await Promise.all([
         transaction.get(resolved.reference),
         transaction.get(factorReference),
@@ -8365,6 +8518,7 @@ exports.verifyTotpLogin = onAuthenticationCall(
         lastUsedStep: Number(factor.lastUsedStep ?? -1),
       });
       if (!verification.valid) {
+        // Update cloud: update MFA session and TOTP factor
         transaction.set(resolved.reference, {
           attemptsRemaining: attemptsRemaining - 1,
         }, { merge: true });
@@ -8428,6 +8582,7 @@ exports.beginPasskeyLogin = onAuthenticationCall({}, async (request) => {
   });
   const challengeId = randomOpaqueToken(24);
   const expiresAtMillis = Date.now() + MFA_CHALLENGE_TTL_MILLIS;
+  // Update cloud: create passkey login challenge
   await admin.firestore().collection('mfaAuthenticationChallenges').doc(challengeId).set({
     sessionDigest: opaqueTokenDigest(token),
     userId: resolved.userId,
@@ -8451,6 +8606,7 @@ exports.finishPasskeyLogin = onAuthenticationCall({}, async (request) => {
   }
   const challengeReference = admin.firestore()
     .collection('mfaAuthenticationChallenges').doc(challengeId);
+  // Query passkey login challenge
   const challengeSnapshot = await challengeReference.get();
   const challenge = challengeSnapshot.data() || {};
   if (
@@ -8503,6 +8659,7 @@ exports.finishPasskeyLogin = onAuthenticationCall({}, async (request) => {
     throw new HttpsError('permission-denied', 'The passkey could not be verified.');
   }
   await admin.firestore().runTransaction(async (transaction) => {
+    // Query login challenge, session and factor
     const [freshChallenge, freshSession, freshFactor] = await Promise.all([
       transaction.get(challengeReference),
       transaction.get(resolved.reference),
@@ -8515,6 +8672,7 @@ exports.finishPasskeyLogin = onAuthenticationCall({}, async (request) => {
     ) {
       throw new HttpsError('already-exists', 'This passkey response was already used.');
     }
+    // Update cloud: consume passkey login challenge
     transaction.set(challengeReference, {
       consumed: true,
       consumedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -8573,12 +8731,14 @@ exports.cleanExpiredMfaArtifacts = onSchedule(
     let deleted = 0;
     for (const collectionName of collections) {
       while (true) {
+        // Query expired MFA records
         const snapshot = await db.collection(collectionName)
           .where('expiresAtMillis', '<', now)
           .limit(400)
           .get();
         if (snapshot.empty) break;
         const batch = db.batch();
+        // Update cloud: delete expired MFA records
         for (const document of snapshot.docs) batch.delete(document.ref);
         await batch.commit();
         deleted += snapshot.size;
@@ -8605,6 +8765,7 @@ exports.verifyGreenApiLoginCode = onAuthenticationCall(
       .doc(challengeId);
     const verification = await admin.firestore().runTransaction(
       async (transaction) => {
+        // Query WhatsApp login challenge
         const snapshot = await transaction.get(challengeReference);
         const challenge = snapshot.data();
         if (!snapshot.exists || !challenge) {
@@ -8663,6 +8824,7 @@ exports.verifyGreenApiLoginCode = onAuthenticationCall(
           expected.length === candidateHash.length &&
           crypto.timingSafeEqual(expected, candidateHash);
         if (!matches) {
+          // Update cloud: record login OTP attempt
           transaction.update(challengeReference, {
             attemptsRemaining: attemptsRemaining - 1,
           });
@@ -8700,6 +8862,7 @@ exports.verifyGreenApiLoginCode = onAuthenticationCall(
       await createSignupAccountIfMissing({db: admin.firestore(), auth: getAuth(), uid: userId,
         phoneNumber, HttpsError, timestamp: () => FieldValue.serverTimestamp()});
     }
+    // Query account profile and security settings
     const userSnapshot = await readUser(admin.firestore().collection('users').doc(userId), ["profile","security"]);
     if (verification.intent === 'sign_in' && !userSnapshot.exists) {
       throw new HttpsError('not-found', 'This account no longer exists.');
@@ -8718,6 +8881,7 @@ exports.verifyGreenApiLoginCode = onAuthenticationCall(
     const methods = factorMethods(factors);
     const mfaToken = randomOpaqueToken(32);
     const expiresAtMillis = Date.now() + MFA_SESSION_TTL_MILLIS;
+    // Update cloud: create MFA login session
     await mfaSessionReference(mfaToken).set({
       userId,
       phoneNumber,
@@ -8812,12 +8976,14 @@ exports.registerSafetyQuestions = onCall(
 
     await getFirestore().runTransaction(async transaction => {
       const reference = getFirestore().collection('users').doc(userId);
+      // Query account and active mobile session
       const [account, state] = await Promise.all([transaction.get(reference),
         transaction.get(getFirestore().collection('mobileSessions').doc(userId))]);
       if (!account.exists || account.data()?.accountDisabled === true || account.data()?.status === 'disabled'
         || state.data()?.activeSessionId !== request.auth.token.mobileSessionId) {
         throw new HttpsError('unauthenticated', 'This session has ended. Sign in again.');
       }
+      // Update cloud: save safety question credentials
       setUser(transaction, reference, {safetyQuestions: {q1, a1Hash, q2, a2Hash}}, {merge: true});
     });
 
@@ -8841,6 +9007,7 @@ exports.sendPasswordResetCode = onAuthenticationCall(
     const {credentials} = await runOtpChecks({
       timing,
       checkAccount: async () => {
+        // Query recovery identity and security settings
         const [authResult, accountResult] = await Promise.allSettled([
           admin.auth().getUser(userId),
           readUser(admin.firestore().collection('users').doc(userId), ['security']),
@@ -8950,6 +9117,7 @@ exports.sendPasswordResetCode = onAuthenticationCall(
         'WhatsApp accepted the request but delivery could not be confirmed. Wait one minute before trying again.'
       );
     }
+    // Update cloud: record reset challenge delivery
     await timing.measure('deliveryCommit', () => challengeReference.set(
       {
         deliveryState: 'sent',
@@ -8977,6 +9145,7 @@ exports.verifyPasswordResetOtp = onAuthenticationCall(
       .doc(challengeId);
     const verification = await admin.firestore().runTransaction(
       async (transaction) => {
+        // Query password reset challenge
         const snapshot = await transaction.get(challengeReference);
         const challenge = snapshot.data();
         if (!snapshot.exists || !challenge) {
@@ -9011,6 +9180,7 @@ exports.verifyPasswordResetOtp = onAuthenticationCall(
           expected.length === candidateHash.length &&
           crypto.timingSafeEqual(expected, candidateHash);
         if (!matches) {
+          // Update cloud: record reset OTP attempt
           transaction.update(challengeReference, {
             attemptsRemaining: attemptsRemaining - 1,
           });
@@ -9040,6 +9210,7 @@ exports.verifyPasswordResetOtp = onAuthenticationCall(
     }
 
     const userId = userDocumentIdForPhone(phoneNumber);
+    // Query account recovery settings
     const userSnapshot = await readUser(admin
       .firestore()
       .collection('users')
@@ -9065,6 +9236,7 @@ exports.verifyPasswordResetOtp = onAuthenticationCall(
 
     const resetToken = crypto.randomBytes(32).toString('hex');
     const resetExpiresAt = Date.now() + 10 * 60 * 1000;
+    // Update cloud: create password reset session
     await admin
       .firestore()
       .collection('passwordResetSessions')
@@ -9102,6 +9274,7 @@ async function readUsablePasswordResetSession(resetToken, recoveryMethod = '') {
   const reference = admin.firestore()
     .collection('passwordResetSessions')
     .doc(resetToken);
+  // Query reset session and account
   const snapshot = await reference.get();
   const session = snapshot.data() || {};
   if (
@@ -9154,6 +9327,7 @@ exports.checkSafetyAnswer = onAuthenticationCall(
       .collection('passwordResetSessions')
       .doc(resetToken);
     const result = await admin.firestore().runTransaction(async (transaction) => {
+      // Query reset session and safety answers
       const snapshot = await transaction.get(sessionRef);
       const session = snapshot.data();
       if (!snapshot.exists || !session) {
@@ -9202,6 +9376,7 @@ exports.checkSafetyAnswer = onAuthenticationCall(
       if (!answerValid) {
         const remaining = Number(session.attemptsRemaining || 0) - 1;
         if (remaining <= 0) {
+          // Update cloud: record safety answer verification
           transaction.update(sessionRef, { used: true, attemptsRemaining: 0 });
           return { errorCode: 'permission-denied', errorMessage: 'Too many incorrect answers. Start the password reset again.' };
         }
@@ -9241,6 +9416,7 @@ exports.verifyPasswordResetTotp = onAuthenticationCall(
       .collection('users').doc(resolved.userId)
       .collection('authFactors').doc('totp');
     const result = await admin.firestore().runTransaction(async (transaction) => {
+      // Query reset session and TOTP factor
       const [sessionSnapshot, factorSnapshot] = await Promise.all([
         transaction.get(resolved.reference),
         transaction.get(factorReference),
@@ -9277,6 +9453,7 @@ exports.verifyPasswordResetTotp = onAuthenticationCall(
         lastUsedStep: Number(factor.lastUsedStep ?? -1),
       });
       if (!verification.valid) {
+        // Update cloud: update reset session and TOTP factor
         transaction.set(resolved.reference, {
           attemptsRemaining: attemptsRemaining - 1,
         }, { merge: true });
@@ -9338,6 +9515,7 @@ exports.beginPasswordResetPasskey = onAuthenticationCall({}, async (request) => 
   });
   const challengeId = randomOpaqueToken(24);
   const expiresAtMillis = Date.now() + MFA_CHALLENGE_TTL_MILLIS;
+  // Update cloud: create passkey recovery challenge
   await admin.firestore()
     .collection('passwordResetPasskeyChallenges')
     .doc(challengeId)
@@ -9363,6 +9541,7 @@ exports.finishPasswordResetPasskey = onAuthenticationCall({}, async (request) =>
   }
   const challengeReference = admin.firestore()
     .collection('passwordResetPasskeyChallenges').doc(challengeId);
+  // Query passkey recovery challenge
   const challengeSnapshot = await challengeReference.get();
   const challenge = challengeSnapshot.data() || {};
   if (
@@ -9433,6 +9612,7 @@ exports.finishPasswordResetPasskey = onAuthenticationCall({}, async (request) =>
     );
   }
   await admin.firestore().runTransaction(async (transaction) => {
+    // Query recovery challenge, session and factor
     const [freshChallenge, freshSession, freshFactor] = await Promise.all([
       transaction.get(challengeReference),
       transaction.get(resolved.reference),
@@ -9451,6 +9631,7 @@ exports.finishPasswordResetPasskey = onAuthenticationCall({}, async (request) =>
         'This passkey response was already used.'
       );
     }
+    // Update cloud: consume passkey recovery challenge
     transaction.set(challengeReference, {
       consumed: true,
       consumedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -9489,6 +9670,7 @@ exports.resetPassword = onAuthenticationCall(
       .collection('passwordResetSessions')
       .doc(resetToken);
     const result = await admin.firestore().runTransaction(async (transaction) => {
+      // Query reset session and account
       const snapshot = await transaction.get(sessionRef);
       const session = snapshot.data();
       if (!snapshot.exists || !session) {
@@ -9526,6 +9708,7 @@ exports.resetPassword = onAuthenticationCall(
         return {errorCode: 'deadline-exceeded', errorMessage: 'This recovery session has expired. Start again.'};
       }
       const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
+      // Update cloud: save password and consume reset session
       updateUser(transaction, admin.firestore().collection('users').doc(userId), { passwordHash });
       mobileSessionSecurity.revokeInTransaction(transaction, userId, 'password-reset');
       transaction.update(sessionRef, { used: true });
@@ -9548,6 +9731,7 @@ exports.loginWithPassword = onAuthenticationCall({}, async () => {
 });
 
 exports.getPasswordSetupStatus = onCall({}, async request => {
+  // Query password setup status
   const user = await readUser(getFirestore().collection('users').doc(request.auth.uid), ['security']);
   return {configured: Boolean(user.data()?.passwordHash)};
 });
@@ -9567,6 +9751,7 @@ exports.linkPasswordToAccount = onCall({}, async request => {
   const passwordHash = await argon2.hash(password, {type: argon2.argon2id});
   return getFirestore().runTransaction(async transaction => {
     const reference = getFirestore().collection('users').doc(uid);
+    // Query security settings and active session
     const [user, state] = await Promise.all([readUser(reference, ['security'], transaction),
       transaction.get(getFirestore().collection('mobileSessions').doc(uid))]);
     const security = user.data() || {};
@@ -9578,6 +9763,7 @@ exports.linkPasswordToAccount = onCall({}, async request => {
       if (security.initialPasswordSetupSessionId === request.auth.token.mobileSessionId) return {configured: true, alreadyConfigured: true};
       throw new HttpsError('already-exists', 'A password is already configured. Use password change or recovery.');
     }
+    // Update cloud: link password credential
     setUser(transaction, reference, {passwordHash, passwordSetupCompletedAt: FieldValue.serverTimestamp(),
       initialPasswordSetupSessionId: request.auth.token.mobileSessionId, profile: {username}}, {merge: true});
     return {configured: true};
@@ -9592,12 +9778,14 @@ exports.changeAccountPassword = onCall({}, async request => {
   const passwordHash = await argon2.hash(password, {type: argon2.argon2id});
   await getFirestore().runTransaction(async transaction => {
     const ref = getFirestore().collection('users').doc(request.auth.uid);
+    // Query current password and mobile session
     const [user, state] = await Promise.all([readUser(ref, ['security'], transaction),
       transaction.get(getFirestore().collection('mobileSessions').doc(request.auth.uid))]);
     if (!user.exists || user.data()?.accountDisabled === true || user.data()?.status === 'disabled'
       || state.data()?.activeSessionId !== request.auth.token.mobileSessionId) {
       throw new HttpsError('unauthenticated', 'This session has ended. Sign in again.');
     }
+    // Update cloud: replace password credential
     updateUser(transaction, ref, {passwordHash, passwordChangedAt: FieldValue.serverTimestamp()});
   });
   return {changed: true};
@@ -9618,6 +9806,7 @@ exports.fetchWeatherForAllTrails = onSchedule(
   { schedule: 'every 60 minutes', timeoutSeconds: 540 },
   async () => {
     const db = admin.firestore();
+    // Query trails for weather refresh
     const trails = await db.collection('trails').get();
     for (const doc of trails.docs) {
       const { latitude, longitude } = doc.data();
@@ -9664,6 +9853,7 @@ exports.fetchWeatherForTrail = onCall(
     }
 
     const db = admin.firestore();
+    // Query trail weather inputs by ID
     const doc = await db.collection('trails').doc(trailId).get();
 
     if (!doc.exists) {
@@ -9719,6 +9909,7 @@ async function claimAtMostOnceDelivery(
   const claimField = `${claimPrefix}ClaimedAt`;
   const claimLocalField = `${claimPrefix}ClaimedAtLocal`;
   return admin.firestore().runTransaction(async (transaction) => {
+    // Query previous notification delivery
     const snapshot = await transaction.get(reference);
     const data = snapshot.data() || {};
     if (
@@ -9729,6 +9920,7 @@ async function claimAtMostOnceDelivery(
     ) {
       return null;
     }
+    // Update cloud: claim notification delivery
     transaction.set(
       reference,
       {
@@ -9749,6 +9941,7 @@ async function sendActiveHikeReopenReminder(
 ) {
   const claimedSession = await admin.firestore().runTransaction(
     async (transaction) => {
+      // Query active hike for reopen reminder
       const snapshot = await transaction.get(sessionRef);
       const current = snapshot.data() || {};
       const token = String(current.monitoringFcmToken || '').trim();
@@ -9774,6 +9967,7 @@ async function sendActiveHikeReopenReminder(
       ) {
         return null;
       }
+      // Update cloud: record reopen reminder delivery
       transaction.set(
         sessionRef,
         {
@@ -9952,6 +10146,7 @@ async function sendGroupChatSystemMessage(db, chatDoc, text) {
     : [];
   const now = new Date();
   const messageRef = chatDoc.ref.collection('messages').doc();
+  // Update cloud: add group chat system message
   await messageRef.set({
     chatId: chatDoc.id,
     senderPhone: String(chat.creatorPhone || 'system'),
@@ -9970,6 +10165,7 @@ async function startGroupChatClosure(db, chatDoc, reason, messagePrefix) {
   }
   const now = new Date();
   const removesAt = new Date(now.getTime() + 60 * 60 * 1000);
+  // Update cloud: schedule group chat closure
   await chatDoc.ref.set(
     {
       customName: String(chat.customName || '').trim()
@@ -10023,6 +10219,7 @@ async function ensureAchievementDefinitions() {
   achievementDefinitionsReady = (async () => {
     const db = admin.firestore();
     const catalogRef = db.collection('achievementCatalog').doc('current');
+    // Query achievement catalogue and definitions
     const state = await catalogRef.get();
     if (Number(state.data()?.version) >= achievementCatalog.rules.version) return;
     const existing = await db.collection('achievements').get();
@@ -10036,6 +10233,7 @@ async function ensureAchievementDefinitions() {
         if (!definition) return;
         const visible = achievementCatalog.visible({...definition, achievementId:id});
         if (!visible) {
+          // Update cloud: save achievement definitions and version
           if (snapshot.exists) tx.set(refs[index], {isActive:false, retired:true,
             retirementReason:'This activity is no longer supported.'}, {merge:true});
           return;
@@ -10087,6 +10285,7 @@ async function applyAchievementMetricServer({userId, metricKey, eventKey, increm
 async function applyCompletedHikeAchievements({ userId, sessionId, trailId, hike = {} }) {
   let trail = {};
   if (validFirestoreDocumentId(trailId)) {
+    // Query completed hike trail
     const trailSnapshot = await admin
       .firestore()
       .collection('trails')
@@ -10117,6 +10316,7 @@ async function reconcileAchievementMetricServer({
 
   await ensureAchievementDefinitions();
   const db = admin.firestore();
+  // Query achievement definitions, progress and points
   const definitions = await db
     .collection('achievements')
     .where('metricKey', '==', metricKey)
@@ -10165,6 +10365,7 @@ async function reconcileAchievementMetricServer({
         Math.min(1000000000, Number(definition.rewardPoints || 0))
       );
       const nowIso = new Date().toISOString();
+      // Update cloud: save achievement progress
       transaction.set(
         progressReference,
         {
@@ -10201,6 +10402,7 @@ async function reconcileAchievementMetricServer({
         );
         const totalPoints = currentPoints + rewardPoints;
         const level = hikerLevelForPoints(totalPoints);
+        // Update cloud: update achievement totals
         setUser(transaction, userReference, {
             achievementPoints: totalPoints,
             hikerLevel: level.number,
@@ -10221,6 +10423,7 @@ exports.getMyAchievementProgressHash = onCall({}, async (request) => {
     'Sign in to check achievement progress.'
   );
   const db = admin.firestore();
+  // Query achievement definitions and user awards
   const [definitionSnapshot, awardSnapshot] = await Promise.all([
     db.collection('achievements').get(),
     db.collection('userAchievements').where('userId', '==', uid).get(),
@@ -10243,6 +10446,7 @@ exports.syncMyAchievementProgress = onCall({timeoutSeconds:120}, async request =
   const {uid} = authenticatedPhoneFor(request, 'Sign in to synchronize achievement progress.');
   await ensureAchievementDefinitions();
   const db = admin.firestore(), userReference = db.collection('users').doc(uid);
+  // Query achievement catalogue and hiker progress
   const [userSnapshot, catalogSnapshot, definitions] = await Promise.all([
     readUser(userReference, ['achievements','profile']), db.collection('achievementCatalog').doc('current').get(),
     db.collection('achievements').get()]);
@@ -10262,6 +10466,7 @@ exports.syncMyAchievementProgress = onCall({timeoutSeconds:120}, async request =
     while (true) {
       let page = query.orderBy(admin.firestore.FieldPath.documentId()).limit(300);
       if (last) page = page.startAfter(last);
+      // Query paginated activity history
       const snapshot = await page.get();
       for (const doc of snapshot.docs) await visit(doc);
       if (snapshot.docs.length < 300) break;
@@ -10275,6 +10480,7 @@ exports.syncMyAchievementProgress = onCall({timeoutSeconds:120}, async request =
   const trailIds = [...new Set(completed.map(hike => String(hike.trailId || '')).filter(validFirestoreDocumentId))];
   const trails = new Map();
   for (let offset=0;offset<trailIds.length;offset+=100) {
+    // Query trails from completed hikes
     const docs = await db.getAll(...trailIds.slice(offset,offset+100).map(id=>db.collection('trails').doc(id)));
     for (const doc of docs) trails.set(doc.id,doc.data() || {});
   }
@@ -10300,6 +10506,7 @@ exports.syncMyAchievementProgress = onCall({timeoutSeconds:120}, async request =
     const progressCount = await achievementProgressStore.recordEvents({db,userId:uid,metricKey,events:[...events.values()]});
     await reconcileAchievementMetricServer({userId:uid,metricKey,progressCount});
   }
+  // Update cloud: mark achievement backfill complete
   await setUser(null,userReference,{achievementCatalogSyncVersion:achievementCatalog.rules.version,
     achievementCatalogRevision:revision,achievementCatalogSyncedAtLocal:new Date().toISOString()}, {merge:true});
   return {synchronized:true,completedHikes:completed.length};
@@ -10317,6 +10524,7 @@ exports.manageAchievementDefinition = onCall(
       await ensureAchievementDefinitions();
       return { seeded: true };
     }
+    // Query admin permissions and achievement definition
     const userSnapshot = await readUser(admin
       .firestore()
       .collection('users')
@@ -10337,6 +10545,7 @@ exports.manageAchievementDefinition = onCall(
           throw new HttpsError('not-found','This achievement is no longer available.');
         }
         if ((definition.isActive !== false) === isActive) return;
+        // Update cloud: update achievement and catalogue revision
         tx.set(reference,{isActive,updatedByAdminId:uid,updatedAt:admin.firestore.FieldValue.serverTimestamp(),
           updatedAtLocal:new Date().toISOString()},{merge:true});
         tx.set(db.collection('achievementCatalog').doc('current'),{revision:admin.firestore.FieldValue.increment(1)},{merge:true});
@@ -10365,12 +10574,14 @@ exports.manageAchievementDefinition = onCall(
     }
     const achievementId = requestedId || `achievement_${crypto.randomBytes(12).toString('hex')}`;
     const reference = db.collection('achievements').doc(achievementId);
+    // Query existing achievement definition
     const existing = await reference.get();
     const rewardType = String(raw?.rewardType || '') === 'cumulative'
       ? 'cumulative'
       : 'one_time';
     const nowIso = new Date().toISOString();
     const batch = db.batch();
+    // Update cloud: save edited achievement and revision
     batch.set(reference,
       {
         achievementId,
@@ -10419,9 +10630,11 @@ async function revokeTerminalHikeShare(hike) {
   const shareRef = db.collection('live_location_shares').doc(shareId);
   const userRef = db.collection('users').doc(userId);
   await db.runTransaction(async tx => {
+    // Query live share and owner location
     const [shareSnapshot, userSnapshot] = await Promise.all([tx.get(shareRef), readUser(userRef, ["location"], tx)]);
     const share = shareSnapshot.data() || {};
     if (!shareSnapshot.exists || share.ownerUserId !== userId) return;
+    // Update cloud: revoke finished hike's live share
     tx.update(shareRef, { isActive: false, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     if (userSnapshot.exists && userSnapshot.data()?.liveLocationShareId === shareId) {
       updateUser(tx, userRef, { liveLocationEnabled: false, liveLocationUpdatedAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -10433,6 +10646,7 @@ async function revokeTerminalHikeShare(hike) {
 // the legacy trigger that awarded preparation badges from an ordinary hike
 // start. No preparation metric is emitted until the backend has authoritative
 // offline-map and full-checklist evidence.
+// Listen for new hike sessions
 exports.awardAchievementsForStartedHike = onDocumentCreated(
   { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60, region: 'asia-southeast1' },
   async (event) => {
@@ -10447,6 +10661,7 @@ exports.awardAchievementsForStartedHike = onDocumentCreated(
 );
 
 // recordHikeTerminalStateAndAchievements: Preserve terminal identity and award completed-hike metrics without replaying the same event.
+// Listen for hike session updates
 exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
   { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60, region: 'asia-southeast1' },
   async (event) => {
@@ -10467,6 +10682,7 @@ exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
       return;
     }
     const nowIso = new Date().toISOString();
+    // Update cloud: save final hike state
     await admin.firestore().collection('hikeSessionTerminalStates')
       .doc(event.params.sessionId)
       .set({
@@ -10491,6 +10707,7 @@ exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
   }
 );
 
+// Listen for team session updates
 exports.awardAchievementForCompletedTeamHike = onDocumentUpdated(
   { document: 'teamHikeSessions/{teamId}', retry: true, region: 'asia-southeast1' },
   async (event) => {
@@ -10525,6 +10742,7 @@ exports.awardAchievementForCompletedTeamHike = onDocumentUpdated(
       return;
     }
     const db = admin.firestore();
+    // Query completed team hikes
     const hikeSnapshots = await db.getAll(
       ...sessionIds.map((sessionId) => db.collection('hikeSessions').doc(sessionId))
     );
@@ -10551,6 +10769,7 @@ exports.awardAchievementForCompletedTeamHike = onDocumentUpdated(
   }
 );
 
+// Listen for hike session deletions
 exports.preserveDeletedHikeTerminalState = onDocumentDeleted(
   { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60, region: 'asia-southeast1' },
   async (event) => {
@@ -10560,6 +10779,7 @@ exports.preserveDeletedHikeTerminalState = onDocumentDeleted(
     if (!['completed', 'abandoned'].includes(status)) {
       return;
     }
+    // Update cloud: preserve deleted hike's final state
     await admin.firestore().collection('hikeSessionTerminalStates')
       .doc(event.params.sessionId)
       .set({
@@ -10573,6 +10793,7 @@ exports.preserveDeletedHikeTerminalState = onDocumentDeleted(
   }
 );
 
+// Listen for new community posts
 exports.awardAchievementForCommunityPost = onDocumentCreated(
   { document: 'communityPosts/{postId}', region: 'asia-southeast1' },
   async (event) => {
@@ -10592,6 +10813,7 @@ exports.awardAchievementForCommunityPost = onDocumentCreated(
   }
 );
 
+// Listen for hazard report updates
 exports.awardAchievementForApprovedHazard = onDocumentUpdated(
   { document: 'hazardReports/{hazardId}', region: 'asia-southeast1' },
   async (event) => {
@@ -10617,6 +10839,7 @@ exports.awardAchievementForApprovedHazard = onDocumentUpdated(
 );
 
 // notifyGroupMembersAboutMessage: Claim message delivery, reconcile the latest preview, and notify current members only.
+// Listen for new group chat messages
 exports.notifyGroupMembersAboutMessage = onDocumentCreated(
   { document: 'groupChats/{chatId}/messages/{messageId}', retry: true, region: 'asia-southeast1' },
   async (event) => {
@@ -10637,6 +10860,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
     if (!chatReference) {
       return;
     }
+    // Query group chat members
     const chatSnapshot = await chatReference.get();
     const chat = chatSnapshot.data() || {};
     const chatRemovesAt = dateMillis(chat.chatRemovesAtLocal);
@@ -10670,6 +10894,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
     const userReferences = participantPhones.map((phone) =>
       db.collection('users').doc(phone.replace(/\//g, '_'))
     );
+    // Query chat participants' notification devices
     const userSnapshots = await readUsers(db, [...userReferences], ["devices","preferences"]);
     const tokens = new Set();
     const tokenOwners = new Map();
@@ -10711,6 +10936,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
         for (let index = 0; index < tokenList.length; index += 500) {
           const title = chat.chatType === 'direct' ? String(message.senderName || 'New private message')
             : `${message.senderName || 'A hiker'} - ${chat.trailName || 'Group chat'}`;
+          // API: FCM chat message
           const response = await admin.messaging().sendEach(tokenList.slice(index, index + 500).map(token =>
             require('./chat_push_delivery').chatPush({token, ...tokenOwners.get(token), chatId: event.params.chatId,
               messageId: event.params.messageId, deepLink, title, body: groupChatMessagePreview(message)})));
@@ -10740,6 +10966,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
       message.sentAtLocal || message.createdAt || new Date().toISOString()
     ).getTime();
     await db.runTransaction(async (transaction) => {
+      // Query chat and latest messages
       const [freshChatSnapshot, freshMessageSnapshot, latestMessages] = await Promise.all([
         transaction.get(chatReference),
         transaction.get(event.data.ref),
@@ -10756,6 +10983,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
       const currentPreviewTime = dateMillis(freshChat.lastMessageAtLocal);
       if (Number.isFinite(latestTime)
           && (latestTime !== currentPreviewTime || freshChat.lastMessage !== groupChatMessagePreview(latestMessage))) {
+        // Update cloud: save chat summary and notification state
         transaction.update(chatReference, {
           lastMessage: groupChatMessagePreview(latestMessage),
           lastMessageAtLocal: latestMessage.sentAtLocal,
@@ -10818,6 +11046,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
 
 // deliverFcmOutboxDocument: Fence preflight and outbound phases before delivering a queued push notification.
 async function deliverFcmOutboxDocument(reference, messageId) {
+  // Query FCM delivery record
   const initial = await reference.get();
   if (initial.data()?.type === 'buddy_request') return buddyRequestService.deliver(reference);
 
@@ -10857,6 +11086,7 @@ async function deliverFcmOutboxDocument(reference, messageId) {
       return;
     }
 
+    // Query team notification session
     const teamSnapshot = await admin
       .firestore()
       .collection('teamHikeSessions')
@@ -10931,6 +11161,7 @@ async function deliverFcmOutboxDocument(reference, messageId) {
     const safeDeepLink = type === 'team_hike_ping'
       ? `hikercircle://team-hike/ping?teamSessionId=${encodeURIComponent(teamHikeSessionId)}`
       : `hikercircle://team-hike/join?teamSessionId=${encodeURIComponent(teamHikeSessionId)}`;
+    // Query team notification recipients
     const userSnapshot = await readUser(admin
       .firestore()
       .collection('users')
@@ -10963,6 +11194,7 @@ async function deliverFcmOutboxDocument(reference, messageId) {
     let failureCount = 0;
     try {
       for (let index = 0; index < tokenList.length; index += 500) {
+        // API: FCM outbox notification
         const response = await admin.messaging().sendEachForMulticast({
           tokens: tokenList.slice(index, index + 500),
           notification: {
@@ -11018,11 +11250,13 @@ async function deliverFcmOutboxDocument(reference, messageId) {
   }
 }
 
+// Listen for new FCM outbox entries
 exports.deliverFcmOutboxMessage = onDocumentCreated(
   { document: 'fcmOutbox/{messageId}', retry: true, region: 'asia-southeast1' },
   event => deliverFcmOutboxDocument(event.data.ref, event.params.messageId)
 );
 
+// Listen for new FCM outbox entries
 exports.deliverTeamReadinessWhatsApp = onDocumentCreated(
   {
     document: 'fcmOutbox/{messageId}',
@@ -11043,6 +11277,7 @@ exports.deliverTeamReadinessWhatsApp = onDocumentCreated(
     const senderPhone = String(payload.senderPhoneNumber || '').trim();
     const teamId = String(payload.teamHikeSessionId || '').trim();
     const finish = async (status, extra = {}) => {
+      // Update cloud: record WhatsApp readiness notification
       await event.data.ref.set(
         {
           teamReadinessWhatsAppStatus: status,
@@ -11065,6 +11300,7 @@ exports.deliverTeamReadinessWhatsApp = onDocumentCreated(
         return;
       }
 
+      // Query team readiness session
       const teamSnapshot = await admin.firestore()
         .collection('teamHikeSessions')
         .doc(teamId)
@@ -11091,6 +11327,7 @@ exports.deliverTeamReadinessWhatsApp = onDocumentCreated(
         .trim()
         .slice(0, 100) || 'your team hike';
       const credentials = greenApiCredentials();
+      // API: WhatsApp team readiness notice
       const response = await fetch(greenApiEndpoint('sendMessage', credentials), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -11144,6 +11381,7 @@ exports.recoverFcmOutboxDeliveries = onSchedule('every 5 minutes', async () => {
       .where('status', 'in', ['pending', 'sending'])
       .orderBy(admin.firestore.FieldPath.documentId()).limit(100);
     if (cursor) query = query.startAfter(cursor);
+    // Query retryable FCM deliveries
     const page = await query.get();
     if (page.empty) break;
     for (const document of page.docs) {
@@ -11154,6 +11392,7 @@ exports.recoverFcmOutboxDeliveries = onSchedule('every 5 minutes', async () => {
   }
 });
 
+// Listen for new upcoming hikes
 exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
   { document: 'upcomingHikes/{hikeId}', region: 'asia-southeast1' },
   async (event) => {
@@ -11178,6 +11417,7 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
     const participantPhones = new Set(
       Array.isArray(hike.participantPhones) ? hike.participantPhones : []
     );
+    // Query nearby hiker profiles and devices
     const usersSnapshot = await readUserQuery(admin.firestore().collection('users'), ["devices","profile"]);
     const tokens = new Set();
     let nearbyUserCount = 0;
@@ -11223,6 +11463,7 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
     let deliveryError = '';
     try {
       for (let index = 0; index < tokenList.length; index += 500) {
+        // API: FCM nearby hike notice
         const response = await admin.messaging().sendEachForMulticast({
           tokens: tokenList.slice(index, index + 500),
           notification: {
@@ -11271,6 +11512,7 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
       });
     }
 
+    // Update cloud: record nearby hike notifications
     await event.data.ref.set(
       {
         nearbyNotificationRadiusKm: radiusKm,
@@ -11292,6 +11534,7 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
   }
 );
 
+// Listen for hike session updates
 exports.sendReminderOnActiveHikeTerminationSignal = onDocumentUpdated(
   { document: 'hikeSessions/{sessionId}', region: 'asia-southeast1' },
   async (event) => {
@@ -11338,6 +11581,7 @@ async function sendUpcomingHikeReminderToPhone(
   if (!phone || !Number.isFinite(departureMillis) || departureMillis <= Date.now()) {
     return { successCount: 0, failureCount: 0, skipped: true };
   }
+  // Query hike reminder device settings
   const userSnapshot = await readUser(db
     .collection('users')
     .doc(userDocumentIdForPhone(phone)), ["devices"]);
@@ -11360,6 +11604,7 @@ async function sendUpcomingHikeReminderToPhone(
   let failureCount = 0;
   for (let index = 0; index < tokenList.length; index += 500) {
     if (departureMillis <= Date.now()) break;
+    // API: FCM upcoming hike reminder
     const response = await admin.messaging().sendEachForMulticast({
       tokens: tokenList.slice(index, index + 500),
       notification: {
@@ -11422,6 +11667,7 @@ async function claimUpcomingHikeReminder({
     .collection('reminderPreferences')
     .doc(userId);
   return db.runTransaction(async (transaction) => {
+    // Query reminder settings and mobile session
     const snapshot = await transaction.get(preferenceReference);
     if (!snapshot.exists && (
       hike.reminder30SentAt
@@ -11446,6 +11692,7 @@ async function claimUpcomingHikeReminder({
         rawPreference, departureMillis, slotMillis: due.slotMillis,
         sessionState: sessionSnapshot.data(),
       })) {
+        // Update cloud: record reminder claim or delivery
         transaction.set(preferenceReference, {
           departureTimeLocal: new Date(departureMillis).toISOString(),
           lastLocalReminderSlotAtLocal: new Date(due.slotMillis).toISOString(),
@@ -11511,6 +11758,7 @@ async function processUpcomingHikeLifecycleTask({db, snapshot, now}) {
 
       if (departureMillis <= expiredBefore) {
         if (hike.isDeleted !== true) {
+          // Update cloud: update scheduled hike status
           await document.ref.set(
             {
               expired: true,
@@ -11571,6 +11819,7 @@ async function processUpcomingHikeLifecycleTask({db, snapshot, now}) {
         );
         reminderSuccessCount += result.successCount;
         reminderFailureCount += result.failureCount;
+        // Update cloud: record hike reminder delivery
         await claim.preferenceReference.set(
           {
             sentCount: claim.nextSentCount,
@@ -11611,6 +11860,7 @@ async function reconcileUpcomingHikeOperationsSchedule() {
   return result;
 }
 
+// Listen for upcoming hike changes
 exports.reconcileUpcomingHikeOperationsOnWrite = onDocumentWritten({
   document: 'upcomingHikes/{hikeId}', region: 'asia-southeast1', retry: true,
   timeoutSeconds: 60,
@@ -11643,6 +11893,7 @@ exports.processUpcomingHikeOperations = onSchedule(
     const db = admin.firestore();
     await withUpcomingRunLease(db, async () => {
       const now = Date.now();
+      // Query listed upcoming hikes
       const snapshot = await db.collection('upcomingHikes').where('isDeleted', '==', false).get();
       if (snapshot.empty) {
         await reconcileUpcomingHikeOperationsSchedule();
@@ -11690,6 +11941,7 @@ exports.processUpcomingHikeOperations = onSchedule(
 
 async function abandonInactiveHikeDocument(db, document, now) {
   return db.runTransaction(async (transaction) => {
+    // Query active hike before abandonment
     const freshSnapshot = await transaction.get(document.ref);
     const fresh = freshSnapshot.data() || {};
     if (
@@ -11700,6 +11952,7 @@ async function abandonInactiveHikeDocument(db, document, now) {
       return null;
     }
     const nowIso = new Date(now).toISOString();
+    // Update cloud: mark inactive hike abandoned
     transaction.set(
       document.ref,
       {
@@ -11751,6 +12004,7 @@ async function monitorActiveHikesTask({db, snapshot, now}) {
     }
 
     // Re-read before sending so a hike completed during this run is untouched.
+    // Query latest inactive hike state
     const freshSnapshot = await document.ref.get();
     const fresh = freshSnapshot.data() || {};
     const freshStaleBefore = now - hikeMonitoringStaleAfterMillis(fresh);
@@ -11810,6 +12064,7 @@ exports.monitorActiveHikes = onSchedule({
 }, async (event) => {
   const db = admin.firestore();
   await withMonitorRunLease(db, async () => {
+    // Query active hikes for monitoring
     const snapshot = await db.collection('hikeSessions').where('status', '==', 'active').get();
     if (snapshot.empty) {
       await reconcileActiveHikeMonitorSchedule();
@@ -11828,6 +12083,7 @@ async function cleanExpiredGroupChatsTask({
   const nowIso = new Date(now).toISOString();
   const orphanThreshold = now - 60 * 60 * 1000;
 
+  // Query expired group chats
   const snapshot = await db
     .collection('groupChats')
     .where('chatType', '==', 'group')
@@ -11845,6 +12101,7 @@ async function cleanExpiredGroupChatsTask({
 
     const removesAt = dateMillis(chat.chatRemovesAtLocal);
     if (Number.isFinite(removesAt) && removesAt <= now) {
+      // Update cloud: close expired group chat
       await document.ref.set(
         {
           isDeleted: true,
@@ -11871,6 +12128,7 @@ async function cleanExpiredGroupChatsTask({
     let hasAssociatedHike = false;
 
     if (hikeSessionId) {
+      // Query linked hikes before chat closure
       const [upcomingSnapshot, activeSnapshot, sourcedActiveSnapshot] = await Promise.all([
         db.collection('upcomingHikes').doc(hikeSessionId).get(),
         db.collection('hikeSessions').doc(hikeSessionId).get(),
@@ -11951,12 +12209,15 @@ async function invalidateMobileHistory(uid, eventId) {
   const ref = getFirestore().collection('mobileReadRevisions').doc(uid);
   const seen = ref.collection('events').doc(contentHash(eventId));
   await getFirestore().runTransaction(async tx => {
+    // Query history revision and previous event
     const [previous, delivered] = await Promise.all([tx.get(ref), tx.get(seen)]);
     if (delivered.exists) return;
+    // Update cloud: advance history revision
     tx.set(ref, {historyHash: contentHash([previous.data()?.historyHash || '', eventId]), updatedAt: FieldValue.serverTimestamp()}, {merge: true});
     tx.create(seen, {createdAt: FieldValue.serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 7 * 86400000)});
   });
 }
+// Listen for hike session changes
 exports.invalidateCompletedHistory = onDocumentWritten({document: 'hikeSessions/{sessionId}', region: 'asia-southeast1'}, async event => {
   const before = event.data?.before?.data();
   const after = event.data?.after?.data();
@@ -11965,6 +12226,7 @@ exports.invalidateCompletedHistory = onDocumentWritten({document: 'hikeSessions/
   const owners = new Set([before?.userId, after?.userId].filter(Boolean));
   const teamId = String(after?.teamHikeSessionId || before?.teamHikeSessionId || '');
   if (validFirestoreDocumentId(teamId)) {
+    // Query team members with changed history
     const team = await getFirestore().collection('teamHikeSessions').doc(teamId).get();
     validTeamParticipants(team.data() || {}).forEach(p => owners.add(userDocumentIdForPhone(teamParticipantPhone(p))));
   }
@@ -11972,12 +12234,17 @@ exports.invalidateCompletedHistory = onDocumentWritten({document: 'hikeSessions/
 });
 async function invalidateHistoryChild(sessionId, eventId) {
   if (!sessionId) return;
+  // Query parent hike for history record
   const hike = await getFirestore().collection('hikeSessions').doc(sessionId).get();
   if (hike.data()?.status === 'completed') await invalidateMobileHistory(hike.data().userId, eventId);
 }
+// Listen for recorded route changes
 exports.invalidateHistoryCapture = onDocumentWritten({document: 'hikeRouteCaptures/{sessionId}', region: 'asia-southeast1'}, event => invalidateHistoryChild(event.params.sessionId, event.id));
+// Listen for check-in changes
 exports.invalidateHistoryCheckIn = onDocumentWritten({document: 'checkIns/{id}', region: 'asia-southeast1'}, event => invalidateHistoryChild(event.data?.after?.data()?.sessionId || event.data?.before?.data()?.sessionId, event.id));
+// Listen for GPS footprint changes
 exports.invalidateHistoryFootprints = onDocumentWritten({document: 'footprints/{chunkId}', region: 'asia-southeast1'}, event => invalidateHistoryChild(event.data?.after?.data()?.sessionId || event.data?.before?.data()?.sessionId, event.id));
+// Listen for trail rating changes
 exports.invalidateHistoryRating = onDocumentWritten({document: 'trails/{trailId}/ratings/{sessionId}', region: 'asia-southeast1'}, event => invalidateHistoryChild(event.params.sessionId, event.id));
 
 
@@ -11992,6 +12259,7 @@ exports.sendChatReminder = onCall({secrets: [greenApiInstanceId, greenApiToken],
   const noticeId = contentHash([chatId, recipientPhone, randomOpaqueToken(16)]);
   const notice = getFirestore().collection('chatReminderOutbox').doc(noticeId);
   const result = await getFirestore().runTransaction(async tx => {
+    // Query chat and linked hike
     const chat = await tx.get(getFirestore().collection('groupChats').doc(chatId));
     const data = chat.data() || {};
     const members = Array.isArray(data.participantPhones) ? data.participantPhones : [];
@@ -12013,6 +12281,7 @@ exports.sendChatReminder = onCall({secrets: [greenApiInstanceId, greenApiToken],
       throw new HttpsError('failed-precondition', 'The hike has already started or ended.');
     }
     const record = getFirestore().collection('chatReminderCooldowns').doc(contentHash([chatId, recipientPhone]));
+    // Query previous chat reminder claim
     const previous = await tx.get(record);
     const last = Number(previous.data()?.lastRequestedAtMillis || 0);
     const nextAt = last + cooldown;
@@ -12021,6 +12290,7 @@ exports.sendChatReminder = onCall({secrets: [greenApiInstanceId, greenApiToken],
         {nextAllowedAtMillis: nextAt});
     }
     const now = Date.now();
+    // Update cloud: claim and queue chat reminder
     tx.set(record, {lastRequestedAtMillis: now});
     const chatName = String(data.customName || defaultFormedHikeGroupName(data));
     const message = require('./chat_upcoming_hike_reminder').buildUpcomingHikeReminder({
@@ -12032,6 +12302,7 @@ exports.sendChatReminder = onCall({secrets: [greenApiInstanceId, greenApiToken],
       departureMillis: Number.isFinite(departure) ? departure : null};
   });
   await deliverChatReminder(notice);
+  // Query queued chat reminder
   const sent = await notice.get();
   return {...result, status: sent.data()?.status || 'pending'};
 });
@@ -12039,8 +12310,10 @@ exports.sendChatReminder = onCall({secrets: [greenApiInstanceId, greenApiToken],
 // deliverChatReminder: Claim the reminder before the external WhatsApp send; preserve uncertain acceptance.
 async function deliverChatReminder(reference) {
   const notice = await getFirestore().runTransaction(async tx => {
+    // Query chat reminder outbox entry
     const snapshot = await tx.get(reference);
     if (!snapshot.exists || snapshot.data()?.status !== 'pending') return null;
+    // Update cloud: record chat reminder delivery
     tx.update(reference, {status: 'sending', attemptedAt: FieldValue.serverTimestamp()});
     return snapshot.data();
   });
@@ -12054,6 +12327,7 @@ async function deliverChatReminder(reference) {
       return;
     }
     try {
+      // Query chat and hike before delivery
       const chatSnapshot = await getFirestore().collection('groupChats').doc(notice.chatId).get();
       const chat = chatSnapshot.data() || {};
       const hikeId = String(notice.hikeId || chat.hikeSessionId || '');
@@ -12063,6 +12337,7 @@ async function deliverChatReminder(reference) {
       if (!hikeSnapshot?.exists || hike.isDeleted === true || hike.teamLaunchConsumed === true
           || !Number.isFinite(dateMillis(hike.departureTimeLocal || hike.departureTime))
           || dateMillis(hike.departureTimeLocal || hike.departureTime) <= Date.now()) {
+        // Update cloud: save reminder outbox result
         await reference.update({status: 'failed', reason: 'upcoming_hike_unavailable'});
         return;
       }
@@ -12078,6 +12353,7 @@ async function deliverChatReminder(reference) {
   }
   try {
     const credentials = greenApiCredentials();
+    // API: WhatsApp chat reminder
     const response = await fetch(greenApiEndpoint('sendMessage', credentials), {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({chatId: `${notice.recipientPhone.replace(/\D/g, '')}@c.us`,
@@ -12089,6 +12365,7 @@ async function deliverChatReminder(reference) {
     await reference.update({status: response.ok && id ? 'sent' : 'delivery_uncertain', providerMessageId: id || ''});
   } catch (_) { await reference.update({status: 'delivery_uncertain'}); }
 }
+// Listen for new chat reminder outbox entries
 exports.deliverChatReminder = onDocumentCreated({document: 'chatReminderOutbox/{noticeId}', region: 'asia-southeast1',
   secrets: [greenApiInstanceId, greenApiToken], retry: true}, event => deliverChatReminder(event.data.ref));
 
@@ -12113,6 +12390,7 @@ exports.requestPrivateProvider = onCall({secrets: ['GOOGLE_GEOCODING_API_KEY', '
   try { target = require('./private_provider_proxy').buildProviderRequest(operation, request.data || {}, secret); }
   catch (_) { throw new HttpsError('invalid-argument', 'The provider request contains invalid coordinates or parameters.'); }
   try {
+    // API: forward private provider request
     const response = await fetch(target.url, {method: target.method || 'GET', headers: target.headers,
       ...(target.body ? {body: target.body} : {}), redirect: 'error', signal: AbortSignal.timeout(15_000)});
     const chunks = []; let size = 0;

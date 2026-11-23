@@ -292,6 +292,7 @@ async function readSource(db, name, fields, documentId, {consume,deadline=Date.n
   const collection=name==='checkpointWeather'?db.collectionGroup(name):db.collection(name);
   let total=null,analysed=0,last,exhausted=false;
   try {
+    // Query paginated analytics records and count
     total=(await withinBudget(()=>collection.count().get(),deadline)).data().count;
     while(Date.now()<deadline) {
       let query=collection.select(...fields).orderBy(documentId).limit(500);if(last)query=query.startAfter(last);
@@ -299,6 +300,7 @@ async function readSource(db, name, fields, documentId, {consume,deadline=Date.n
       let deviceDates=new Map();
       if(name==='users'&&page.docs.length) {
         // Select only sign-in timestamps from device modules, never notification tokens or credentials.
+        // Query device last sign-in times
         const modules=await withinBudget(()=>db.getAll(...page.docs.map(doc=>doc.ref.collection('modules').doc('devices')),{fieldMask:['lastSignedInAt','lastSignedInAtLocal']}),deadline);
         deviceDates=new Map(modules.map(doc=>[doc.ref.parent.parent.id,doc.data()||{}]));
       }

@@ -4,6 +4,7 @@
 const {createHash} = require('node:crypto');
 const {classifyHazard, dateMillis, isActiveHazard} = require('./trail_hazard_policy');
 const {cancelledHikeHistoryFields} = require('./cancelled_hike_history');
+const {teamTrackingStarted} = require('./team_launch_lifecycle');
 
 const PHONE = /^\+[1-9]\d{7,14}$/;
 const UNSTARTED_PHASES = new Set(['inviting', 'readyCheck', 'countdown']);
@@ -14,8 +15,8 @@ const validId = value => typeof value === 'string' && value.length > 0 && value.
 
 async function cancelUpcomingHike(
   db, {hikeId, uid, phoneNumber, withdrawSelf = false, hazardId = '', creationKey = '',
-    archiveAsExpired = false, cancelledAtLocal, now = Date.now()},
-  HttpsError, timestamp,
+    archiveAsExpired = false, cancelledAtLocal, expectedTeamId, now = Date.now()},
+  HttpsError, timestamp, existingTransaction,
 ) {
   const reference = db.collection('upcomingHikes').doc(hikeId);
   const hash = creationKey ? createHash('sha256').update(`${uid}:${creationKey}`).digest('hex') : '';
@@ -23,9 +24,11 @@ async function cancelUpcomingHike(
     throw new HttpsError('invalid-argument', 'The schedule identity is invalid.');
   }
   const intent = hash ? db.collection('upcomingHikeIntents').doc(hash) : null;
-  return db.runTransaction(async transaction => {
+  const apply = async transaction => {
+    // Query hike or pending scheduling intent
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) {
+      // Update cloud: save pending cancellation intent
       if (intent) { transaction.set(intent, {cancelled: true, owner: uid, cancelledAt: timestamp(),
         cancelledAtLocal:cancelledHikeHistoryFields({uid,timestamp:null,now,cancelledAtLocal}).cancelledAtLocal}); return {cancelled: true, needsHistoryUpload: true}; }
       throw new HttpsError('not-found', 'This hike is no longer available.');
@@ -46,6 +49,7 @@ async function cancelUpcomingHike(
       if (hike.teamLaunchConsumed || hike.startedAt || hike.startedAtLocal
           || ['active','started','ended','completed','abandoned'].includes(String(hike.status || '').toLowerCase())) throw launchError(HttpsError);
       if (archiveAsExpired && !(hike.status === 'cancelled' && hike.historyCategory === 'expired' && hike.expired === true)) {
+        // Update cloud: cancel upcoming hike
         transaction.update(reference, cancelledHikeHistoryFields({uid,timestamp:timestamp(),now,cancelledAtLocal}));
       }
       return {cancelled: true};
@@ -55,9 +59,14 @@ async function cancelUpcomingHike(
     let receiptReference;
     if (personal) {
       receiptReference = reference.collection('withdrawals').doc(uid);
+      // Query cancellation receipt and linked hazard
       const receiptSnapshot = await transaction.get(receiptReference);
+      const receipt = receiptSnapshot.data() || {};
+      if (participants.includes(phoneNumber) && cancelledAtLocal
+          && receipt.requestedAtLocal === cancelledAtLocal) {
+        return {withdrawn: false, rejoined: true};
+      }
       if (!participants.includes(phoneNumber)) {
-        const receipt = receiptSnapshot.data() || {};
         if (receiptSnapshot.exists && receipt.userId === uid
             && receipt.phoneNumber === phoneNumber && receipt.hikeId === hikeId) {
           return {withdrawn: true, alreadyWithdrawn: true};
@@ -79,7 +88,7 @@ async function cancelUpcomingHike(
     if (personal || hazardAction || archiveAsExpired) {
       const departure = dateMillis(hike.departureTimeLocal || hike.departureTime || hike.draft?.departureTime);
       if (hike.isDeleted === true || !Number.isFinite(departure) ||
-          !archiveAsExpired && departure + 15 * 60 * 1000 <= now) {
+          !archiveAsExpired && !expectedTeamId && departure + 15 * 60 * 1000 <= now) {
         throw new HttpsError('failed-precondition', 'This upcoming hike is no longer available.');
       }
       if (hike.startedAt || hike.startedAtLocal || TERMINAL_STATUSES.has(String(hike.status || '').toLowerCase())) {
@@ -89,34 +98,38 @@ async function cancelUpcomingHike(
     const startedPhones = Array.isArray(hike.startedParticipantPhones) ? hike.startedParticipantPhones : [];
     if (hike.teamLaunchConsumed || startedPhones.some(phone => Boolean(String(phone || '').trim()))) throw launchError(HttpsError);
     const teamId = String(hike.teamHikeSessionId || '').trim();
+    if (expectedTeamId && teamId !== expectedTeamId) throw launchError(HttpsError);
     const launchLinked = teamId || hike.teamLaunchLinkedAt || hike.teamLaunchLinkedAtLocal;
-    if (launchLinked && !hazardAction && !archiveAsExpired) throw launchError(HttpsError);
+    if (launchLinked && !personal && !hazardAction && !archiveAsExpired) throw launchError(HttpsError);
 
     let teamReference;
     let team;
     let teamParticipants;
+    let closedBeforeStart = false;
     if (launchLinked) {
-      // Only a currently active fatal report may relax the ordinary launch fence.
-      // A missing/mismatched/started team always fails closed.
+      // Query linked launch before changing membership.
       if (!validId(teamId)) throw launchError(HttpsError);
       teamReference = db.collection('teamHikeSessions').doc(teamId);
+      // Query linked team and chats
       const teamSnapshot = await transaction.get(teamReference);
       team = teamSnapshot.data() || {};
       teamParticipants = Array.isArray(team.participants) ? team.participants : [];
+      closedBeforeStart = team.phase === 'completed'
+        && ['launch_cancelled', 'invitation_expired'].includes(team.completionReason);
       if (!teamSnapshot.exists || team.sourceUpcomingHikeId !== hikeId
           || team.trailId !== hike.trailId || team.hostPhoneNumber !== hike.creatorPhone
-          || team.hostUserId !== hike.creatorUserId || !UNSTARTED_PHASES.has(team.phase)
-          || team.startedAt || team.startedAtLocal || team.activeHikeSessionId
+          || team.hostUserId !== hike.creatorUserId || (!closedBeforeStart && !UNSTARTED_PHASES.has(team.phase))
+          || teamTrackingStarted({...team, participants: teamParticipants})
           || Object.values(team.activeHikeSessionIdsByPhone || {}).some(Boolean)
-          || teamParticipants.some(participant => ['active', 'offline', 'ended'].includes(participant.status))
-          || !teamParticipants.some(participant => participantPhone(participant) === phoneNumber)) {
+          || teamParticipants.some(p => p.status === 'offline' || (!closedBeforeStart && p.status === 'ended'))
+          || (!closedBeforeStart && !teamParticipants.some(p => participantPhone(p) === phoneNumber))) {
         throw launchError(HttpsError);
       }
     }
 
     const chatReferences = (personal || hazardAction || archiveAsExpired)
       ? [db.collection('groupChats').doc(`hike_${hikeId}`),
-        ...(teamReference ? [db.collection('groupChats').doc(`team_${teamId}`)] : [])]
+        ...(teamReference && !closedBeforeStart ? [db.collection('groupChats').doc(`team_${teamId}`)] : [])]
       : [];
     const chatSnapshots = await Promise.all(chatReferences.map(ref => transaction.get(ref)));
     chatSnapshots.forEach((chatSnapshot, index) => {
@@ -134,11 +147,12 @@ async function cancelUpcomingHike(
     const nowIso = new Date(now).toISOString();
     const updatedAt = timestamp();
     if (!personal) {
+      // Update cloud: cancel linked hike, team and chats
       if (intent) transaction.set(intent, {cancelled: true, owner: uid, cancelledAt: timestamp(),
         cancelledAtLocal:cancelledHikeHistoryFields({uid,timestamp:null,now,cancelledAtLocal}).cancelledAtLocal});
       transaction.update(reference, {...cancelledHikeHistoryFields({uid,timestamp:updatedAt,now,cancelledAtLocal}),
         ...(hazardAction ? {cancelledForHazardId: hazardId, updatedAt, updatedAtLocal: nowIso} : {})});
-      if (teamReference) {
+      if (teamReference && !closedBeforeStart) {
         transaction.update(teamReference, endedTeamPatch(teamParticipants, updatedAt, nowIso));
       }
       chatSnapshots.forEach((chatSnapshot, index) => {
@@ -147,8 +161,8 @@ async function cancelUpcomingHike(
       return {cancelled: true};
     }
 
-    const remaining = participants.filter(phone => phone !== phoneNumber);
-    const remainingCount = new Set([hike.creatorPhone, ...remaining].filter(Boolean)).size;
+    const remaining = [...new Set([hike.creatorPhone, ...participants].filter(phone => phone && phone !== phoneNumber))];
+    const remainingCount = remaining.length;
     const closeTeam = Boolean(teamReference && remainingCount === 1);
     const patch = {participantPhones: remaining, participantCount: remainingCount, updatedAt, updatedAtLocal: nowIso};
     const savedDraft = hike.draft && typeof hike.draft === 'object' && !Array.isArray(hike.draft)
@@ -164,15 +178,17 @@ async function cancelUpcomingHike(
       delete patch.draft.soloDistanceAcknowledgedKm;
       if (Object.hasOwn(hike, 'soloDistanceAcknowledgedKm')) patch.soloDistanceAcknowledgedKm = null;
     }
-    if (closeTeam) {
-      // The remaining host must be able to retry as a solo hike. A closed team
-      // cannot remain linked to a one-person source (the start callable rejects it).
+    if (closeTeam || closedBeforeStart) {
+      // Release a closed launch so the current roster can start again.
       Object.assign(patch, {teamHikeSessionId: null, teamLaunchLinkedAt: null, teamLaunchLinkedAtLocal: null});
     }
+    // Update cloud: save roster and withdrawal receipt
     transaction.update(reference, patch);
     transaction.set(receiptReference, {hikeId, userId: uid, phoneNumber,
+      ...(typeof cancelledAtLocal === 'string' && cancelledAtLocal.length <= 40 ? {requestedAtLocal: cancelledAtLocal} : {}),
       withdrawnAt: updatedAt, withdrawnAtLocal: nowIso, ...(hazardAction ? {hazardId} : {})});
-    if (teamReference) {
+    let updatedTeam;
+    if (teamReference && !closedBeforeStart) {
       const remainingTeam = teamParticipants.filter(participant => participantPhone(participant) !== phoneNumber);
       const nextTeam = closeTeam
         ? endedTeamPatch(remainingTeam, updatedAt, nowIso)
@@ -183,6 +199,7 @@ async function cancelUpcomingHike(
           countdownStartedAt: null, countdownStartedAtLocal: null,
           readinessStartedAt: updatedAt, readinessStartedAtLocal: nowIso, updatedAt, updatedAtLocal: nowIso};
       transaction.update(teamReference, nextTeam);
+      if (expectedTeamId) updatedTeam = {...team, ...nextTeam};
     }
     chatSnapshots.forEach((chatSnapshot, index) => {
       if (!chatSnapshot.exists) return;
@@ -200,8 +217,9 @@ async function cancelUpcomingHike(
       }
       transaction.update(chatReferences[index], chatPatch);
     });
-    return {withdrawn: true};
-  });
+    return {withdrawn: true, ...(updatedTeam ? {team: updatedTeam} : {})};
+  };
+  return existingTransaction ? apply(existingTransaction) : db.runTransaction(apply);
 }
 
 function launchError(HttpsError) {
@@ -209,7 +227,8 @@ function launchError(HttpsError) {
 }
 
 function endedTeamPatch(participants, updatedAt, nowIso) {
-  return {phase: 'completed', participants: participants.map(participant => ({...participant, status: 'ended', updatedAtLocal: nowIso})),
+  return {phase: 'completed', completionReason: 'launch_cancelled',
+    participants: participants.map(participant => ({...participant, status: 'ended', updatedAtLocal: nowIso})),
     participantPhoneNumbers: participants.map(participantPhone), endedAtLocal: nowIso,
     countdownStartedAt: null, countdownStartedAtLocal: null, updatedAt, updatedAtLocal: nowIso};
 }

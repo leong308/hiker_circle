@@ -42,6 +42,7 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
     });
 
     try {
+      // Update cloud: save recovery safety questions
       await FirebaseFunctions.instance
           .httpsCallable('registerSafetyQuestions')
           .call(<String, Object?>{

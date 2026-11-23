@@ -204,6 +204,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   StreamSubscription<User?>? _communityHazardAuthSubscription;
   final _cautionMarkerSizer = CautionMarkerSizer();
   late final _communityCautionLayer = CommunityCautionMapLayer(
+    placeBelowLocation: true,
     onTap: (cluster) {
       if (mounted) {
         unawaited(
@@ -327,6 +328,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     }
     final ownerUid = FirebaseAuth.instance.currentUser!.uid;
     final trailId = widget.activeHike.trail.trailId;
+    // Query hazards on tracked trail
     _communityHazardSubscription = FirebaseFirestore.instance
         .collection('hazardReports')
         .where('trailId', isEqualTo: trailId)

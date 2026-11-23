@@ -63,6 +63,7 @@ class HikerBleService {
   // the paired-button setup page) to replace the Home page listener, and its
   // cancellation can then clear the native sink completely. Keep one shared
   // platform subscription and fan its events out to every Dart listener.
+  // API: Bluetooth button events
   static final Stream<Object?> _platformEvents = _eventChannel
       .receiveBroadcastStream()
       .asBroadcastStream();

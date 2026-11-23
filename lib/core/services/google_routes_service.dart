@@ -116,6 +116,7 @@ class GoogleRoutesService {
 
     final client = _client ?? http.Client();
     try {
+      // API: Google walking route
       final response = _client == null
           ? await PrivateProviderClient.request('googleRoute', {
               'coordinates': [

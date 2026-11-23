@@ -62,6 +62,7 @@ class OpenRouteService {
 
     final client = _client ?? http.Client();
     try {
+      // API: openrouteservice hiking directions
       final response = _client == null
           ? await PrivateProviderClient.request('orsRoute', {
               'coordinates': [

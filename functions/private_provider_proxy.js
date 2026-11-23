@@ -12,12 +12,14 @@ function points(value) {
 // buildProviderRequest: Select an allowlisted operation and attach credentials only to the matching provider request.
 function buildProviderRequest(operation, data, secret) {
   const headers = {'Accept': 'application/json'};
+  // API: Google reverse geocoding
   if (operation === 'googleGeocode') {
     coordinate(data.latitude, data.longitude);
     const url = new URL('https://maps.googleapis.com/maps/api/geocode/json');
     url.search = new URLSearchParams({latlng: `${data.latitude},${data.longitude}`, key: secret, language: 'en', ...(data.countryOnly ? {result_type: 'country'} : {})});
     return {url, headers};
   }
+  // API: Google walking route
   if (operation === 'googleRoute') {
     const path = points(data.coordinates);
     const location = point => ({location: {latLng: coordinate(point[1], point[0])}});
@@ -28,6 +30,7 @@ function buildProviderRequest(operation, data, secret) {
         intermediates: path.slice(1, -1).map(location), travelMode: 'WALK', polylineQuality: 'HIGH_QUALITY',
         polylineEncoding: 'ENCODED_POLYLINE', computeAlternativeRoutes: false})};
   }
+  // API: Geoapify reverse geocoding
   if (operation === 'geoReverse') {
     coordinate(data.latitude, data.longitude);
     const url = new URL('https://api.geoapify.com/v1/geocode/reverse');
@@ -35,17 +38,20 @@ function buildProviderRequest(operation, data, secret) {
       ...(data.countryOnly ? {type: 'country', format: 'json'} : {})});
     return {url, headers};
   }
+  // API: Geoapify hiking route
   if (operation === 'geoRoute') {
     const path = points(data.coordinates);
     const url = new URL('https://api.geoapify.com/v1/routing');
     url.search = new URLSearchParams({waypoints: path.map(([lon, lat]) => `${lat},${lon}`).join('|'), mode: 'hike', format: 'geojson', details: 'elevation', apiKey: secret});
     return {url, headers};
   }
+  // API: openrouteservice hiking directions
   if (operation === 'orsRoute') {
     return {url: new URL('https://api.openrouteservice.org/v2/directions/foot-hiking/geojson'), method: 'POST',
       headers: {...headers, 'Authorization': secret, 'Content-Type': 'application/json'},
       body: JSON.stringify({coordinates: points(data.coordinates), elevation: true, format: 'geojson', preference: 'steepest', avoid_features: ['highways', 'tollways']})};
   }
+  // API: OpenWeatherMap weather tile
   if (operation === 'weatherTile') {
     const {z, x, y, layer} = data;
     if (!Number.isInteger(z) || z < 0 || z > 10 || !Number.isInteger(x) || !Number.isInteger(y)

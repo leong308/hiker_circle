@@ -16,6 +16,7 @@ function createManifestGuard({database, authorize, HttpsError, clock = Date.now}
     const db = database();
     const versions = [];
     const get = async path => {
+      // Query cached resource access record
       const snapshot = await db.doc(path).get();
       versions.push(snapshotVersion(snapshot));
       return snapshot;
@@ -25,25 +26,30 @@ function createManifestGuard({database, authorize, HttpsError, clock = Date.now}
     if (callable === 'readMobileResource') {
       const modules = {preferences: ['preferences', 'safety'], profile: ['profile'],
         social: ['social'], sos_preferences: ['sos']};
+      // Query user modules for cache access
       for (const module of modules[args.resourceType] || []) await get(`users/${uid}/modules/${module}`);
     }
     if (callable === 'readCloudResource' || callable === 'fetchWeatherForTrail') {
       const type = callable === 'fetchWeatherForTrail' ? 'trail_weather' : args.resourceType;
       const a = callable === 'fetchWeatherForTrail' ? {trailId: args.trailId} : args.resourceArgs;
       if (type === 'chat_messages') {
+        // Query cached chat membership
         const chat = await get(`groupChats/${a.chatId}`);
         if (!chat.exists || !Array.isArray(chat.data()?.participantPhones)
           || !chat.data().participantPhones.includes(phoneNumber)) deny('permission-denied', 'This conversation is unavailable.');
       } else if (['community_post', 'community_comments'].includes(type)) {
+        // Query post visibility and comment cursor
         const post = await get(`communityPosts/${a.postId}`);
         if (!post.exists) deny('not-found', 'The post is unavailable.');
         if (post.data().visibility !== 'public' && post.data().authorId !== uid) deny('permission-denied', 'The post is unavailable.');
         if (a.afterCommentId) await get(`communityPosts/${a.postId}/comments/${a.afterCommentId}`);
       } else if (type === 'community_posts' && a.afterPostId) {
+        // Query cached feed cursor post
         const post = await get(`communityPosts/${a.afterPostId}`);
         if (post.exists && post.data().visibility !== 'public' && post.data().authorId !== uid) deny('permission-denied', 'The post is unavailable.');
       } else if (['trail_weather', 'checkpoint_weather'].includes(type)) {
         const path = `trails/${a.trailId}` + (type === 'checkpoint_weather' ? `/checkpointWeather/${a.checkpointKey}` : '');
+        // Query cached trail or checkpoint forecast
         const saved = await get(path);
         if (!saved.exists) deny('not-found', 'The saved trail forecast is unavailable.');
         if (!saved.data()?.weather || typeof saved.data().weather !== 'object' || Array.isArray(saved.data().weather)) {
@@ -55,6 +61,7 @@ function createManifestGuard({database, authorize, HttpsError, clock = Date.now}
       let teamId;
       if (args.sessionId.startsWith('team-history_')) teamId = args.sessionId.slice('team-history_'.length);
       else {
+        // Query hike owner and completion status
         const session = await get(`hikeSessions/${args.sessionId}`);
         const data = session.data() || {};
         if (!session.exists || data.userId !== uid || data.userPhoneNumber !== phoneNumber) deny('not-found', 'This hike is not in your history.');
@@ -63,6 +70,7 @@ function createManifestGuard({database, authorize, HttpsError, clock = Date.now}
       }
       if (teamId) {
         if (typeof teamId !== 'string' || !/^[^/\x00-\x1f]{1,200}$/.test(teamId)) deny('not-found', 'This team history is unavailable.');
+        // Query team session and membership
         const snapshot = await get(`teamHikeSessions/${teamId}`);
         const team = snapshot.data() || {};
         const member = (Array.isArray(team.participants) ? team.participants : [])
@@ -74,6 +82,7 @@ function createManifestGuard({database, authorize, HttpsError, clock = Date.now}
       || (callable === 'readMobileResource' && args.resourceType === 'my_upcoming_hikes')) {
       const now = clock();
       // One indexed row detects a start-window crossing, including an empty expired list.
+      // Query current hiker's upcoming hikes
       const next = await db.collection('upcomingHikes')
         .where(Filter.or(Filter.where('creatorUserId', '==', uid), Filter.where('participantPhones', 'array-contains', phoneNumber)))
         .where('departureTimeLocal', '>', new Date(now - 15 * 60 * 1000).toISOString())

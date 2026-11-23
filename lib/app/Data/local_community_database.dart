@@ -7,6 +7,7 @@ part of 'local_session_database.dart';
 // inside every post/comment payload.
 /// Creates community tables.
 Future<void> _createCommunityTables(DatabaseExecutor db) async {
+  // Update local: create community tables and indexes
   await db.execute('''CREATE TABLE IF NOT EXISTS community_authors (
     user_id TEXT PRIMARY KEY, name TEXT NOT NULL, photo_url TEXT NOT NULL DEFAULT '',
     phone_number TEXT NOT NULL DEFAULT '', handle TEXT NOT NULL DEFAULT '',
@@ -76,6 +77,7 @@ Future<void> _putCommunityRow(
   String where,
   List<Object?> arguments,
 ) async {
+  // Update local: insert or update community row
   if (await db.update(table, values, where: where, whereArgs: arguments) == 0) {
     await db.insert(table, values);
   }
@@ -90,6 +92,7 @@ Future<void> _cacheCommunityAuthor(
 ) async {
   final id = _communityText(row['authorId']);
   if (id.isEmpty) return;
+  // Query local: cached author timestamp
   final previous = await db.query(
     'community_authors',
     where: 'user_id=?',
@@ -122,6 +125,7 @@ Future<void> _cacheCommunityAuthor(
               old.isEmpty)
       ? suppliedPoints.toInt()
       : _communityMillis(old['achievement_points']);
+  // Update local: save community author
   await _putCommunityRow(
     db,
     'community_authors',
@@ -152,6 +156,7 @@ Future<void> _cacheCommunityPostRows(
     final authorId = _communityText(row['authorId']);
     if (id.isEmpty || authorId.isEmpty) continue;
     await _cacheCommunityAuthor(db, row);
+    // Update local: save post and author reference
     await _putCommunityRow(
       db,
       'community_posts',
@@ -182,6 +187,7 @@ Future<void> _cacheCommunityPostRows(
       [id],
     );
     if (owner.isNotEmpty && row.containsKey('isLiked')) {
+      // Update local: save viewer's post reaction
       await _putCommunityRow(
         db,
         'community_reactions',
@@ -255,6 +261,7 @@ const _communityAuthorColumns =
 
 /// Computes migrate community cache.
 Future<void> _migrateCommunityCache(DatabaseExecutor db) async {
+  // Query local: legacy community cache rows
   final tables = await db.rawQuery(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='cached_entities'",
   );
@@ -314,6 +321,7 @@ Future<void> _migrateCommunityCache(DatabaseExecutor db) async {
       final authorId = _communityText(old['authorId']);
       if (postId.isEmpty || commentId.isEmpty || authorId.isEmpty) continue;
       final created = _communityMillis(old['createdAtLocal']);
+      // Update local: migrate downloaded comments
       await _putCommunityRow(
         db,
         'community_comments',
@@ -331,6 +339,7 @@ Future<void> _migrateCommunityCache(DatabaseExecutor db) async {
       );
     }
   }
+  // Update local: remove migrated cache entries
   await db.delete(
     'cached_entities',
     where: 'entity_type IN (?, ?)',
@@ -366,6 +375,7 @@ Future<List<String>> _staleCommunityPageIds(
   }
   if (!pageComplete) {
     // Use SQLite's own collation, matching the feed/thread cursor queries.
+    // Query local: stale community page rows
     final oldest = await db.query(
       table,
       columns: [idColumn, 'created_at_millis'],
@@ -421,6 +431,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
           await _removeCommunityPost(tx, postId);
         }
       }
+      // Query local: oldest cached feed posts
       final expired = await tx.rawQuery(
         '''SELECT post_id FROM community_posts
         ORDER BY cached_at_millis DESC, created_at_millis DESC LIMIT -1 OFFSET 200''',
@@ -451,6 +462,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
       if (authorId != null) authorId,
     ];
     if (afterPostId?.isNotEmpty == true) {
+      // Query local: cached feed cursor
       final cursor = await db.query(
         'community_posts',
         columns: ['created_at_millis'],
@@ -468,6 +480,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
       ]);
     }
     args.add(limit.clamp(1, 100));
+    // Query local: feed posts, authors and viewer reactions
     final rows = await db.rawQuery(
       '''SELECT p.*, $_communityAuthorColumns,
       COALESCE(r.liked, 0) AS viewer_liked FROM community_posts p
@@ -494,6 +507,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
         final id = _communityText(row['commentId']);
         if (id.isEmpty || _communityText(row['authorId']).isEmpty) continue;
         await _cacheCommunityAuthor(tx, row);
+        // Update local: cache comment and author reference
         await _putCommunityRow(
           tx,
           'community_comments',
@@ -524,6 +538,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
           pageComplete: pageComplete,
         );
         for (final commentId in stale) {
+          // Update local: remove obsolete thread comments
           await tx.delete(
             'community_comments',
             where: 'post_id = ? AND comment_id = ?',
@@ -551,6 +566,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     final clauses = ['c.post_id = ?'];
     final args = <Object?>[postId];
     if (afterCommentId != null) {
+      // Query local: cached comment cursor
       final cursor = await db.query(
         'community_comments',
         columns: ['created_at_millis'],
@@ -568,6 +584,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
       ]);
     }
     args.add(limit.clamp(1, 100));
+    // Query local: thread comments with authors
     final rows = await db.rawQuery(
       '''SELECT c.*, $_communityAuthorColumns
       FROM community_comments c JOIN community_authors a ON a.user_id=c.author_id
@@ -584,6 +601,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     int count,
   ) async {
     final db = await _openDatabase();
+    // Update local: update cached comment count
     await db.update(
       'community_posts',
       {'comment_count': count},
@@ -601,6 +619,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
   }) async {
     final db = await _openDatabase();
     await db.transaction((tx) async {
+      // Update local: save reaction and like count
       await _putCommunityRow(
         tx,
         'community_reactions',
@@ -670,6 +689,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     final db = await _openDatabase();
     final owner = ownerPhoneNumber.trim();
     await db.transaction((tx) async {
+      // Update local: save community draft
       await _putCommunityRow(
         tx,
         'community_drafts',
@@ -684,6 +704,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
         'owner_phone_number=? AND draft_key=?',
         [owner, draftKey],
       );
+      // Query local: attached draft images
       final previous = await tx.query(
         'community_draft_images',
         columns: ['image_key'],
@@ -693,6 +714,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
       final keys = prepared.map((image) => image['image_key']).toSet();
       for (final old in previous) {
         if (!keys.contains(old['image_key'])) {
+          // Update local: update draft images and order
           await tx.delete(
             'community_draft_images',
             where: 'owner_phone_number=? AND draft_key=? AND image_key=?',
@@ -735,6 +757,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
   }) async {
     final db = await _openDatabase();
     return db.transaction((tx) async {
+      // Query local: draft and ordered images
       final rows = await tx.query(
         'community_drafts',
         where: 'owner_phone_number=? AND draft_key=?',
@@ -773,6 +796,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
   }) async {
     final db = await _openDatabase();
     await db.transaction((tx) async {
+      // Update local: delete draft and images
       await tx.delete(
         'community_draft_images',
         where: 'owner_phone_number=? AND draft_key=?',
@@ -789,6 +813,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
 
 /// Removes community post.
 Future<void> _removeCommunityPost(DatabaseExecutor db, String postId) async {
+  // Update local: delete post, comments and reactions
   await db.delete(
     'community_comments',
     where: 'post_id=?',
@@ -805,6 +830,7 @@ Future<void> _removeCommunityPost(DatabaseExecutor db, String postId) async {
 
 /// Removes unused community authors.
 Future<void> _removeUnusedCommunityAuthors(DatabaseExecutor db) async {
+  // Update local: delete unreferenced authors
   await db.rawDelete(
     '''DELETE FROM community_authors WHERE user_id NOT IN
     (SELECT author_id FROM community_posts UNION SELECT author_id FROM community_comments)''',

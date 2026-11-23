@@ -23,7 +23,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
     if (!uid || uid !== userIdFor(ownerPhone) || !validPhone(ownerPhone)) {
       throw new HttpsError('unauthenticated', 'Sign in to manage buddies.');
     }
-    if (!['send', 'cancel', 'accept', 'decline'].includes(action)
+    if (!['send', 'cancel', 'accept', 'decline', 'remove'].includes(action)
         || !validPhone(otherPhone) || phoneKey(ownerPhone) === phoneKey(otherPhone)) {
       throw new HttpsError('invalid-argument', 'The buddy request is invalid.');
     }
@@ -31,14 +31,34 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
     const ownerKey = phoneKey(ownerPhone), otherKey = phoneKey(otherPhone);
     const newRequestId = randomUUID();
     return db.runTransaction(async transaction => {
+      const modules = action === 'remove' ? ['social'] : ['profile', 'social'];
+      // Query both hikers' profiles and relationships
       const [ownerSnapshot, otherSnapshot] = await Promise.all([
-        readUser(ownerRef, ['profile', 'social'], transaction),
-        readUser(otherRef, ['profile', 'social'], transaction),
+        readUser(ownerRef, modules, transaction),
+        readUser(otherRef, modules, transaction),
       ]);
       if (!ownerSnapshot.exists) {
         throw new HttpsError('not-found', 'Your hiker account is unavailable.');
       }
       const owner = ownerSnapshot.data() || {}, other = otherSnapshot.data() || {};
+      if (action === 'remove') {
+        if (disabled(owner)) {
+          throw new HttpsError('permission-denied', 'Your hiker account is unavailable.');
+        }
+        for (const [reference, phones, removedKey] of [
+          [ownerRef, owner.buddyPhoneNumbers, otherKey],
+          [otherRef, other.buddyPhoneNumbers, ownerKey],
+        ]) {
+          if (!Array.isArray(phones)) continue;
+          const remaining = phones.filter(phone => phoneKey(phone) !== removedKey);
+          if (remaining.length === phones.length) continue;
+          // Update cloud: remove reciprocal buddy
+          updateUser(transaction, reference, {
+            buddyPhoneNumbers: remaining, buddiesUpdatedAt: timestamp(),
+          });
+        }
+        return {status: 'removed'};
+      }
       const isBuddy = (owner.buddyPhoneNumbers || []).some(phone => phoneKey(phone) === otherKey);
       if (action === 'send') {
         if (!otherSnapshot.exists || disabled(other)) {
@@ -53,6 +73,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
             'This hiker has already sent you a request. Open Friend requests to respond.');
         }
         const rateRef = db.collection('buddyRequestRateLimits').doc(uid);
+        // Query buddy invitation rate limit
         const rateSnapshot = await transaction.get(rateRef);
         const rate = rateSnapshot.data() || {}, createdAtMillis = now();
         const windowStartedAtMillis = Number(rate.windowStartedAtMillis || 0);
@@ -64,6 +85,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
         const displayName = String(displayNameFor(owner, `Hiker ${ownerKey.slice(-4)}`)).slice(0, 80);
         const photoURL = String(owner.profile?.photoURL || '').slice(0, 2000);
         const createdAtLocal = new Date(createdAtMillis).toISOString();
+        // Update cloud: save buddy request and queue notice
         setUser(transaction, otherRef, {
           buddyRequestsIncoming: {[ownerKey]: {
             requestId: newRequestId, phoneNumber: ownerPhone, displayName,
@@ -108,6 +130,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
         throw new HttpsError('failed-precondition', 'This buddy request is no longer available.');
       }
       const outboxRef = pending.requestId ? noticeRef(pending.requestId) : null;
+      // Query original buddy notification
       const outbox = outboxRef ? await transaction.get(outboxRef) : null;
       const ownerUpdate = {
         [`${cancelling ? 'buddyRequestsOutgoing' : 'buddyRequestsIncoming'}.${otherKey}`]: FieldValue.delete(),
@@ -123,6 +146,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
         otherUpdate.buddyPhoneNumbers = FieldValue.arrayUnion(ownerPhone);
         otherUpdate.buddiesUpdatedAt = timestamp();
       }
+      // Update cloud: update both buddy relationships
       updateUser(transaction, ownerRef, ownerUpdate);
       if (otherSnapshot.exists && sameRequest) updateUser(transaction, otherRef, otherUpdate);
       const notice = outbox?.data() || {};
@@ -136,6 +160,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
   }
 
   async function deliver(reference) {
+    // Query buddy notification by ID
     const initial = await reference.get();
     const notice = initial.data() || {};
     if (!initial.exists || notice.type !== 'buddy_request'
@@ -160,6 +185,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
         await finish({status: 'failed', error: 'invalid_buddy_notification'});
         return;
       }
+      // Query recipient devices and relationships
       const recipientDevices = await readUser(userRef(recipientPhone), ['devices']);
       const tokens = tokensFor(recipientDevices.data() || {});
       // Re-read both request copies and claim outbound in the same transaction that cancel conflicts with.
@@ -181,6 +207,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
           && !(sender.buddyPhoneNumbers || []).some(phone => phoneKey(phone) === phoneKey(recipientPhone))
           && !(recipient.buddyPhoneNumbers || []).some(phone => phoneKey(phone) === phoneKey(senderPhone));
         if (!stillPending) {
+          // Update cloud: record buddy notification delivery
           transaction.update(reference, {status: 'cancelled', cancellationReason: 'request_no_longer_pending',
             processedAt: timestamp(), processedAtLocal: new Date(now()).toISOString()});
           return false;
@@ -197,6 +224,7 @@ function createBuddyRequestService({db, FieldValue, HttpsError, userIdFor,
       let successCount = 0, failureCount = 0;
       try {
         for (let index = 0; index < tokens.length; index += 500) {
+          // API: FCM buddy request
           const response = await messaging().sendEachForMulticast({
             tokens: tokens.slice(index, index + 500),
             notification: {title: 'New friend request',

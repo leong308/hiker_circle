@@ -47,6 +47,7 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
   // requireActive: Check both the active session record and the enabled account on each business request.
   async function requireActive(request) {
     const {uid, sid} = identity(request);
+    // Query mobile session and account status
     const [state, account] = await Promise.all([
       stateRef(uid).get(), db().collection('users').doc(uid).get(),
     ]);
@@ -66,18 +67,22 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
   // createCandidate: Create a short-lived login candidate, or keep the existing session during purpose-limited reauthentication.
   async function createCandidate({uid, phoneNumber, method, reauthSessionId = '', initialSetup = false}) {
     let record;
+    // Query Firebase Auth identity
     try { record = await auth().getUser(uid); }
     catch (error) {
       if (error.code !== 'auth/user-not-found' || !initialSetup) throw error;
+      // Update cloud: create missing Auth identity
       record = await auth().createUser({uid});
     }
     if (record.disabled) fail('This account is disabled.', 'account-disabled');
     if (reauthSessionId) {
+      // Query existing mobile session
       const state = await stateRef(uid).get();
       if (state.data()?.activeSessionId !== reauthSessionId) fail('This session has ended. Sign in again.');
       return {mobileSessionId: reauthSessionId, initialPasswordSetup: initialSetup};
     }
     const sid = crypto.randomBytes(32).toString('hex');
+    // Update cloud: create candidate mobile session
     await candidateRef(sid).create({uid,
       createdAt: timestamp(), expiresAtMillis: Date.now() + CANDIDATE_TTL_MS,
       activated: false});
@@ -90,6 +95,7 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
     try { device = cleanDevice(request.data?.device); }
     catch (_) { throw new HttpsError('invalid-argument', 'The device information is invalid.'); }
     return db().runTransaction(async tx => {
+      // Query candidate, session and account
       const [candidate, state, account] = await Promise.all([
         tx.get(candidateRef(sid)), tx.get(stateRef(uid)), tx.get(db().collection('users').doc(uid)),
       ]);
@@ -101,6 +107,7 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
       if (!candidate.exists || !belongsToAccount(account, value) || value.uid !== uid || value.activated
         || Date.now() > Number(value.expiresAtMillis || 0)) fail('This login has expired. Start again.');
       if (value.device && value.device.appInstanceId !== device.appInstanceId) fail('This login belongs to another installation.');
+      // Update cloud: save prepared login session
       tx.set(candidate.ref, {device}, {merge: true});
       const previous = state.data() || {};
       return {
@@ -116,6 +123,7 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
     requireRecent(request);
     const expected = String(request.data?.expectedPreviousSessionId || '');
     const result = await db().runTransaction(async tx => {
+      // Query session and account before activation
       const [candidate, state, account] = await Promise.all([
         tx.get(candidateRef(sid)), tx.get(stateRef(uid)), tx.get(db().collection('users').doc(uid)),
       ]);
@@ -133,6 +141,7 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
       // Every new login replaces the old session, even if its device ID is copied.
       const changedDevice = Boolean(previous.activeSessionId && previous.activeSessionId !== sid);
       const now = new Date().toISOString();
+      // Update cloud: activate mobile session
       tx.set(state.ref, {activeSessionId: sid, device: next.device,
         activatedAt: timestamp(), activatedAtLocal: now, reason: changedDevice ? 'new-device-login' : 'login'});
       tx.update(candidate.ref, {activated: true, activatedAt: timestamp()});
@@ -150,12 +159,14 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
   }
   // revokeInTransaction: Clear active session authority in the same transaction as the security action.
   function revokeInTransaction(tx, uid, reason) {
+    // Update cloud: revoke active mobile session
     tx.set(stateRef(uid), {activeSessionId: '', reason, endedAt: timestamp(),
       endedAtLocal: new Date().toISOString()}, {merge: true});
   }
   async function end(request) {
     const {uid, sid} = identity(request);
     await db().runTransaction(async tx => {
+      // Query current session before logout
       const state = await tx.get(stateRef(uid));
       if (state.data()?.activeSessionId === sid) revokeInTransaction(tx, uid, 'signed-out');
     });

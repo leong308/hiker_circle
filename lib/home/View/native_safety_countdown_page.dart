@@ -1,6 +1,70 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 
+/// Displays an impact check without covering the hike controls.
+class FallImpactCheckPopup extends StatelessWidget {
+  const FallImpactCheckPopup({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: SafeArea(
+          minimum: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Center(
+            child: Semantics(
+              liveRegion: true,
+              child: Material(
+                color: colors.errorContainer,
+                borderRadius: BorderRadius.circular(16),
+                elevation: 6,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: colors.onErrorContainer,
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Possible fall detected',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                color: colors.onErrorContainer,
+                              ),
+                            ),
+                            Text(
+                              'Checking for movement…',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: colors.onErrorContainer,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Foreground iOS counterpart of Android's native SafetyAlertActivity.
 class NativeSafetyCountdownPage extends StatefulWidget {
   const NativeSafetyCountdownPage({

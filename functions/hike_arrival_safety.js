@@ -36,6 +36,7 @@ async function arm({db, uid, sessionId, warningAtMillis: requestedWarningAt, now
   if (!validId(sessionId)) throw new ErrorType('invalid-argument', 'Select an active hike.');
   const ref = db.collection('hikeSessions').doc(sessionId);
   return db.runTransaction(async tx => {
+    // Query active hike arrival timer
     const hike = (await tx.get(ref)).data();
     requireOwner(hike, uid, ErrorType);
     if (hike.status !== 'active') throw new ErrorType('failed-precondition', 'This hike has ended.');
@@ -53,6 +54,7 @@ async function arm({db, uid, sessionId, warningAtMillis: requestedWarningAt, now
       responseDeadlineMillis: warningAtMillis + RESPONSE_WINDOW_MS,
       ...(proof.arrivedAtMillis ? {arrivedAtMillis: proof.arrivedAtMillis, targetName: proof.targetName} : {}),
       sentCount: 0, uncertainCount: 0, failedCount: 0};
+    // Update cloud: save arrival safety timer
     tx.update(ref, {arrivalSafety: record});
     return publicState(record);
   });
@@ -63,6 +65,7 @@ async function confirmSafe({db, uid, sessionId, eventId, reason, now = Date.now(
   if (!validId(sessionId) || !/^[a-f0-9]{64}$/.test(String(eventId))) throw new ErrorType('invalid-argument', 'This arrival check is invalid.');
   const ref = db.collection('hikeSessions').doc(sessionId);
   return db.runTransaction(async tx => {
+    // Query hike and active safety event
     const hike = (await tx.get(ref)).data();
     // Cancellation never arms a warning. A missing/ended hike has no active
     // watchdog to cancel, so stale local responses can settle idempotently.
@@ -74,6 +77,7 @@ async function confirmSafe({db, uid, sessionId, eventId, reason, now = Date.now(
     const expectedEvent = plan ? arrivalEventId(sessionId, plan.latestArrivalAtMillis) : null;
     if (hike.status === 'active' && expectedEvent !== eventId) {
       if (record?.eventId === eventId && record.enabled) {
+        // Update cloud: mark hiker safe
         tx.update(ref, {arrivalSafety: {...record, enabled: false, status: 'completed'}});
       }
       return {eventId, enabled: false, status: 'superseded'};
@@ -84,6 +88,7 @@ async function confirmSafe({db, uid, sessionId, eventId, reason, now = Date.now(
       latestArrivalAtMillis: plan?.latestArrivalAtMillis ?? now,
       warningAtMillis: plan?.latestArrivalAtMillis ?? now,
       responseDeadlineMillis: (plan?.latestArrivalAtMillis ?? now) + RESPONSE_WINDOW_MS};
+    // Query existing contact delivery receipts
     const receipts = await tx.get(db.collection('arrivalSafetyDeliveries').where('eventId', '==', eventId));
     const deliveries = receipts.docs.map(doc => doc.data());
     const ended = hike.status !== 'active' || reason === 'hike_ended';
@@ -93,6 +98,7 @@ async function confirmSafe({db, uid, sessionId, eventId, reason, now = Date.now(
       uncertainCount: deliveries.filter(item => ['sending', 'delivery_uncertain'].includes(item.status)).length,
       confirmationSource: ended ? 'hike_ended'
         : reason === 'recorded_arrival' ? 'device_recorded_arrival' : 'hiker_confirmation'};
+    // Update cloud: update arrival confirmation
     tx.update(ref, {arrivalSafety: next});
     return publicState(next);
   });
@@ -102,11 +108,13 @@ async function confirmSafe({db, uid, sessionId, eventId, reason, now = Date.now(
 async function inspect({db, sessionId, uid, now = Date.now(), ErrorType = Error}) {
   const ref = db.collection('hikeSessions').doc(sessionId);
   return db.runTransaction(async tx => {
+    // Query arrival escalation status
     const snapshot = await tx.get(ref), hike = snapshot.data();
     if (uid) requireOwner(hike, uid, ErrorType);
     const record = hike?.arrivalSafety;
     if (!hike || !record) return null;
     if (hike.status !== 'active') {
+      // Update cloud: advance expired arrival timer
       if (record.enabled) tx.update(ref, {arrivalSafety: {...record, enabled: false, status: 'completed'}});
       return null;
     }
@@ -151,6 +159,7 @@ async function deliverContact({db, sessionId, eventId, phone, sendFile, image, c
   const receipt = db.collection('arrivalSafetyDeliveries').doc(id), ref = db.collection('hikeSessions').doc(sessionId);
   const nonce = randomUUID();
   const claim = await db.runTransaction(async tx => {
+    // Query hike, contacts and delivery receipt
     const hike = (await tx.get(ref)).data(), previous = (await tx.get(receipt)).data() || {};
     const record = hike?.arrivalSafety;
     if (hike?.status !== 'active' || record?.eventId !== eventId || !record.enabled || TERMINAL.has(record.status)
@@ -163,6 +172,7 @@ async function deliverContact({db, sessionId, eventId, phone, sendFile, image, c
     const contacts = user?.sos_contacts || [];
     if (user?.accountDisabled === true || user?.status === 'disabled' || !contacts.some(contact => contact.phoneNumber === phone)) return false;
     if (proof.arrivedAtMillis) {
+      // Update cloud: reserve emergency contact delivery
       tx.update(ref, {arrivalSafety: {...record, enabled: false, status: 'arrived', arrivedAtMillis: proof.arrivedAtMillis, targetName: proof.targetName}});
       return false;
     }
@@ -173,6 +183,7 @@ async function deliverContact({db, sessionId, eventId, phone, sendFile, image, c
   if (!claim) return;
   // Keep the irreversible send marker separate from a recoverable lease.
   const sending = await db.runTransaction(async tx => {
+    // Query recipient settings and delivery claim
     const hike = (await tx.get(ref)).data(), current = (await tx.get(receipt)).data();
     if (current?.nonce !== nonce || current.status !== 'claimed') return false;
     let allowed = hike?.status === 'active' && hike.arrivalSafety?.eventId === eventId && hike.arrivalSafety.enabled;
@@ -182,6 +193,7 @@ async function deliverContact({db, sessionId, eventId, phone, sendFile, image, c
       const result = plan ? await recordedProof(tx, hike, sessionId, plan, clock()) : null;
       allowed = !!user && !user.accountDisabled && user.status !== 'disabled' && (user.sos_contacts || []).some(contact => contact.phoneNumber === phone)
         && !!result && !result.proof.arrivedAtMillis;
+      // Update cloud: record contact delivery status
       if (result?.proof.arrivedAtMillis) tx.update(ref, {arrivalSafety: {...hike.arrivalSafety, enabled: false, status: 'arrived',
         arrivedAtMillis: result.proof.arrivedAtMillis, targetName: result.proof.targetName}});
     }
@@ -201,7 +213,9 @@ async function deliverContact({db, sessionId, eventId, phone, sendFile, image, c
   }
   const status = result?.messageId ? 'sent' : result?.status || 'delivery_uncertain';
   await db.runTransaction(async tx => {
+    // Query provider delivery receipt
     const current = (await tx.get(receipt)).data();
+    // Update cloud: save provider delivery result
     if (current?.nonce === nonce) tx.update(receipt, {status, retryable: result?.retryable === true,
       ...(result?.messageId ? {providerMessageId: result.messageId} : {}), leaseUntil: 0, updatedAtMillis: clock()});
   });
@@ -212,6 +226,7 @@ async function processHike({db, sessionId, sendFile, now = Date.now(), clock = D
   const context = await inspect({db, sessionId, uid, now, ErrorType});
   if (!context || !context.record.enabled || now < context.record.responseDeadlineMillis) return publicState(context?.record);
   const {hike, samples, plan, record} = context;
+  // Query arrival preferences, contacts and receipts
   const account = (await readUser(db.collection('users').doc(hike.userId), ['profile', 'preferences', 'sos'])).data();
   if (!account || account.accountDisabled === true || account.status === 'disabled') return publicState(record);
   const phones = [...new Set((Array.isArray(account.sos_contacts) ? account.sos_contacts : [])
@@ -239,6 +254,7 @@ async function processHike({db, sessionId, sendFile, now = Date.now(), clock = D
       ...(currentHike.status !== 'active' ? {enabled: false, status: 'completed'} : {}),
       ...(!terminal ? {status: !phones.length ? 'no_contacts' : complete
         ? counts.failedCount ? 'dispatch_failed' : 'dispatched' : 'dispatch_pending', enabled: !complete} : {})};
+    // Update cloud: save final arrival safety status
     tx.update(ref, {arrivalSafety: next});
     return next;
   });

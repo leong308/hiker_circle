@@ -93,6 +93,7 @@ class LiveLocationRepository {
   Future<bool?> loadCachedAutoShareOnHikeStart({
     required String phoneNumber,
   }) async {
+    // Query local: saved automatic sharing preference
     final data = await _readCache.read(
       owner: phoneNumber,
       type: 'mobile_preferences',
@@ -112,6 +113,7 @@ class LiveLocationRepository {
   /// Loads auto share on hike start.
   Future<bool> loadAutoShareOnHikeStart({required String phoneNumber}) async {
     try {
+      // Query hiker's live sharing preference
       final data = await _readCache.read(
         owner: phoneNumber,
         type: 'mobile_preferences',
@@ -139,6 +141,7 @@ class LiveLocationRepository {
     _throwIfFirebaseUnavailable();
     try {
       final now = DateTime.now().toUtc();
+      // Update cloud: save automatic sharing preference
       await userModuleDocument(
             _users.doc(_userIdFor(phoneNumber)),
             UserModule.preferences,
@@ -178,6 +181,7 @@ class LiveLocationRepository {
     _throwIfFirebaseUnavailable();
 
     try {
+      // Query owner's current live share
       final snapshot = await _userDocumentFor(
         phoneNumber,
       ).get(const GetOptions(source: Source.server)).timeout(_cloudTimeout);
@@ -298,6 +302,7 @@ class LiveLocationRepository {
   Future<Map<String, dynamic>> activateCloudShare(
     SosTriggerLocation location,
   ) async {
+    // Update cloud: activate live location share
     final result = await (_functions ?? FirebaseFunctions.instance)
         .httpsCallable(
           'activateLiveLocationShare',
@@ -353,6 +358,7 @@ class LiveLocationRepository {
   Future<Map<String, dynamic>> notifyStandaloneContactsCloud(
     String shareId,
   ) async {
+    // Update cloud: send share to emergency contacts
     final response = await (_functions ?? FirebaseFunctions.instance)
         .httpsCallable(
           'notifyEmergencyContactsOfLiveLocation',
@@ -381,6 +387,7 @@ class LiveLocationRepository {
       final shareDocument = _liveLocationShares.doc(share.id);
       final batch = _resolvedFirestore.batch();
 
+      // Update cloud: update location and live share
       batch.set(userDocument, {
         'liveLocationEnabled': true,
         'liveLocationShareId': share.id,
@@ -484,6 +491,7 @@ class LiveLocationRepository {
     final shareId = savedShareId ?? await _shareIdForUser(userDocument);
     final now = DateTime.now().toUtc();
     final batch = _resolvedFirestore.batch();
+    // Update cloud: deactivate live share
     batch.set(userDocument, {
       'liveLocationEnabled': false,
       'liveLocationUpdatedAt': FieldValue.serverTimestamp(),
@@ -503,6 +511,7 @@ class LiveLocationRepository {
   Future<String?> _shareIdForUser(
     DocumentReference<Map<String, dynamic>> userDocument,
   ) async {
+    // Query live share ID
     final snapshot = await userDocument.get().timeout(_cloudTimeout);
     final shareId = snapshot.data()?['liveLocationShareId'];
     return shareId is String ? shareId : null;

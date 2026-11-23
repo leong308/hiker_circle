@@ -133,15 +133,18 @@ function createSyncManifests({database, guard, projectionVersion, timestamp, exp
     const before = event.data?.before?.exists ? event.data.before.data() : null;
     const after = event.data?.after?.exists ? event.data.after.data() : null;
     const path = event.data?.after?.ref?.path || event.data?.before?.ref?.path;
-    if (!path || contentHash(before) === contentHash(after)) return;
+    if (!path) return;
     const keys = changedDependencies(path, before, after);
     if (!keys.length) return;
+    // Version the write without hashing Firestore references.
     const version = eventVersion(event);
     const refs = keys.map(sourceRef);
     await database().runTransaction(async tx => {
+      // Query affected resource revisions
       const snapshots = await tx.getAll(...refs);
       snapshots.forEach((snapshot, i) => {
         if (String(snapshot.data()?.version || '') < version) {
+          // Update cloud: update resource revisions
           tx.set(refs[i], {version, sourceHash: contentHash([keys[i], version]), updatedAt: timestamp()});
         }
       });
@@ -152,6 +155,7 @@ function createSyncManifests({database, guard, projectionVersion, timestamp, exp
   function createRequestContext() {
     const reads = new Map();
     return {get: ref => {
+      // Query saved resource revision
       if (!reads.has(ref.path)) reads.set(ref.path, ref.get());
       return reads.get(ref.path);
     }};
@@ -162,20 +166,27 @@ function createSyncManifests({database, guard, projectionVersion, timestamp, exp
     const owner = request.auth.uid;
     const identity = {schema: SCHEMA, projectionVersion, owner, callable, args};
     const manifestId = contentHash(identity);
+    const readSource = async () => {
+      const payload = await resolve();
+      const hash = contentHash(payload);
+      return {payload, hash, revisionHash: hash, manifestId, manifestHit: false};
+    };
+    // A caution notification can arrive before its cache revision changes.
+    if (callable === 'readCloudResource' && args.resourceType === 'trail_hazards') {
+      await guard(request, callable, args);
+      return readSource();
+    }
     const ref = database().collection('syncManifests').doc(manifestId);
     const dependencies = resourceDependencies(callable, args, owner).sort();
     const refs = dependencies.map(sourceRef);
+    // Query manifest and dependency revisions
     const [metadata, access] = await Promise.all([
       Promise.all([context.get(ref), Promise.all(refs.map(context.get))])
         .catch(error => { onCacheError(error); return null; }),
       guard(request, callable, args),
     ]);
     // Manifest storage is an optimization; its failure never blocks a fresh authorized read.
-    if (!metadata) {
-      const payload = await resolve();
-      const hash = contentHash(payload);
-      return {payload, hash, revisionHash: hash, manifestId, manifestHit: false};
-    }
+    if (!metadata) return readSource();
     const [saved, sources] = metadata;
     const versions = sources.map(snapshot => snapshot.data()?.version || '');
     const revisionHash = contentHash({versions, guard: access.token || ''});
@@ -192,8 +203,10 @@ function createSyncManifests({database, guard, projectionVersion, timestamp, exp
     const validUntilMillis = Math.min(payloadDeadline(callable, args, payload, now), access.validUntilMillis || Infinity);
     // A concurrent source event must not publish a hash under the newer source revision.
     await database().runTransaction(async tx => {
+      // Query current manifest revisions
       const current = refs.length ? await tx.getAll(...refs) : [];
       if (current.some((snapshot, i) => (snapshot.data()?.version || '') !== versions[i])) return;
+      // Update cloud: save validated cache manifest
       tx.set(ref, {schema: SCHEMA, contentHash: hash, revisionHash,
         ownerHash: contentHash(owner), resourceHash: contentHash({callable, args}),
         validUntilMillis, checkedAt: timestamp(), expiresAt: expiresAt(clock() + 7 * 86400000)});

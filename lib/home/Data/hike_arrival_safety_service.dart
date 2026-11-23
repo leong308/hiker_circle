@@ -64,6 +64,7 @@ class HikeArrivalSafetyRepository {
     String action,
     Map<String, dynamic> data,
   ) async {
+    // Update cloud: submit arrival safety action
     final response = await (functions ?? FirebaseFunctions.instance)
         .httpsCallable(
           action,

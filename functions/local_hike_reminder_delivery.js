@@ -72,6 +72,7 @@ async function acknowledgeLocalHikeReminderSlots({db, uid, sid, data, ErrorType,
   const sessionRef = db.collection('mobileSessions').doc(uid);
   const accountRef = db.collection('users').doc(uid);
   return db.runTransaction(async tx => {
+    // Query device session and account
     const [sessionSnapshot, accountSnapshot] = await Promise.all([tx.get(sessionRef), tx.get(accountRef)]);
     const state = sessionSnapshot.data() || {};
     const account = accountSnapshot.data() || {};
@@ -89,6 +90,7 @@ async function acknowledgeLocalHikeReminderSlots({db, uid, sid, data, ErrorType,
     const documents = await Promise.all(ids.map(async hikeId => {
       const hikeRef = db.collection('upcomingHikes').doc(hikeId);
       const preferenceRef = hikeRef.collection('reminderPreferences').doc(uid);
+      // Query planned hike reminder preference
       const [hikeSnapshot, preferenceSnapshot] = await Promise.all([tx.get(hikeRef), tx.get(preferenceRef)]);
       return {hikeId, hikeSnapshot, preferenceSnapshot, preferenceRef};
     }));
@@ -129,6 +131,7 @@ async function acknowledgeLocalHikeReminderSlots({db, uid, sid, data, ErrorType,
     for (const document of documents) {
       const owned = accepted.get(document.hikeId);
       if (owned || document.preferenceSnapshot.data()?.localDeliverySchedule) {
+        // Update cloud: acknowledge scheduled reminders
         tx.set(document.preferenceRef, {localDeliverySchedule: owned || null}, {merge: true});
       }
     }

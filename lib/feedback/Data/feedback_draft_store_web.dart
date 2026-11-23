@@ -98,6 +98,7 @@ class FeedbackDraftStore {
     request.onupgradeneeded = ((web.Event _) {
       final db = request.result as web.IDBDatabase;
       if (!db.objectStoreNames.contains(_drafts)) {
+        // Update local: create IndexedDB feedback stores
         db.createObjectStore(
           _drafts,
           web.IDBObjectStoreParameters(keyPath: 'owner'.toJS),
@@ -173,6 +174,7 @@ class FeedbackDraftStore {
     web.IDBTransaction transaction,
     String owner,
   ) async {
+    // Query local: saved draft metadata
     final value = await _request(
       transaction.objectStore(_drafts).get(owner.toJS),
     );
@@ -185,6 +187,7 @@ class FeedbackDraftStore {
   ) async {
     Uint8List? image;
     if (record.screenshotHash.isNotEmpty) {
+      // Query local: saved screenshot bytes
       final value = await _request(
         transaction.objectStore(_screenshots).get(record.owner.toJS),
       );
@@ -227,6 +230,7 @@ class FeedbackDraftStore {
     Uint8List? image,
   ) async {
     final store = transaction.objectStore(_screenshots);
+    // Update local: replace or remove draft screenshot
     await _request(
       image == null
           ? store.delete(owner.toJS)
@@ -268,6 +272,7 @@ class FeedbackDraftStore {
         return _restore(transaction, current);
       }
       final revision = current == null ? 0 : current.revision + 1;
+      // Update local: create feedback draft
       await _request(
         transaction.objectStore(_drafts).put(_metadata(initial, revision)),
       );
@@ -302,6 +307,7 @@ class FeedbackDraftStore {
         return null;
       }
       final revision = draft.revision + 1;
+      // Update local: save draft metadata and revision
       await _request(
         transaction.objectStore(_drafts).put(_metadata(draft, revision)),
       );
@@ -324,6 +330,7 @@ class FeedbackDraftStore {
     web.IDBTransaction transaction,
     _DraftRecord current,
   ) async {
+    // Update local: clear draft and screenshot
     await _request(
       transaction
           .objectStore(_drafts)

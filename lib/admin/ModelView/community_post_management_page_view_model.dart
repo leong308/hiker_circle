@@ -45,9 +45,11 @@ class _CommunityPostManagementPageStateViewModel extends ChangeNotifier {
           ? await readRepository().loadMoreAdminCommunityPosts(
               session: readSession(),
               afterPostId: statePosts.last['postId'] as String,
+              historyOnly: true,
             )
           : await readRepository().loadAdminCommunityPosts(
               session: readSession(),
+              historyOnly: true,
             );
       if (!mounted) return;
       _publish(() {

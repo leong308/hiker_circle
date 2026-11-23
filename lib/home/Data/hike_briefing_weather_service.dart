@@ -180,6 +180,7 @@ class HikeBriefingWeatherService {
   Future<TrailWeather> _fetch(double latitude, double longitude) async {
     final client = _client ?? http.Client();
     try {
+      // API: Open-Meteo hike briefing
       final response = await client
           .get(
             Uri.https('api.open-meteo.com', '/v1/forecast', {

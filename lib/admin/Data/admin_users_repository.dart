@@ -53,11 +53,13 @@ class AdminUsersRepository {
 
   /// Loads the next page with only usernames, phone numbers and roles.
   Future<Map<String, dynamic>> list(AppSession session, {String? cursor}) =>
+      // Query paginated admin user list
       _call('listAdminUsers', session, {
         'limit': 50,
         if (cursor != null) 'cursor': cursor,
       });
 
+  // Update cloud: change hiker role
   /// Changes hiker/admin membership through an audited server transaction.
   Future<Map<String, dynamic>> change(
     AppSession session,
@@ -73,6 +75,7 @@ class AdminUsersRepository {
 
   /// Loads promotion/demotion records for a current superadmin.
   Future<Map<String, dynamic>> history(AppSession session, {String? cursor}) =>
+      // Query role change audit history
       _call('listUserRoleHistory', session, {
         'limit': 50,
         if (cursor != null) 'cursor': cursor,

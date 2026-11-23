@@ -17,6 +17,7 @@ class PrecautionCheckService {
     final now = DateTime.now().toUtc();
     TrailWeather weather;
     try {
+      // API: Open-Meteo precaution forecast
       final response = await http
           .get(
             Uri.https('api.open-meteo.com', '/v1/forecast', {

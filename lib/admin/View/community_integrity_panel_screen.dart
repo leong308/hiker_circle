@@ -6,10 +6,12 @@ class CommunityFlaggedContentPage extends StatelessWidget {
   const CommunityFlaggedContentPage({
     super.key,
     required this.isAdmin,
+    this.onOpenHistory,
     this.panel = const CommunityIntegrityPanel(),
   });
 
   final bool isAdmin;
+  final VoidCallback? onOpenHistory;
   final CommunityIntegrityPanel panel;
 
   /// Uses Profile's header spacing, background and readable content width.
@@ -31,6 +33,16 @@ class CommunityFlaggedContentPage extends StatelessWidget {
                   title: 'Flagged content',
                   subtitle: 'Review community posts and comments',
                   onBack: () => Navigator.of(context).maybePop(),
+                  actions: [
+                    if (isAdmin && onOpenHistory != null)
+                      PageHeaderAction(
+                        tooltip: 'Moderation history',
+                        icon: Icons.history_rounded,
+                        onPressed: onOpenHistory,
+                        color: Theme.of(context).colorScheme.primary,
+                        surface: Theme.of(context).colorScheme.surface,
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 22),
                 if (isAdmin)

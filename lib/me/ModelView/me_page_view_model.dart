@@ -204,7 +204,10 @@ class _MePageStateViewModel extends ChangeNotifier {
   Future<void> commandLoadProfileCollections() =>
       Future.wait(_ProfileCollection.values.map(loadCollection));
 
-  Future<void> loadCollection(_ProfileCollection collection) async {
+  Future<void> loadCollection(
+    _ProfileCollection collection, {
+    bool force = false,
+  }) async {
     final session = readSession();
     final revokedType = switch (collection) {
       _ProfileCollection.circles => 'mobile_chat_list',
@@ -222,7 +225,7 @@ class _MePageStateViewModel extends ChangeNotifier {
         identical(_reads[collection], request) &&
         session.phoneNumber == readSession().phoneNumber;
     try {
-      final rows = await _historyRows(collection, session);
+      final rows = await _historyRows(collection, session, force: force);
       if (current()) {
         _publish(
           () => history[collection] = AsyncSnapshot.withData(
@@ -245,8 +248,9 @@ class _MePageStateViewModel extends ChangeNotifier {
 
   Future<List<_ProfileHistoryItem>> _historyRows(
     _ProfileCollection collection,
-    AppSession session,
-  ) async {
+    AppSession session, {
+    required bool force,
+  }) async {
     switch (collection) {
       case _ProfileCollection.posts:
         final posts = await stateFirebaseRepository.loadCommunityPostsForUser(
@@ -284,29 +288,17 @@ class _MePageStateViewModel extends ChangeNotifier {
             )
             .toList(growable: false);
       case _ProfileCollection.buddies:
-        final buddyPhones = await stateFirebaseRepository.loadBuddyPhoneNumbers(
+        final buddies = await stateFirebaseRepository.loadBuddyProfiles(
           session: session,
+          force: force,
         );
-        final buddyProfiles = await Future.wait(
-          buddyPhones.take(100).map((phone) async {
-            try {
-              return await stateFirebaseRepository.loadPublicHikerProfile(
-                phoneNumber: phone,
-              );
-            } catch (_) {
-              return <String, dynamic>{'phoneNumber': phone};
-            }
-          }),
-        );
-        return buddyProfiles
+        return buddies
             .map(
-              (profile) => _ProfileHistoryItem(
-                title: commandProfileDisplayName(profile),
-                subtitle: [
-                  profile['levelName']?.toString().trim() ?? '',
-                  profile['hikerExperience']?.toString().trim() ?? '',
-                ].where((value) => value.isNotEmpty).join(' · '),
-                meta: '${profile['achievementPoints'] ?? 0} achievement points',
+              (buddy) => _ProfileHistoryItem(
+                title: buddy.name,
+                subtitle: buddy.handle,
+                photoURL: buddy.photoURL,
+                buddyPhoneNumber: buddy.phoneNumber,
                 icon: Icons.person_rounded,
               ),
             )
@@ -314,13 +306,27 @@ class _MePageStateViewModel extends ChangeNotifier {
     }
   }
 
-  /// Computes profile display name.
-  String commandProfileDisplayName(Map<String, dynamic> profile) {
-    for (final key in const ['displayName', 'username', 'handle']) {
-      final value = profile[key]?.toString().trim() ?? '';
-      if (value.isNotEmpty) return value;
+  Future<void> removeBuddy(AppSession session, _ProfileHistoryItem item) async {
+    await stateFirebaseRepository.removeBuddy(
+      session: session,
+      buddyPhoneNumber: item.buddyPhoneNumber,
+    );
+    if (!mounted || readSession().phoneNumber != session.phoneNumber) return;
+
+    const collection = _ProfileCollection.buddies;
+    _reads.remove(collection);
+    final rows = history[collection]?.data;
+    if (rows != null) {
+      _publish(
+        () => history[collection] = AsyncSnapshot.withData(
+          ConnectionState.done,
+          rows
+              .where((row) => row.buddyPhoneNumber != item.buddyPhoneNumber)
+              .toList(),
+        ),
+      );
     }
-    return 'Hiking buddy';
+    unawaited(loadCollection(collection, force: true));
   }
 
   /// Computes profile history date.
@@ -469,6 +475,7 @@ class _AdvancedAppSettingsPageStateViewModel extends ChangeNotifier {
       final revision = ++_timeZoneReadRevision;
       final owner = readSession().phoneNumber;
       try {
+        // Query local: hiker's saved time zone
         final data = await readFirebaseRepository().readMobileSnapshot(
           owner: owner,
           resourceType: 'preferences',

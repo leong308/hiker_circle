@@ -23,6 +23,7 @@ class _CommunityFlagReviewPageStateViewModel extends ChangeNotifier {
     ).hasMatch(readFlag().sourcePath)) {
       throw const FormatException('This flag has no valid content reference.');
     }
+    // Query flagged content by path
     final source =
         await (readLoadSource()?.call() ??
                 FirebaseFirestore.instance
@@ -36,6 +37,7 @@ class _CommunityFlagReviewPageStateViewModel extends ChangeNotifier {
     // The parent is context only. A failed context read must not conceal a
     // successfully loaded comment or replace the server's final checks.
     try {
+      // Query parent post of flagged comment
       final parent = readLoadParent() != null
           ? await readLoadParent()!().timeout(const Duration(seconds: 15))
           : readLoadSource() == null

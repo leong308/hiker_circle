@@ -16,6 +16,7 @@ class HomeDashboardPage extends StatelessWidget {
     required this.onFindHike,
     required this.onOpenTrailDetail,
     this.onTapUpcomingHike,
+    this.onDeleteUpcomingHike,
     this.onAddTrailByAdmin,
     this.onReviewTrailRequestsByAdmin,
     this.onEditTrailByAdmin,
@@ -40,6 +41,7 @@ class HomeDashboardPage extends StatelessWidget {
   final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
   final Future<void> Function(UpcomingHike)? onTapUpcomingHike;
+  final Future<void> Function(UpcomingHike)? onDeleteUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
   final VoidCallback? onReviewTrailRequestsByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
@@ -80,6 +82,7 @@ class HomeDashboardPage extends StatelessWidget {
                             onFindHike: onFindHike,
                             onOpenTrailDetail: onOpenTrailDetail,
                             onTapUpcomingHike: onTapUpcomingHike,
+                            onDeleteUpcomingHike: onDeleteUpcomingHike,
                             onAddTrailByAdmin: onAddTrailByAdmin,
                             onReviewTrailRequestsByAdmin:
                                 onReviewTrailRequestsByAdmin,
@@ -101,6 +104,7 @@ class HomeDashboardPage extends StatelessWidget {
                             onFindHike: onFindHike,
                             onOpenTrailDetail: onOpenTrailDetail,
                             onTapUpcomingHike: onTapUpcomingHike,
+                            onDeleteUpcomingHike: onDeleteUpcomingHike,
                             onAddTrailByAdmin: onAddTrailByAdmin,
                             onReviewTrailRequestsByAdmin:
                                 onReviewTrailRequestsByAdmin,
@@ -224,6 +228,7 @@ class _PreparationDashboard extends StatelessWidget {
     required this.onFindHike,
     required this.onOpenTrailDetail,
     this.onTapUpcomingHike,
+    this.onDeleteUpcomingHike,
     this.onAddTrailByAdmin,
     this.onReviewTrailRequestsByAdmin,
     this.onEditTrailByAdmin,
@@ -240,6 +245,7 @@ class _PreparationDashboard extends StatelessWidget {
   final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
   final Future<void> Function(UpcomingHike)? onTapUpcomingHike;
+  final Future<void> Function(UpcomingHike)? onDeleteUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
   final VoidCallback? onReviewTrailRequestsByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
@@ -268,6 +274,7 @@ class _PreparationDashboard extends StatelessWidget {
             isVisible: isVisible,
             phoneNumber: phoneNumber,
             onTapHike: onTapUpcomingHike,
+            onDeleteHike: onDeleteUpcomingHike,
           ),
         ],
         const SizedBox(height: 22),
@@ -335,6 +342,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
     required this.onFindHike,
     required this.onOpenTrailDetail,
     this.onTapUpcomingHike,
+    this.onDeleteUpcomingHike,
     this.onAddTrailByAdmin,
     this.onReviewTrailRequestsByAdmin,
     this.onEditTrailByAdmin,
@@ -350,6 +358,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
   final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
   final Future<void> Function(UpcomingHike)? onTapUpcomingHike;
+  final Future<void> Function(UpcomingHike)? onDeleteUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
   final VoidCallback? onReviewTrailRequestsByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
@@ -375,6 +384,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
             isVisible: isVisible,
             phoneNumber: phoneNumber,
             onTapHike: onTapUpcomingHike,
+            onDeleteHike: onDeleteUpcomingHike,
           ),
         ],
         const SizedBox(height: 22),

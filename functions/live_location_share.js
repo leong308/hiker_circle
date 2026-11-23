@@ -46,6 +46,7 @@ async function refreshRouteRetention(db, shareRef, uid, ErrorType, clock) {
   let cursor = null;
   while (true) {
     const result = await db.runTransaction(async tx => {
+      // Query live share and stored route chunks
       const snapshot = await tx.get(shareRef);
       const share = snapshot.data() || {};
       const expiry = milliseconds(share.expiresAt);
@@ -63,6 +64,7 @@ async function refreshRouteRetention(db, shareRef, uid, ErrorType, clock) {
       const chunks = await tx.get(query);
       for (const chunk of chunks.docs) {
         if (!(milliseconds(chunk.data().expiresAt) >= milliseconds(retention))) {
+          // Update cloud: extend route chunk retention
           tx.set(chunk.ref, {expiresAt: retention}, {merge: true});
         }
       }
@@ -93,6 +95,7 @@ async function activateLiveLocationShare(db, { uid, phoneNumber, location }, Err
     const shareUrl = `https://hiker-circle.web.app/live-location?share=${shareRef.id}`;
     const latestLocation = reuse && locationVersion(old.latestLocation) > locationVersion(safeLocation)
       ? old.latestLocation : safeLocation;
+    // Update cloud: save share and owner reference
     tx.set(shareRef, { shareId: shareRef.id, ownerUserId: uid, phoneNumber,
       ownerUserDocumentPath: userRef.path, isActive: true, latestLocation, shareUrl,
       expiresAt: timestampFromMillis(expiry), expiresAtLocal: new Date(expiry).toISOString(),
@@ -108,6 +111,7 @@ async function activateLiveLocationShare(db, { uid, phoneNumber, location }, Err
     return { shareId: shareRef.id, shareUrl, startedAtMillis, expiresAtMillis: expiry };
   };
   const prepared = await db.runTransaction(async tx => {
+    // Query owner's location module and previous share
     const userSnapshot = await readUser(userRef, ["location"], tx);
     const user = requireAvailableAccount(userSnapshot, phoneNumber, ErrorType);
     const oldId = String(user.liveLocationShareId || '');
@@ -121,6 +125,7 @@ async function activateLiveLocationShare(db, { uid, phoneNumber, location }, Err
     if (!reuse) return {result: writeActivation(tx, newShareRef, {}, false, now, expiresAtMillis)};
     const startedAtMillis = originalShareStartedAtMillis(old, milliseconds(old.expiresAt), now);
     const retentionMillis = Math.max(expiresAtMillis, milliseconds(old.routeRetentionExpiresAt) || 0);
+    // Update cloud: update previous live share
     tx.set(oldRef, {
       routeRetentionExpiresAt: timestampFromMillis(retentionMillis),
       // Older shares without a stored creation instant must retain their
@@ -137,6 +142,7 @@ async function activateLiveLocationShare(db, { uid, phoneNumber, location }, Err
   // A failed refresh leaves public expiry untouched. Recheck owner and stop
   // state after paging so a concurrent opt-out cannot be undone by renewal.
   return db.runTransaction(async tx => {
+    // Query current settings and prepared share
     const userSnapshot = await readUser(userRef, ["location"], tx);
     const user = requireAvailableAccount(userSnapshot, phoneNumber, ErrorType);
     const snapshot = await tx.get(prepared.shareRef);

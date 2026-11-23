@@ -265,6 +265,7 @@ class _AdminPageState extends State<AdminPage> {
       final results = <_FirestoreCollection>[];
       for (final name in collections) {
         try {
+          // Query sample Firestore documents
           final snapshot = await firestore.collection(name).limit(50).get();
           results.add(
             _FirestoreCollection(
@@ -289,6 +290,7 @@ class _AdminPageState extends State<AdminPage> {
         'groupChats/*/messages': 'messages',
       }.entries) {
         try {
+          // Query sample documents by collection group
           final snapshot = await firestore
               .collectionGroup(entry.value)
               .limit(50)

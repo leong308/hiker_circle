@@ -3,6 +3,7 @@ import 'View/hike_departure_countdown.dart';
 import 'View/upcoming_hike_request_scope.dart';
 import 'View/hiking_forecast_sheet.dart';
 import 'dart:async';
+import 'View/upcoming_hike_delete_card.dart';
 import 'package:flutter/material.dart';
 import '../trail/Model/trail_models.dart';
 import 'Data/hike_briefing_weather_service.dart';

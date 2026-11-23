@@ -55,6 +55,7 @@ import org.json.JSONArray
 class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListener {
     companion object {
         @Volatile var flutterUiForeground = false
+        var onFallImpactCheckChanged: (() -> Unit)? = null
         @Volatile private var runningService: WeakReference<HikeSafetyMonitorService>? = null
 
         const val ACTION_START = "com.leongziqi.hikercircle.safety.START"
@@ -102,15 +103,14 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
         private const val ACTIVE_CHANNEL_ID = "hiker_circle_hike_safety_active"
         private const val ALERT_CHANNEL_ID = "hiker_circle_hike_safety_alerts"
+        private const val IMPACT_CHANNEL_ID = "hiker_circle_hike_impact_check"
         private const val ACTIVE_NOTIFICATION_ID = 4212
         private const val ALERT_NOTIFICATION_ID = 4213
+        private const val IMPACT_NOTIFICATION_ID = 4234
         private const val SENSOR_PERIOD_MICROS = 100_000
         private const val LOCATION_INTERVAL_MILLIS = 5_000L
         private const val LOCATION_MAX_AGE_MILLIS = 30_000L
-        private const val STILLNESS_VERIFY_MILLIS = 10_000L
         private const val WARNING_RESPONSE_MILLIS = 15_000L
-        private const val FALL_VERIFY_LIMIT_MILLIS = 60_000L
-        private const val GRAVITY = 9.80665
 
         fun startOrUpdate(context: Context, config: SafetyConfig) {
             val generation = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -168,6 +168,22 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         fun isConfigured(context: Context): Boolean =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KEY_ENABLED, false)
+
+        fun isCheckingFallImpact(sessionId: String, ownerUid: String): Boolean {
+            val service = runningService?.get() ?: return false
+            val current = service.config ?: return false
+            return service.monitoring && service.trackingEnabled() && service.impactDetector.isChecking &&
+                current.sessionId == sessionId && current.ownerUid == ownerUid
+        }
+
+        fun requestWarningCancellation(context: Context, eventId: String): Boolean {
+            if (eventId.isBlank() || pendingEvent(context)?.get("eventId") != eventId) return false
+            context.startService(Intent(context, HikeSafetyMonitorService::class.java).apply {
+                action = ACTION_CANCEL_ALERT
+                putExtra(KEY_EVENT_ID, eventId)
+            })
+            return true
+        }
 
         // remapSession: Replace a provisional hike ID in the running monitor and buffered samples.
         fun remapSession(context: Context, oldSessionId: String, newSessionId: String, ownerUid: String) {
@@ -309,22 +325,11 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         fun acknowledgeEvent(context: Context, eventId: String) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             if (prefs.getString(KEY_EVENT_ID, null) != eventId) return
-            prefs.edit()
-                .remove(KEY_EVENT_ID)
-                .remove(KEY_EVENT_KIND)
-                .remove(KEY_EVENT_PHASE)
-                .remove(KEY_EVENT_DETECTED_WALL)
-                .remove(KEY_EVENT_DEADLINE_WALL)
-                .remove(KEY_EVENT_TRIGGERED_WALL)
-                .remove(KEY_DISPATCH_MESSAGE)
-                .remove(KEY_LOCAL_ALARM_STOPPED)
-                .apply()
-            context.getSystemService(NotificationManager::class.java)
-                ?.cancel(ALERT_NOTIFICATION_ID)
             runCatching {
                 context.startService(
                     Intent(context, HikeSafetyMonitorService::class.java).apply {
                         action = ACTION_ACKNOWLEDGE_ALERT
+                        putExtra(KEY_EVENT_ID, eventId)
                     },
                 )
             }
@@ -360,10 +365,6 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     private enum class DetectionState {
         NORMAL,
-        IMPACT_WINDOW,
-        BOUNCE,
-        VERIFYING_FALL,
-        VERIFYING_STILLNESS,
         AWAITING_RESPONSE,
         TRIGGERING,
     }
@@ -377,14 +378,11 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     private var config: SafetyConfig? = null
     private var activeGeneration = 0L
     private var state = DetectionState.NORMAL
+    private val impactDetector = FallImpactDetector()
+    private val stillnessRotation = StillnessRotationFilter()
     private var lastMotionElapsed = SystemClock.elapsedRealtime()
     private var lastMotionPersistedElapsed = 0L
-    private var impactWindowEndsElapsed = 0L
-    private var bounceEndsElapsed = 0L
-    private var verificationStartedElapsed = 0L
-    private var quietStartedElapsed = 0L
     private var responseDeadlineElapsed = 0L
-    private var latestImpactAcceleration: Double? = null
     private var referenceLocation: Location? = null
     private var monitoring = false
     private var backgroundEngine: FlutterEngine? = null
@@ -457,20 +455,25 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 return START_NOT_STICKY
             }
             ACTION_CANCEL_ALERT -> {
+                val eventId = intent.getStringExtra(KEY_EVENT_ID).orEmpty()
                 val pending = pendingEvent(this)
-                val eventId = pending?.get("eventId") as? String
-                if (!eventId.isNullOrBlank() && pending?.get("phase") != "awaiting_response") {
-                    // A countdown tap can reach the service just after its
-                    // deadline. Escalated SOS delivery must survive that race.
-                    stopTriggeredSafetyAlarm(this, eventId)
-                } else {
-                    cancelAlert("Response received")
+                if (eventId.isNotBlank() && pending?.get("eventId") == eventId) {
+                    if (pending["phase"] == "awaiting_response") {
+                        cancelAlert("Response received")
+                    } else {
+                        // A late response only silences the matching escalated event.
+                        stopTriggeredSafetyAlarm(this, eventId)
+                    }
                 }
-                return START_STICKY
+                // A notification action can recreate the service. Restore sensors below.
+                if (monitoring) return START_STICKY
             }
             ACTION_ACKNOWLEDGE_ALERT -> {
-                cancelAlert("Alert acknowledged")
-                return START_STICKY
+                val eventId = intent.getStringExtra(KEY_EVENT_ID)
+                if (!eventId.isNullOrBlank() && pendingEvent(this)?.get("eventId") == eventId) {
+                    cancelAlert("Alert acknowledged")
+                }
+                if (monitoring) return START_STICKY
             }
             ACTION_STOP_TRIGGERED_ALARM -> {
                 stopTriggeredSafetyAlarm(this, intent.getStringExtra(KEY_EVENT_ID).orEmpty())
@@ -525,10 +528,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             physicalAlarm.stop()
             state = DetectionState.NORMAL
             wasDeviceLockedDuringWarning = false
-            quietStartedElapsed = 0L
-            verificationStartedElapsed = 0L
             responseDeadlineElapsed = 0L
-            latestImpactAcceleration = null
             if (pendingEvent(this) == null) notificationManager.cancel(ALERT_NOTIFICATION_ID)
         }
         persistConfig(restored)
@@ -554,7 +554,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         if (monitoring && previous?.fallDetectionEnabled != restored.fallDetectionEnabled) {
             sensorManager.unregisterListener(this)
             if (restored.fallDetectionEnabled) registerSensors()
-            else cancelAlert("Fall detection disabled")
+            else {
+                clearImpactCheck()
+                if (state == DetectionState.AWAITING_RESPONSE) cancelAlert("Fall detection disabled")
+            }
         }
         if (monitoring && previous?.locationUploadIntervalMillis != restored.locationUploadIntervalMillis) {
             locationManager.removeUpdates(this)
@@ -679,10 +682,14 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     private fun startMonitoring() {
         if (monitoring) {
-            updateActiveNotification("Safety monitoring active")
+            updateActiveNotification(
+                if (impactDetector.isChecking) "Possible fall. Checking for movement."
+                else "Safety monitoring active",
+            )
             return
         }
         monitoring = true
+        notificationManager.cancel(IMPACT_NOTIFICATION_ID)
         restoreMotionClock()
         restorePendingState()
         acquireWakeLock()
@@ -693,6 +700,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     private fun stopMonitoring() {
+        clearImpactCheck()
         if (!monitoring) return
         monitoring = false
         handler.removeCallbacks(ticker)
@@ -714,6 +722,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     private fun registerSensors() {
+        stillnessRotation.reset()
         val accelerometer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true)
                 ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -772,8 +781,12 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (!monitoring || !trackingEnabled()) return
+        if (!monitoring || !trackingEnabled() ||
+            config?.fallDetectionEnabled != true || state != DetectionState.NORMAL
+        ) return
         val now = SystemClock.elapsedRealtime()
+        val sampledAt = (event.timestamp / 1_000_000L).coerceAtMost(now)
+        if (now - sampledAt > 1_000L || event.values.any { !it.isFinite() }) return
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
                 val magnitude = sqrt(
@@ -781,13 +794,13 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                         event.values[1].toDouble() * event.values[1] +
                         event.values[2].toDouble() * event.values[2],
                 )
-                handleAccelerometer(now, magnitude)
+                handleAccelerometer(sampledAt, magnitude)
             }
             Sensor.TYPE_GYROSCOPE -> {
-                val moved = abs(event.values[0]) > 0.08f ||
-                    abs(event.values[1]) > 0.08f ||
-                    abs(event.values[2]) > 0.08f
-                handleGyroscope(now, moved)
+                val (x, y, z) = event.values
+                val peakRotation = maxOf(abs(x), abs(y), abs(z))
+                if (stillnessRotation.detectsMotion(sampledAt, peakRotation)) noteMotion(now)
+                impactDetector.recordRotation(sampledAt, peakRotation > 0.08f)
             }
         }
     }
@@ -796,61 +809,18 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     private fun handleAccelerometer(now: Long, magnitude: Double) {
         val settings = config ?: return
-        val normalized = (settings.sensitivity - 1.0) / 9.0
-        val directImpact = lerp(3.6 * GRAVITY, 2.8 * GRAVITY, normalized)
-        val impact = lerp(5.0 * GRAVITY, 4.0 * GRAVITY, normalized)
-        val freeFall = lerp(0.25 * GRAVITY, 0.40 * GRAVITY, normalized)
-
-        if (abs(magnitude - GRAVITY) > 1.4 &&
-            state != DetectionState.AWAITING_RESPONSE &&
-            state != DetectionState.TRIGGERING) {
-            noteMotion(now)
-        }
-
-        when (state) {
-            DetectionState.NORMAL -> {
-                if (magnitude >= directImpact) {
-                    latestImpactAcceleration = magnitude
-                    bounceEndsElapsed = now + 2_000L
-                    state = DetectionState.BOUNCE
-                } else if (magnitude <= freeFall) {
-                    impactWindowEndsElapsed = now + 500L
-                    state = DetectionState.IMPACT_WINDOW
-                }
-            }
-            DetectionState.IMPACT_WINDOW -> {
-                if (now > impactWindowEndsElapsed) {
-                    resetToNormal(now, countAsMotion = false)
-                } else if (magnitude >= impact) {
-                    latestImpactAcceleration = magnitude
-                    bounceEndsElapsed = now + 2_000L
-                    state = DetectionState.BOUNCE
-                }
-            }
-            else -> Unit
-        }
+        if (abs(magnitude - FallImpactDetector.GRAVITY) > 1.4) noteMotion(now)
+        val wasChecking = impactDetector.isChecking
+        impactDetector.recordAcceleration(now, magnitude, settings.sensitivity)
+        if (!wasChecking && impactDetector.isChecking) showImpactCheck()
     }
 
-    private fun handleGyroscope(now: Long, moved: Boolean) {
-        if (moved) {
-            when (state) {
-                DetectionState.VERIFYING_STILLNESS -> resetToNormal(now, countAsMotion = true)
-                DetectionState.VERIFYING_FALL -> {
-                    quietStartedElapsed = 0L
-                    if (now - verificationStartedElapsed >= FALL_VERIFY_LIMIT_MILLIS) {
-                        resetToNormal(now, countAsMotion = true)
-                    }
-                }
-                DetectionState.NORMAL -> noteMotion(now)
-                else -> Unit
-            }
-            return
-        }
-        if (state == DetectionState.VERIFYING_FALL ||
-            state == DetectionState.VERIFYING_STILLNESS
-        ) {
-            if (quietStartedElapsed == 0L) quietStartedElapsed = now
-        }
+    private fun clearImpactCheck() {
+        val wasChecking = impactDetector.isChecking
+        impactDetector.reset()
+        if (!wasChecking) return
+        notificationManager.cancel(IMPACT_NOTIFICATION_ID)
+        onFallImpactCheckChanged?.invoke()
     }
 
     override fun onLocationChanged(location: Location) {
@@ -964,6 +934,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             }
         }
         runCatching {
+            // Update cloud: upload background GPS footprints
             FirebaseFunctions.getInstance("us-central1")
                 .getHttpsCallable("appendHikeFootprints")
                 .call(mapOf("sessionId" to uploadSessionId, "footprints" to points))
@@ -1024,33 +995,17 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         val now = SystemClock.elapsedRealtime()
         when (state) {
             DetectionState.NORMAL -> {
-                if (now - lastMotionElapsed >= settings.longestRestMillis) {
-                    beginResponseCountdown("prolonged_stillness")
-                }
-            }
-            DetectionState.IMPACT_WINDOW -> {
-                if (now > impactWindowEndsElapsed) resetToNormal(now, countAsMotion = false)
-            }
-            DetectionState.BOUNCE -> {
-                if (now >= bounceEndsElapsed) {
-                    verificationStartedElapsed = now
-                    quietStartedElapsed = 0L
-                    state = DetectionState.VERIFYING_FALL
-                    updateActiveNotification("Possible fall; checking phone movement")
-                }
-            }
-            DetectionState.VERIFYING_FALL,
-            DetectionState.VERIFYING_STILLNESS -> {
-                if (quietStartedElapsed != 0L &&
-                    now - quietStartedElapsed >= STILLNESS_VERIFY_MILLIS
-                ) {
-                    beginResponseCountdown(
-                        if (state == DetectionState.VERIFYING_STILLNESS) {
-                            "prolonged_stillness"
-                        } else {
-                            "fall_stillness"
-                        },
-                    )
+                when (impactDetector.outcomeAt(now)) {
+                    FallImpactDetector.Outcome.VERIFIED -> beginResponseCountdown("fall_stillness")
+                    FallImpactDetector.Outcome.EXPIRED -> {
+                        clearImpactCheck()
+                        updateActiveNotification("Safety monitoring active")
+                    }
+                    null -> {
+                        if (!impactDetector.isChecking && now - lastMotionElapsed >= settings.longestRestMillis) {
+                            beginResponseCountdown("prolonged_stillness")
+                        }
+                    }
                 }
             }
             DetectionState.AWAITING_RESPONSE -> {
@@ -1070,6 +1025,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     private fun beginResponseCountdown(kind: String) {
         if (!trackingEnabled()) return
         val settings = config ?: return
+        clearImpactCheck()
         val nowWall = System.currentTimeMillis()
         val deadlineWall = nowWall + settings.responseMillis
         val eventId = "${settings.sessionId}:$kind:$nowWall"
@@ -1152,8 +1108,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         clearPendingEvent(prefs.edit()).apply()
         notificationManager.cancel(ALERT_NOTIFICATION_ID)
         getSystemService(Vibrator::class.java)?.cancel()
-        resetToNormal(SystemClock.elapsedRealtime(), countAsMotion = true)
-        updateActiveNotification("$reason; safety monitoring resumed")
+        resetToNormal(SystemClock.elapsedRealtime())
+        if (monitoring && trackingEnabled()) {
+            updateActiveNotification("$reason. Safety monitoring resumed.")
+        }
     }
 
     private fun stopTriggeredAlarmOutputs(eventId: String): Boolean {
@@ -1194,7 +1152,8 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         } else {
-            resetToNormal(SystemClock.elapsedRealtime(), countAsMotion = true)
+            resetToNormal(SystemClock.elapsedRealtime())
+            if (monitoring && trackingEnabled()) updateActiveNotification("Safety monitoring active")
         }
         return true
     }
@@ -1237,19 +1196,18 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         return true
     }
 
-    private fun resetToNormal(now: Long, countAsMotion: Boolean) {
+    private fun resetToNormal(now: Long) {
         state = DetectionState.NORMAL
         wasDeviceLockedDuringWarning = false
-        quietStartedElapsed = 0L
-        verificationStartedElapsed = 0L
-        latestImpactAcceleration = null
-        if (countAsMotion) noteMotion(now)
-        updateActiveNotification("Safety monitoring active")
+        responseDeadlineElapsed = 0L
+        clearImpactCheck()
+        stillnessRotation.reset()
+        noteMotion(now, persistImmediately = true)
     }
 
-    private fun noteMotion(now: Long) {
+    private fun noteMotion(now: Long, persistImmediately: Boolean = false) {
         lastMotionElapsed = now
-        if (now - lastMotionPersistedElapsed >= 5_000L) {
+        if (persistImmediately || now - lastMotionPersistedElapsed >= 5_000L) {
             lastMotionPersistedElapsed = now
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putLong(KEY_LAST_MOTION_WALL, System.currentTimeMillis())
@@ -1532,6 +1490,33 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             },
         )
+        notificationManager.createNotificationChannel(
+            NotificationChannel(
+                IMPACT_CHANNEL_ID,
+                "Possible fall checks",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            },
+        )
+    }
+
+    private fun showImpactCheck() {
+        updateActiveNotification("Possible fall. Checking for movement.")
+        onFallImpactCheckChanged?.invoke()
+        if (flutterUiForeground) return
+        val notification = notificationBuilder(IMPACT_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Possible fall detected")
+            .setContentText("Checking for movement")
+            .setCategory(Notification.CATEGORY_STATUS)
+            .setPriority(Notification.PRIORITY_HIGH)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notification.setTimeoutAfter(FallImpactDetector.CHECK_TIMEOUT_MILLIS)
+        }
+        notificationManager.notify(IMPACT_NOTIFICATION_ID, notification.build())
     }
 
     private fun activeNotification(status: String): Notification {
@@ -1601,6 +1586,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             42131,
             Intent(this, HikeSafetyMonitorService::class.java).apply {
                 action = if (triggering) ACTION_STOP_TRIGGERED_ALARM else ACTION_CANCEL_ALERT
+                data = Uri.parse("hikercircle://hike/safety-response/${Uri.encode(eventId)}")
                 putExtra(KEY_EVENT_ID, eventId)
             },
             pendingIntentFlags(),
@@ -1749,6 +1735,4 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             0
         }
 
-    private fun lerp(start: Double, end: Double, amount: Double): Double =
-        start + (end - start) * amount
 }

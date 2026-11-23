@@ -35,6 +35,7 @@ function receipt(record, now = Date.now()) {
 // Receipt writes share the canonical transaction, so a stale client log cannot erase late confirmations.
 function project(tx, db, id, record, now = Date.now()) {
   if (record.isTest === true || !record.confirmationTracking || !record.ownerUid) return;
+  // Update cloud: publish SOS delivery receipt
   tx.set(db.collection('sosDeliveryReceipts').doc(record.ownerUid).collection('dispatches').doc(id), receipt(record, now));
 }
 
@@ -63,6 +64,7 @@ function evidenceFor(record, queue, journal) {
 // Reconcile one current attempt transactionally before deciding whether this exact contact needs a retry.
 async function reconcile({db, ref, previous, evidence, now = Date.now(), deleteField}) {
   return db.runTransaction(async tx => {
+    // Query SOS dispatch status
     const snapshot = await tx.get(ref), current = snapshot.data() || {};
     if (!snapshot.exists || !current.confirmationTracking || current.isTest
       || current.attemptNonce !== previous.attemptNonce) return null;
@@ -88,6 +90,7 @@ async function reconcile({db, ref, previous, evidence, now = Date.now(), deleteF
       || next.status === 'failed' && (!next.retryable || Number(next.attemptCount) >= MAX_ATTEMPTS);
     patch.nextCheckAtMillis = terminal ? deleteField() : now + 60000;
     if (next.status === 'failed' && next.retryable && !next.nextRetryAtMillis) patch.nextRetryAtMillis = now + 60000;
+    // Update cloud: save confirmed dispatch status
     tx.set(ref, patch, {merge: true});
     project(tx, db, ref.id, {...next, ...patch}, now);
     return {...next, ...patch, expired};

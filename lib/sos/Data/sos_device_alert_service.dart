@@ -112,6 +112,7 @@ class SosDeviceAlertService {
   /// Loads device contacts.
   Future<List<EmergencyContactCandidate>> loadDeviceContacts() async {
     try {
+      // API: device contact list
       final rawContacts = await _channel.invokeListMethod<Object?>(
         'getDeviceContacts',
       );
@@ -213,6 +214,7 @@ class SosDeviceAlertService {
     bool allowLastKnown = false,
     bool requirePrecise = false,
   }) async {
+    // API: device GPS snapshot
     final locationData = await _channel.invokeMapMethod<Object?, Object?>(
       'getCurrentTriggerLocation',
       {'allowLastKnown': allowLastKnown, 'requirePrecise': requirePrecise},

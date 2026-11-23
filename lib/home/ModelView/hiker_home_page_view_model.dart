@@ -592,12 +592,14 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
           debugPrint('FCM token refresh stream stopped: $error');
         },
       );
+      // API: FCM notification opens
       stateFcmOpenSubscription = FirebaseMessaging.onMessageOpenedApp.listen(
         (message) => unawaited(commandHandleFcmOpenBestEffort(message)),
         onError: (Object error, StackTrace stackTrace) {
           debugPrint('FCM open stream stopped: $error');
         },
       );
+      // API: FCM foreground messages
       stateFcmForegroundSubscription = FirebaseMessaging.onMessage.listen(
         commandShowForegroundNotification,
         onError: (Object error, StackTrace stackTrace) {
@@ -607,6 +609,7 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
 
       // Read the terminated-state message before token registration. This is
       // a one-shot value and is the critical path for notification cold starts.
+      // API: FCM launch notification
       final initialMessage = await messaging.getInitialMessage();
       if (initialMessage != null) {
         await commandHandleFcmOpen(initialMessage);
@@ -620,6 +623,7 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
       );
 
       try {
+        // API: FCM device token
         final token = await messaging.getToken();
         if (token != null && token.isNotEmpty) {
           await commandRegisterFcmToken(token);
@@ -2000,7 +2004,13 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
           return;
         }
         if (pending?.eventId == id && pending?.phase == 'awaiting_response') {
-          await stateActiveHikeLiveStatusService.cancelNativeSafetyAlert();
+          if (!await stateActiveHikeLiveStatusService.cancelNativeSafetyAlert(
+            id,
+          )) {
+            throw StateError(
+              'The local safety warning could not be cancelled.',
+            );
+          }
           return;
         }
         final stopped = await stateActiveHikeLiveStatusService

@@ -11,6 +11,7 @@ extension LocalCautionDatabase on LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     return database.transaction((tx) async {
+      // Query local: existing queued trail caution
       final previous = await tx.query(
         'caution_report_outbox',
         where: 'owner = ? AND report_id = ?',
@@ -24,6 +25,7 @@ extension LocalCautionDatabase on LocalSessionDatabase {
         }
         return LocalCautionReport.fromRow(previous.single);
       }
+      // Update local: queue caution report and media
       await tx.insert('caution_report_outbox', {
         'owner': owner,
         'report_id': reportId,
@@ -43,6 +45,7 @@ extension LocalCautionDatabase on LocalSessionDatabase {
           'bytes': item.bytes,
         });
       }
+      // Query local: newly queued caution
       return LocalCautionReport.fromRow(
         (await tx.query(
           'caution_report_outbox',
@@ -58,6 +61,7 @@ extension LocalCautionDatabase on LocalSessionDatabase {
     bool pendingOnly = false,
   }) async {
     final database = await _openDatabase();
+    // Query local: owner's queued trail cautions
     final rows = await database.query(
       'caution_report_outbox',
       where: pendingOnly ? "owner = ? AND status = 'pending'" : 'owner = ?',
@@ -72,6 +76,7 @@ extension LocalCautionDatabase on LocalSessionDatabase {
     required String reportId,
   }) async {
     final database = await _openDatabase();
+    // Query local: queued caution media
     final rows = await database.query(
       'caution_report_media',
       where: 'owner = ? AND report_id = ?',
@@ -96,6 +101,7 @@ extension LocalCautionDatabase on LocalSessionDatabase {
     required DateTime at,
   }) async {
     final database = await _openDatabase();
+    // Update local: count caution upload attempt
     await database.rawUpdate(
       '''UPDATE caution_report_outbox
       SET attempts = attempts + 1, last_attempt_at = ?
@@ -114,6 +120,7 @@ extension LocalCautionDatabase on LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     await database.transaction((tx) async {
+      // Update local: save caution submission result
       await tx.update(
         'caution_report_outbox',
         {

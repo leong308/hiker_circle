@@ -196,6 +196,7 @@ object HikeArrivalSafety {
         acknowledgementInFlight = true; lastAcknowledgementAttempt = now
         val event = state.optString("eventId"); val tracking = state.optString("trackingKey")
         val reason = if (state.optJSONObject("proof")?.has("arrivedAtMillis") == true) "recorded_arrival" else "hiker_confirmation"
+        // Update cloud: confirm safe hike arrival
         FirebaseFunctions.getInstance().getHttpsCallable("confirmHikeArrivalSafety")
             .call(mapOf("sessionId" to state.optString("sessionId"), "eventId" to event, "reason" to reason))
             .addOnCompleteListener { task ->

@@ -62,6 +62,7 @@ async function prepareRouteChunkWrites(transaction, shareReference, share, sampl
     groups.get(bucket).push(point);
   }
   const entries = [...groups].sort(([a], [b]) => a - b);
+  // Query existing live route chunks
   const snapshots = await Promise.all(entries.map(([bucket]) => transaction.get(
     shareReference.collection(ROUTE_COLLECTION).doc(String(bucket).padStart(4, '0'))
   )));
@@ -93,6 +94,7 @@ async function prepareRouteChunkWrites(transaction, shareReference, share, sampl
 }
 
 function applyRouteChunkWrites(transaction, writes) {
+  // Update cloud: save live route chunks
   for (const write of writes) transaction.set(write.reference, write.data);
 }
 
@@ -108,6 +110,7 @@ async function prepareHikeRouteWrites(transaction, db, {hike, samples, uid, phon
   const shareId = hike?.liveLocationShareId;
   if (hike?.status !== 'active' || hike.shareLiveLocation !== true || !validId(shareId)) return [];
   const shareReference = db.collection('live_location_shares').doc(shareId);
+  // Query active share for route points
   const snapshot = await transaction.get(shareReference);
   const share = snapshot.data();
   if (!snapshot.exists || !hikeConsentsToShare(hike, share, {shareId, uid, phoneNumber}, now)) return [];
@@ -121,10 +124,12 @@ async function projectShareLocation(db, {shareId, location}, now = Date.now()) {
   let writtenCount = 0, deletedCount = 0;
   while (true) {
     const result = await db.runTransaction(async transaction => {
+      // Query live share and route chunks
       const snapshot = await transaction.get(shareReference);
       const share = snapshot.data();
       if (!snapshot.exists || !activeShareWindow(share, now)) {
         const chunks = await transaction.get(shareReference.collection(ROUTE_COLLECTION).limit(200));
+        // Update cloud: delete obsolete route chunks
         for (const chunk of chunks.docs) transaction.delete(chunk.ref);
         return {writtenCount: 0, deletedCount: chunks.docs.length, cleanup: true};
       }
@@ -147,6 +152,7 @@ async function backfillHikeRoute(db, {sessionId, shareId, uid, phoneNumber}, clo
   while (true) {
     const result = await db.runTransaction(async transaction => {
       const now = typeof clock === 'function' ? clock() : clock;
+      // Query hike, share and GPS footprints
       const [hikeSnapshot, shareSnapshot] = await Promise.all([
         transaction.get(sessionReference), transaction.get(shareReference),
       ]);

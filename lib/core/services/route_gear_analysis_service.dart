@@ -140,6 +140,7 @@ class RouteGearAnalysisService {
           nwr["safety_rope"]$around;
         );out body geom;''';
         try {
+          // API: Overpass terrain for gear
           final response = await _client
               .post(
                 _endpoint,

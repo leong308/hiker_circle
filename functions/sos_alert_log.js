@@ -16,6 +16,7 @@ async function saveSosAlertLog(db, {uid, phoneNumber, alert}, ErrorType, timesta
   const moduleRef = userRef.collection('modules').doc('sos');
   const alertRef = db.collection('sosAlerts').doc(id);
   await db.runTransaction(async tx => {
+    // Query account, SOS module and alert
     const [userDoc, moduleDoc, existingDoc] = await Promise.all([tx.get(userRef), tx.get(moduleRef), tx.get(alertRef)]);
     const user = userDoc.data() || {};
     if (!userDoc.exists || user.accountDisabled === true || user.status === 'disabled') {
@@ -33,6 +34,7 @@ async function saveSosAlertLog(db, {uid, phoneNumber, alert}, ErrorType, timesta
     const allowed = ['id','mode','status','triggeredAtLocal','triggeredByPhoneNumber','contactCount','sentCount',
       'failedCount','dispatches','message','triggerSource','shirtColor','triggerLocation'];
     const payload = Object.fromEntries(allowed.filter(k => data[k] !== undefined).map(k => [k,data[k]]));
+    // Update cloud: save SOS alert and owner reference
     tx.set(alertRef, {...payload,userId:uid,phoneNumber,cloudLogPath:alertPath,updatedAt:timestamp()}, {merge:true});
     tx.set(moduleRef, {recentSosAlertPaths:paths,
       sosAlertsCount: Math.max(0, Number(saved.sosAlertsCount) || 0) + (existingDoc.exists ? 0 : 1),

@@ -39,6 +39,7 @@ async function sendGreenApiOtp({ endpointFor, chatId, code, message,
   fetchImpl = fetch }) {
   if (!/^[0-9]{6}$/.test(code)) throw new TypeError('Expected six OTP digits');
   const signal = AbortSignal.timeout(12 * 1000);
+  // API: WhatsApp OTP delivery
   const send = (method, payload) => fetchImpl(endpointFor(method), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

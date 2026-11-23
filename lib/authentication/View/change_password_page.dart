@@ -39,6 +39,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
       _error = null;
     });
     try {
+      // Update cloud: change account password
       await FirebaseFunctions.instance
           .httpsCallable('changeAccountPassword')
           .call({'newPassword': _password.text});

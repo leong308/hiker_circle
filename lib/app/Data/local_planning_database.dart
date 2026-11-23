@@ -15,6 +15,7 @@ Future<String> _resolvePlannedHikeId(
   String owner,
   String id,
 ) async {
+  // Query local: saved hike plan ID
   final rows = await database.query(
     'planned_hike_state',
     columns: ['upcoming_hike_id'],
@@ -44,6 +45,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     final database = await _openDatabase();
     await database.transaction((tx) async {
       final id = await _resolvePlannedHikeId(tx, owner, hikeId);
+      // Query local: plan before cancellation
       final rows = await tx.query(
         'planned_hike_state',
         where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
@@ -60,12 +62,13 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
       final savedIntent = {
         ...intent,
         'hikeId': id,
-        'cancelledAtLocal': at,
+        'cancelledAtLocal': intent['cancelledAtLocal'] ?? at,
         'wasConsumed': row?['is_consumed'] == 1,
         'previousReminderSyncPending': row?['reminder_sync_pending'],
         if (archiveAsExpired && previous.isNotEmpty)
           'previousPayload': previous,
       };
+      // Update local: queue cancellation and update plan
       await tx.insert('local_preferences', {
         'owner_phone_number': owner,
         'preference_key': 'pending_hike_cancellation:$id',
@@ -98,27 +101,66 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     });
   }
 
-  Future<void> restoreRejectedPlannedCancellation({
+  /// Resolves the queued intent and its local roster in one transaction.
+  Future<bool> finishPlannedCancellation({
+    required String owner,
+    required String preferenceKey,
+    required Map<String, dynamic> intent,
+    bool restore = false,
+  }) async {
+    final db = await _openDatabase();
+    return db.transaction((tx) async {
+      // Update local: acknowledge only the submitted intent
+      final removed = await tx.delete(
+        'local_preferences',
+        where:
+            'owner_phone_number = ? AND preference_key = ? AND value_json = ?',
+        whereArgs: [owner, preferenceKey, jsonEncode(intent)],
+      );
+      if (removed == 0) return false;
+      final id = await _resolvePlannedHikeId(
+        tx,
+        owner,
+        intent['hikeId'] as String,
+      );
+      const where = 'owner_phone_number = ? AND upcoming_hike_id = ?';
+      if (restore) {
+        await tx.update(
+          'planned_hike_state',
+          {
+            'is_consumed': intent['wasConsumed'] == true ? 1 : 0,
+            if (intent['previousReminderSyncPending'] is int)
+              'reminder_sync_pending': intent['previousReminderSyncPending'],
+            if (intent['previousPayload'] is Map)
+              'upcoming_payload_json': jsonEncode({
+                ...Map<String, dynamic>.from(intent['previousPayload'] as Map),
+                'sessionId': id,
+              }),
+          },
+          where: where,
+          whereArgs: [owner, id],
+        );
+      } else if (intent['withdrawSelf'] == true) {
+        await tx.delete(
+          'planned_hike_state',
+          where: where,
+          whereArgs: [owner, id],
+        );
+      }
+      return true;
+    });
+  }
+
+  Future<void> removeWithdrawnPlan({
     required String owner,
     required String hikeId,
-    required Map<String, dynamic> intent,
   }) async {
-    final database = await _openDatabase();
-    final id = await _resolvePlannedHikeId(database, owner, hikeId);
-    await database.update(
+    final db = await _openDatabase();
+    // Update local: remove the confirmed withdrawal
+    await db.delete(
       'planned_hike_state',
-      {
-        'is_consumed': intent['wasConsumed'] == true ? 1 : 0,
-        if (intent['previousReminderSyncPending'] is int)
-          'reminder_sync_pending': intent['previousReminderSyncPending'],
-        if (intent['previousPayload'] is Map)
-          'upcoming_payload_json': jsonEncode({
-            ...Map<String, dynamic>.from(intent['previousPayload'] as Map),
-            'sessionId': id,
-          }),
-      },
       where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
-      whereArgs: [owner, id],
+      whereArgs: [owner, hikeId],
     );
   }
 
@@ -134,6 +176,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
         ownerPhoneNumber.trim(),
         hikeId,
       );
+      // Query local: hike preparation safety preference
       final rows = await transaction.query(
         'local_preferences',
         columns: ['value_json'],
@@ -160,6 +203,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
         ownerPhoneNumber.trim(),
         hikeId,
       );
+      // Update local: save hike safety preference
       await transaction.insert('local_preferences', {
         'owner_phone_number': ownerPhoneNumber.trim(),
         'preference_key': 'hike_safety_settings:$id',
@@ -192,6 +236,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
         ownerPhoneNumber.trim(),
         hikeId,
       );
+      // Query local: hike preparation sharing preference
       final rows = await transaction.query(
         'local_preferences',
         columns: ['value_json'],
@@ -218,6 +263,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
         ownerPhoneNumber.trim(),
         hikeId,
       );
+      // Update local: save hike sharing preference
       await transaction.insert('local_preferences', {
         'owner_phone_number': ownerPhoneNumber.trim(),
         'preference_key': 'hike_preparation_sharing:$id',
@@ -238,6 +284,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     return database.transaction((transaction) async {
+      // Query local: existing scheduled plan
       final existing = await transaction.query(
         'planned_hike_state',
         where: 'owner_phone_number = ? AND creation_key = ?',
@@ -255,6 +302,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
       final items = GearChecklistCatalog.sanitize(
         hike.draft?.completedChecklistItems ?? {},
       ).toList()..sort();
+      // Update local: queue scheduled hike
       await transaction.insert('planned_hike_state', {
         'owner_phone_number': ownerPhoneNumber.trim(),
         'upcoming_hike_id': id,
@@ -286,6 +334,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
+      // Query local: provisional hike plan
       final rows = await transaction.query(
         'planned_hike_state',
         where: 'owner_phone_number = ? AND creation_key = ?',
@@ -300,6 +349,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
       row['upcoming_hike_id'] = cloudHikeId;
       row['upcoming_payload_json'] = jsonEncode(payload);
       row['schedule_sync_pending'] = 0;
+      // Update local: replace provisional plan ID
       await transaction.insert(
         'planned_hike_state',
         row,
@@ -335,6 +385,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     bool pendingSync = true,
   }) async {
     final database = await _openDatabase();
+    // Update local: save plan reminder preference
     await database.update(
       'planned_hike_state',
       {
@@ -357,6 +408,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     final database = await _openDatabase();
     final expected = jsonEncode(preference.normalized().toFirestore());
     await database.transaction((transaction) async {
+      // Query local: current plan reminder preference
       final rows = await transaction.query(
         'planned_hike_state',
         columns: ['reminder_preference_json'],
@@ -371,6 +423,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
       );
       // A late receipt must never clear a newer local preference edit.
       if (jsonEncode(current.toFirestore()) != expected) return;
+      // Update local: acknowledge plan reminder preference
       await transaction.update(
         'planned_hike_state',
         {'reminder_sync_pending': 0, 'reminder_preference_json': expected},
@@ -382,6 +435,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
 
   /// Creates upcoming hike reminders table.
   Future<void> _createUpcomingHikeRemindersTable(Database database) async {
+    // Update local: create hike reminders table
     await database.execute('''
       CREATE TABLE IF NOT EXISTS upcoming_hike_reminders (
         owner_phone_number TEXT NOT NULL,
@@ -400,6 +454,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
   /// Loads hike reminders.
   Future<List<LocalHikeReminder>> loadHikeReminders() async {
     final database = await _openDatabase();
+    // Query local: owner's hike reminders
     return (await database.query(
       'upcoming_hike_reminders',
     )).map(LocalHikeReminder.fromRow).toList();
@@ -416,6 +471,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
   }) async {
     final database = await _openDatabase();
     return database.transaction((transaction) async {
+      // Query local: existing reminder slots
       final rows = await transaction.query(
         'upcoming_hike_reminders',
         where: 'owner_phone_number = ? AND reminder_key = ?',
@@ -453,6 +509,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
         'content_hash': contentHash,
         'status': saved?.status ?? 'pending',
       };
+      // Update local: save scheduled reminder slot
       await transaction.insert(
         'upcoming_hike_reminders',
         row,
@@ -465,6 +522,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
   /// Sets hike reminder status.
   Future<void> setHikeReminderStatus(int notificationId, String status) async {
     final database = await _openDatabase();
+    // Update local: update reminder status
     await database.update(
       'upcoming_hike_reminders',
       {'status': status},

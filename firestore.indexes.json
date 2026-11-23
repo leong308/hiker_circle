@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "isSystemMessage", "order": "ASCENDING"},
+        {"fieldPath": "sentAtLocal", "order": "DESCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "hikeSessions",
       "queryScope": "COLLECTION",
       "fields": [

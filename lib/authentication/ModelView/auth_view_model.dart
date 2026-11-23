@@ -108,6 +108,7 @@ class AuthViewModel extends ChangeNotifier {
         if (_authMode == AuthMode.login && !authenticatedReverification)
           'password': password ?? '',
       };
+      // Update cloud: request WhatsApp login OTP
       Future<HttpsCallableResult<dynamic>> request() => _firebaseFunctions
           .httpsCallable('sendGreenApiLoginCode')
           .call(parameters);
@@ -184,6 +185,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Update cloud: verify WhatsApp login OTP
       final response = await _firebaseFunctions
           .httpsCallable('verifyGreenApiLoginCode')
           .call(<String, Object?>{
@@ -271,6 +273,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Update cloud: request password reset OTP
       final response = await _firebaseFunctions
           .httpsCallable('sendPasswordResetCode')
           .call(<String, Object?>{'phoneNumber': normalized});
@@ -335,6 +338,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Update cloud: verify OTP and start reset
       final response = await _firebaseFunctions
           .httpsCallable('verifyPasswordResetOtp')
           .call(<String, Object?>{
@@ -383,6 +387,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Update cloud: verify recovery safety answers
       await _firebaseFunctions.httpsCallable('checkSafetyAnswer').call(
         <String, Object?>{'resetToken': token, 'answer': answer},
       );
@@ -409,6 +414,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Update cloud: verify recovery TOTP
       await _firebaseFunctions.httpsCallable('verifyPasswordResetTotp').call(
         <String, Object?>{'resetToken': token, 'code': code.trim()},
       );
@@ -461,6 +467,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Update cloud: reset account password
       await _firebaseFunctions.httpsCallable('resetPassword').call(
         <String, Object?>{'resetToken': token, 'newPassword': newPassword},
       );

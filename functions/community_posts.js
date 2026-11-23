@@ -71,6 +71,7 @@ async function verifiedImages(bucket, paths, uid, postId, ErrorType, downloadURL
       || !path.split('/').at(-1)) fail(ErrorType, 'permission-denied', 'A photo does not belong to this post.');
     const file = bucket.file(path);
     let metadata;
+    // Query uploaded post image metadata
     try { [metadata] = await file.getMetadata(); }
     catch (_) { fail(ErrorType, 'failed-precondition', 'A selected photo has not finished uploading.'); }
     if (metadata.metadata?.ownerUserId !== uid || metadata.metadata?.postId !== postId
@@ -99,6 +100,7 @@ async function publishPost({ db, bucket, uid, phoneNumber, author, input, ErrorT
   const images = await verifiedImages(bucket, paths, uid, postId, ErrorType, downloadURL);
   const postRef = db.collection('communityPosts').doc(postId);
   return db.runTransaction(async tx => {
+    // Query post and linked hike or trail
     const [existing, sessionDocument, captureDocument, trailDocument] = await Promise.all([
       tx.get(postRef),
       sessionId ? tx.get(db.collection('hikeSessions').doc(sessionId)) : null,
@@ -127,6 +129,7 @@ async function publishPost({ db, bucket, uid, phoneNumber, author, input, ErrorT
       if (!samePublication(existing.data() || {}, post)) fail(ErrorType, 'already-exists', 'This post ID has already been used.');
       return { postId, updatedAtMillis: milliseconds(existing.data().updatedAt) };
     }
+    // Update cloud: publish community post
     tx.create(postRef, post);
     return { postId, updatedAtMillis: now };
   });
@@ -139,12 +142,14 @@ async function setLike({ db, uid, input, ErrorType, timestamp, now = Date.now() 
   const postRef = db.collection('communityPosts').doc(postId);
   const reactionRef = postRef.collection('reactions').doc(uid);
   return db.runTransaction(async tx => {
+    // Query post and viewer reaction
     const [snapshot, reaction] = await Promise.all([tx.get(postRef), tx.get(reactionRef)]);
     const post = snapshot.data() || {};
     if (!snapshot.exists || post.visibility !== 'public') fail(ErrorType, 'not-found', 'This post is no longer available.');
     const oldCount = Math.round(positive(post.likeCount));
     if (reaction.exists === input.liked) return { postId, liked: input.liked, likeCount: oldCount };
     const likeCount = Math.max(0, oldCount + (input.liked ? 1 : -1));
+    // Update cloud: update reaction and like count
     if (input.liked) tx.create(reactionRef, { createdAt: timestamp(now) });
     else tx.delete(reactionRef);
     tx.update(postRef, { likeCount });
@@ -160,10 +165,12 @@ async function writeComment({ db, uid, author, input, ErrorType, timestamp, now 
   const body = input.body.trim();
   const postRef = db.collection('communityPosts').doc(postId), commentRef = postRef.collection('comments').doc(commentId);
   return db.runTransaction(async tx => {
+    // Query post and comment by ID
     const [post, comment] = await Promise.all([tx.get(postRef), tx.get(commentRef)]);
     if (!post.exists || post.data().visibility !== 'public') fail(ErrorType, 'not-found', 'This post is no longer available.');
     if (comment.exists) {
       if (comment.data().authorId !== uid) fail(ErrorType, 'permission-denied', 'You can only edit your own comments.');
+      // Update cloud: save comment and adjust count
       if (comment.data().body !== body) tx.update(commentRef, { body, updatedAt: timestamp(now) });
       return { commentId, commentCount: Math.round(positive(post.data().commentCount)) };
     }
@@ -178,9 +185,11 @@ async function removeComment({ db, uid, isAdmin = false, input, ErrorType }) {
   const postId = requireId(input?.postId, 'post', ErrorType), commentId = requireId(input.commentId, 'comment', ErrorType);
   const postRef = db.collection('communityPosts').doc(postId), commentRef = postRef.collection('comments').doc(commentId);
   return db.runTransaction(async tx => {
+    // Query post and comment before deletion
     const [post, comment] = await Promise.all([tx.get(postRef), tx.get(commentRef)]);
     if (!comment.exists) return { commentId, deleted: true };
     if (comment.data().authorId !== uid && !isAdmin) fail(ErrorType, 'permission-denied', 'You can only remove your own comments.');
+    // Update cloud: delete comment and decrement count
     tx.delete(commentRef);
     if (post.exists) tx.update(postRef, { commentCount: Math.max(0, Math.round(positive(post.data().commentCount)) - 1) });
     return { commentId, deleted: true };
@@ -192,6 +201,7 @@ async function editPost({ db, uid, isAdmin = false, input, ErrorType, timestamp,
   const postId = requireId(input?.postId, 'post', ErrorType), caption = captionValue(input.caption, ErrorType);
   const paths = imagePaths(input.retainedImagePaths, ErrorType), postRef = db.collection('communityPosts').doc(postId);
   return db.runTransaction(async tx => {
+    // Query author's community post
     const snapshot = await tx.get(postRef), post = snapshot.data() || {};
     if (!snapshot.exists) fail(ErrorType, 'not-found', 'This post is no longer available.');
     if (post.authorId !== uid && !isAdmin) fail(ErrorType, 'permission-denied', 'You can only edit your own posts.');
@@ -204,6 +214,7 @@ async function editPost({ db, uid, isAdmin = false, input, ErrorType, timestamp,
     const images = paths.map(path => byPath.get(path));
     const patch = { caption, images, updatedAt: timestamp(now),
       ...(isAdmin ? { moderation: { ...(post.moderation || {}), adminId: uid, at: timestamp(now) } } : {}) };
+    // Update cloud: save community post edits
     tx.update(postRef, patch);
     return { postId, updatedAtMillis: now, removedImages: (post.images || []).filter(image => !paths.includes(image.path)) };
   });
@@ -215,9 +226,11 @@ async function moderatePost({ db, uid, input, ErrorType, timestamp, now = Date.n
     fail(ErrorType, 'invalid-argument', 'The moderation decision is invalid.');
   }
   return db.runTransaction(async tx => {
+    // Query post for moderation
     const ref = db.collection('communityPosts').doc(postId), post = await tx.get(ref);
     if (!post.exists) fail(ErrorType, 'not-found', 'This post is no longer available.');
     if (input.expectedUpdatedAtMillis != null && milliseconds(post.data().updatedAt) !== input.expectedUpdatedAtMillis) fail(ErrorType, 'aborted', 'This post changed. Refresh it before reviewing again.');
+    // Update cloud: update post moderation status
     tx.update(ref, { visibility: input.status === 'approved' ? 'public' : input.status,
       moderation: { status: input.status, reason: String(input.reason || '').trim(), adminId: uid, at: timestamp(now) }, updatedAt: timestamp(now) });
     return { postId, updatedAtMillis: now };
@@ -227,9 +240,11 @@ async function moderatePost({ db, uid, input, ErrorType, timestamp, now = Date.n
 async function deletePost({ db, uid, isAdmin = false, input, ErrorType }) {
   const postId = requireId(input?.postId, 'post', ErrorType), ref = db.collection('communityPosts').doc(postId);
   return db.runTransaction(async tx => {
+    // Query post deletion eligibility
     const snapshot = await tx.get(ref);
     if (!snapshot.exists) return { postId, deleted: true };
     if (snapshot.data().authorId !== uid && !isAdmin) fail(ErrorType, 'permission-denied', 'You can only remove your own posts.');
+    // Update cloud: delete community post
     tx.delete(ref);
     return { postId, deleted: true };
   });
@@ -239,7 +254,9 @@ async function deletePost({ db, uid, isAdmin = false, input, ErrorType }) {
 async function cleanupDeletedPost({ db, bucket, postId, post }) {
   const ref = db.collection('communityPosts').doc(postId);
   // Never remove a new document if an identifier was deliberately reused.
+  // Query deleted post before cleanup
   if ((await ref.get()).exists) return;
+  // Update cloud: delete post comments and reactions
   for (const name of ['comments', 'reactions']) await db.recursiveDelete(ref.collection(name));
   await removeImages(bucket, post.images || [], post.authorId, postId);
 }
@@ -247,6 +264,7 @@ async function removeImages(bucket, images, uid, postId) {
   await Promise.all(images.map(async image => {
     const path = String(image?.path || '');
     if (!path.startsWith(`community_posts/${uid}/${postId}/`) && !path.startsWith(`community_hikes/${uid}/`)) return;
+    // Update cloud: delete post images from Storage
     try { await bucket.file(path).delete({ ignoreNotFound: true }); }
     catch (error) { if (Number(error.code) !== 404) throw error; }
   }));

@@ -119,6 +119,7 @@ async function beginRequest({ db, uid, data, now = Date.now }) {
   const id = sha(`${uid}:${data.sessionId}`);
   const ref = db.doc(`trailRequests/${id}`);
   const result = await db.runTransaction(async (tx) => {
+    // Query hike, trail request and account
     const hike = await tx.get(db.doc(`hikeSessions/${data.sessionId}`));
     const existing = await tx.get(ref);
     const session = hike.data() || {};
@@ -155,6 +156,7 @@ async function beginRequest({ db, uid, data, now = Date.now }) {
         throw e;
       }
       if (current.status === 'uploading')
+        // Update cloud: create or resume trail request
         tx.update(ref, { proposed, checkpointSelections: selections });
       return { requestId: id, status: current.status };
     }
@@ -178,6 +180,7 @@ async function finalizeRequest({ db, uid, requestId, now = Date.now }) {
   if (!/^[a-f0-9]{64}$/.test(requestId || '')) invalid();
   const ref = db.doc(`trailRequests/${requestId}`);
   return db.runTransaction(async (tx) => {
+    // Query trail request, route chunks and hike
     const snapshot = await tx.get(ref);
     const request = snapshot.data() || {};
     if (!snapshot.exists || request.ownerId !== uid) {
@@ -226,6 +229,7 @@ async function finalizeRequest({ db, uid, requestId, now = Date.now }) {
       latitude: points[selection.index].lat,
       longitude: points[selection.index].lon,
     }));
+    // Update cloud: finalize recorded trail request
     tx.update(ref, {
       status: 'pending',
       submittedAtMillis: now(),

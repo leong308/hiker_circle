@@ -25,6 +25,7 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
     }
   }
 
+  // Query signed-in hiker's mobile resource
   Future<Map<String, dynamic>> readMobileSnapshot({
     required String owner,
     required String resourceType,
@@ -93,6 +94,7 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
         type: 'mobile_preferences',
         id: 'current',
       );
+      // Query updated preference snapshot
       await readMobileSnapshot(
         owner: session.phoneNumber,
         resourceType: 'preferences',
@@ -112,6 +114,7 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
     final existing = _achievementMaintenance[owner];
     if (existing != null) return existing;
     final future = () async {
+      // Update cloud: sync historical achievement progress
       await _resolvedFunctions
           .httpsCallable(
             'syncMyAchievementProgress',
@@ -146,6 +149,7 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
   }
 
   Future<Map<String, dynamic>> _readPreferences(AppSession session) async {
+    // Query hiker's mobile preferences
     final snapshot = await readMobileSnapshot(
       owner: session.phoneNumber,
       resourceType: 'preferences',
@@ -157,6 +161,7 @@ extension MobileReadRepository on HikerCircleFirebaseRepository {
   }
 
   Future<Map<String, dynamic>> _readSocial(AppSession session) =>
+      // Query hiker's social module
       readMobileSnapshot(owner: session.phoneNumber, resourceType: 'social');
 
   List<Map<String, dynamic>> _snapshotRows(

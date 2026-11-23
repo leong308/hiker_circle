@@ -2,6 +2,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Query mobile session and account status
     function signedIn() {
       return request.auth != null
         && request.auth.uid is string
@@ -57,6 +58,7 @@ service cloud.firestore {
           ]));
     }
 
+    // Query admin account role
     function admin() {
       return signedIn()
         && administratorAccount(
@@ -100,6 +102,7 @@ service cloud.firestore {
         && data.userPhoneNumber == phoneNumber();
     }
 
+    // Query parent hike owner
     function ownedHikeSession(sessionId) {
       return signedIn()
         && exists(/databases/$(database)/documents/hikeSessions/$(sessionId))
@@ -570,6 +573,7 @@ service cloud.firestore {
         // Only a known, currently live share may expose its public projection.
         // Expiry/revocation apply immediately even before TTL removes chunks.
         function sharedRouteIsActive() {
+          // Query parent live share
           let share = get(/databases/$(database)/documents/live_location_shares/$(shareId));
           return share.data.isActive == true
             && share.data.expiresAt is timestamp
@@ -615,6 +619,7 @@ service cloud.firestore {
     }
 
     match /footprints/{footprintId} {
+      // Query parent hike for GPS access
       allow read: if admin() || (signedIn()
         && ownHike(get(/databases/$(database)/documents/hikeSessions/$(resource.data.sessionId)).data));
       allow write: if false;
@@ -723,6 +728,7 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
           ['status', 'reviewedAt', 'reviewedAtLocal', 'reviewedByAdminId', 'publishedTrailId', 'reviewNote']);
       match /routeChunks/{chunkId} {
+        // Query parent trail request
         function parentRequest() { return get(/databases/$(database)/documents/trailRequests/$(requestId)); }
         allow read: if signedIn() && (admin() || parentRequest().data.ownerId == request.auth.uid);
         allow create, update: if signedIn() && parentRequest().data.ownerId == request.auth.uid
@@ -759,6 +765,7 @@ service cloud.firestore {
 
       match /comments/{commentId} {
         function parentPost() {
+          // Query parent post for comment access
           return get(/databases/$(database)/documents/communityPosts/$(postId));
         }
 
@@ -773,6 +780,7 @@ service cloud.firestore {
       match /reactions/{userId} {
         // A user only needs their own reaction state. Public counts live on
         // the parent; the membership list is never exposed to the feed.
+        // Query post visibility for reactions
         allow get: if signedIn() && request.auth.uid == userId
           && get(/databases/$(database)/documents/communityPosts/$(postId)).data.visibility == 'public';
         allow list, create, update, delete: if false;
@@ -937,6 +945,7 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         function chat() {
+          // Query parent chat membership
           return get(/databases/$(database)/documents/groupChats/$(chatId));
         }
 
@@ -975,6 +984,7 @@ service cloud.firestore {
     }
 
     match /appFeedback/{reportId} {
+      // Query feedback report existence
       allow get: if signedIn() && (
         !exists(/databases/$(database)/documents/appFeedback/$(reportId))
         || resource.data.uid == request.auth.uid || admin()

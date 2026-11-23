@@ -68,6 +68,7 @@ class MapboxOptimizationService {
     final coordinates = sorted
         .map((c) => '${c.longitude},${c.latitude}')
         .join(';');
+    // API: Mapbox walking directions
     final uri = Uri.https(
       'api.mapbox.com',
       '/directions/v5/mapbox/walking/$coordinates',
@@ -150,6 +151,7 @@ class MapboxOptimizationService {
     final coordinates = sorted
         .map((checkpoint) => '${checkpoint.longitude},${checkpoint.latitude}')
         .join(';');
+    // API: Mapbox waypoint optimization
     final uri = Uri.https(
       'api.mapbox.com',
       '/optimized-trips/v1/mapbox/walking/$coordinates',

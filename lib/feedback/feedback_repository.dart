@@ -356,6 +356,7 @@ class FeedbackRepository {
   Future<void> sendDraftToCloud(FeedbackDraft draft) async {
     _requireOwner(draft.uid);
     final doc = _db.collection('appFeedback').doc(draft.id);
+    // Query prior feedback submission by ID
     if ((await doc.get(const GetOptions(source: Source.server))).exists) {
       return;
     }
@@ -364,6 +365,7 @@ class FeedbackRepository {
         ? ''
         : 'app_feedback/${draft.uid}/${draft.id}/screenshot.png';
     if (draft.screenshot != null) {
+      // Update cloud: upload feedback screenshot
       final task = FirebaseStorage.instance
           .ref(path)
           .putData(
@@ -380,7 +382,9 @@ class FeedbackRepository {
     _requireOwner(draft.uid);
     // Transactions never queue an offline "success"
     await _db.runTransaction((transaction) async {
+      // Query existing feedback in transaction
       if ((await transaction.get(doc)).exists) return;
+      // Update cloud: create feedback report
       transaction.set(doc, {
         'uid': draft.uid,
         'category': draft.category,
@@ -446,6 +450,7 @@ class FeedbackRepository {
   }) async {
     final account = owner ?? _owner();
     _requireOwner(account);
+    // Query hiker's submitted feedback
     final data = await _cache.read(
       owner: account,
       type: cacheType,
@@ -471,6 +476,7 @@ class FeedbackRepository {
 
   /// Privileged review stays a live, server-authorised Firestore query.
   @protected
+  // Query admin feedback by creation time
   Stream<List<FeedbackReport>> watchAdminReports() => _db
       .collection('appFeedback')
       .orderBy('createdAt', descending: true)
@@ -504,6 +510,7 @@ class FeedbackRepository {
     if (!feedbackStatuses.contains(status)) {
       throw ArgumentError('Invalid status');
     }
+    // Update cloud: update feedback status
     await _db.collection('appFeedback').doc(id).update({'status': status});
     try {
       await _invalidateReports(_owner());
@@ -514,5 +521,6 @@ class FeedbackRepository {
 
   /// Computes screenshot.
   Future<Uint8List?> screenshot(String path) async =>
+      // Query feedback screenshot bytes
       FirebaseStorage.instance.ref(path).getData(feedbackImageLimit);
 }

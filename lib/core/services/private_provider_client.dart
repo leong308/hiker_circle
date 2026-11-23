@@ -11,6 +11,7 @@ abstract final class PrivateProviderClient {
     String operation,
     Map<String, Object?> data,
   ) async {
+    // API: private provider callable
     final result = await FirebaseFunctions.instance
         .httpsCallable('requestPrivateProvider')
         .call<Map<String, dynamic>>({'operation': operation, ...data});

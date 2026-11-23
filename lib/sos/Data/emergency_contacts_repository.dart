@@ -114,6 +114,7 @@ class EmergencyContactsRepository {
         () => FirebaseFunctions.instance,
       );
 
+  // Query hiker's emergency contacts
   Future<Map<String, dynamic>> _readPreferences(
     AppSession session, {
     bool force = false,
@@ -146,6 +147,7 @@ class EmergencyContactsRepository {
       if (confirmed['contacts'] is! List) return [];
       return _parseContacts(confirmed['contacts']);
     }
+    // Query local: last confirmed emergency contacts
     final rawLocalContacts = await _resolvedLocalDatabase.loadEmergencyContacts(
       phoneNumber: session.phoneNumber,
     );
@@ -304,6 +306,7 @@ class EmergencyContactsRepository {
     AppSession session,
     List<EmergencyContact> contacts,
   ) async {
+    // Query contacts after uncertain save
     final data = await _requestContactCloud('readMobileResource', {
       'expectedOwner': session.phoneNumber,
       'resourceType': 'sos_preferences',
@@ -340,6 +343,7 @@ class EmergencyContactsRepository {
         'Connect to the internet to update emergency contacts.',
       );
     }
+    // Update cloud: save emergency contacts
     final result = await _requestContactCloud('syncSafetyPreferences', {
       'expectedOwner': session.phoneNumber,
       'field': 'sos_contacts',

@@ -66,6 +66,7 @@ class GoogleCityGeocodingService {
 
     final client = _client ?? http.Client();
     try {
+      // API: Google city lookup
       final response = _client == null
           ? await PrivateProviderClient.request('googleGeocode', {
               'latitude': latitude,

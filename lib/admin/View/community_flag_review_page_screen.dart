@@ -79,6 +79,7 @@ class _CommunityFlagReviewPageState extends State<CommunityFlagReviewPage> {
       _saveError = null;
     });
     try {
+      // Update cloud: save moderation decision
       final status = widget.reviewAction != null
           ? await widget.reviewAction!(action)
           : (await FirebaseFunctions.instance
@@ -519,7 +520,7 @@ class _CommunityFlagReviewPageState extends State<CommunityFlagReviewPage> {
       content: Text(
         widget.flag.isComment
             ? 'The comment will be removed. A copy is kept in the private moderation record.'
-            : 'The post will leave the public feed. You can restore it later in Moderate posts.',
+            : 'The post will leave the public feed. You can restore it from Moderation history in Flagged content.',
       ),
       actions: [
         TextButton(

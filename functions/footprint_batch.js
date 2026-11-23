@@ -72,6 +72,7 @@ async function appendFootprints(db, { sessionId, uid, phoneNumber, footprints },
   const samples = parseFootprintBatch(footprints, ErrorType, now);
   const sessionRef = db.collection('hikeSessions').doc(sessionId);
   return db.runTransaction(async tx => {
+    // Query hike session for GPS upload
     const sessionSnapshot = await tx.get(sessionRef);
     const hike = sessionSnapshot.data() || {};
     if (!sessionSnapshot.exists || hike.userId !== uid || hike.userPhoneNumber !== phoneNumber) {
@@ -94,6 +95,7 @@ async function appendFootprints(db, { sessionId, uid, phoneNumber, footprints },
     }
     // Range overlap finds retries even when a device uploads old offline samples.
     // Reading the parent serializes concurrent Flutter/native writers and chunk allocation.
+    // Query overlapping GPS footprint chunks
     const overlaps = await tx.get(db.collection('footprints')
       .where('sessionId', '==', sessionId)
       .where('lastRecordedAtMillis', '>=', samples[0].recordedAtMillis)
@@ -168,6 +170,7 @@ async function appendFootprints(db, { sessionId, uid, phoneNumber, footprints },
     const publicRouteWrites = await liveRoute.prepareHikeRouteWrites(tx, db, {
       hike, samples: canonical, uid, phoneNumber,
     }, now);
+    // Update cloud: save GPS footprints
     for (const change of changes) {
       if (snapshots.has(change.ref.path)) tx.set(change.ref, change.data);
       else tx.create(change.ref, change.data);
@@ -189,6 +192,7 @@ async function loadFootprints(db, sessionId, references) {
     if (batch.some(ref => typeof ref?.path !== 'string' || !/^footprints\/[^/]+$/.test(ref.path))) {
       throw new Error('Invalid footprint reference.');
     }
+    // Query GPS chunks for hike track
     for (const snapshot of await db.getAll(...batch)) {
       const chunk = snapshot.data();
       if (!snapshot.exists || chunk.sessionId !== sessionId || !Array.isArray(chunk.samples)) {

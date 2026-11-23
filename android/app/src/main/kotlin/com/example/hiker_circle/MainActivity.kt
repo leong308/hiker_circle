@@ -57,6 +57,8 @@ class MainActivity : FlutterFragmentActivity() {
         private const val ACTIVE_HIKE_NOTIFICATION_ID = 4207
     }
 
+    private var activeHikeLiveStatusChannel: MethodChannel? = null
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var mediaPlayer: MediaPlayer? = null
     private var activeAlarmAsset: String? = null
@@ -296,8 +298,12 @@ class MainActivity : FlutterFragmentActivity() {
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             ACTIVE_HIKE_LIVE_STATUS_CHANNEL,
-        ).setMethodCallHandler { call, result ->
+        ).also { activeHikeLiveStatusChannel = it }.setMethodCallHandler { call, result ->
             when (call.method) {
+                "isCheckingFallImpact" -> result.success(HikeSafetyMonitorService.isCheckingFallImpact(
+                    call.argument<String>("sessionId").orEmpty(),
+                    call.argument<String>("ownerUid").orEmpty(),
+                ))
                 "remapNativeLocationSession" -> {
                     runCatching {
                         val oldSessionId = call.argument<String>("oldSessionId").orEmpty()
@@ -435,12 +441,14 @@ class MainActivity : FlutterFragmentActivity() {
                     ))
                 }
                 "cancelNativeSafetyAlert" -> {
-                    startService(
-                        Intent(this, HikeSafetyMonitorService::class.java).apply {
-                            action = HikeSafetyMonitorService.ACTION_CANCEL_ALERT
-                        },
-                    )
-                    result.success(null)
+                    runCatching {
+                        HikeSafetyMonitorService.requestWarningCancellation(
+                            this,
+                            call.argument<String>("eventId").orEmpty(),
+                        )
+                    }.onSuccess(result::success).onFailure {
+                        result.error("native_alert_cancel_failed", "The safety warning could not be cancelled.", null)
+                    }
                 }
                 "getNativeSafetyStatus" -> {
                     val backgroundLocationGranted =
@@ -508,11 +516,15 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onResume() {
         super.onResume()
         HikeSafetyMonitorService.flutterUiForeground = true
+        HikeSafetyMonitorService.onFallImpactCheckChanged = {
+            activeHikeLiveStatusChannel?.invokeMethod("onFallImpactCheckChanged", null)
+        }
         hikerBleBridge?.onActivityResumed()
     }
 
     override fun onPause() {
         HikeSafetyMonitorService.flutterUiForeground = false
+        HikeSafetyMonitorService.onFallImpactCheckChanged = null
         hikerBleBridge?.onActivityPaused()
         super.onPause()
     }

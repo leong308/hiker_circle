@@ -253,6 +253,7 @@ class ActiveHikeWeatherService {
     required int distanceAheadMeters,
   }) async {
     try {
+      // API: Open-Meteo active hike forecast
       final response = await client
           .get(
             Uri.https('api.open-meteo.com', '/v1/forecast', {

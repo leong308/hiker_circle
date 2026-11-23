@@ -8,10 +8,12 @@
 async function reconcileCommentCount(db, postId, timestamp) {
   const postRef = db.collection('communityPosts').doc(postId);
   return db.runTransaction(async tx => {
+    // Query post and stored comments
     const [post, comments] = await Promise.all([
       tx.get(postRef), tx.get(postRef.collection('comments').select()),
     ]);
     if (!post.exists || Number(post.data()?.commentCount) === comments.size) return;
+    // Update cloud: repair post comment count
     tx.update(postRef, { commentCount: comments.size });
   });
 }

@@ -37,6 +37,7 @@ function upcomingPrecautions(weather, departure, duration, now = Date.now()) {
 
 // sendPrecautionReminders: Claim each hiker/departure delivery and notify only risks above the previously sent severity.
 async function sendPrecautionReminders({db, messaging, getWeather, userId, tokensFor, now = Date.now(), hikes}) {
+  // Query hikes, teams and trails for reminders
   const hikeSnapshot = hikes || await db.collection('upcomingHikes').get();
   for (const doc of hikeSnapshot.docs) {
     const hike = doc.data();
@@ -58,20 +59,24 @@ async function sendPrecautionReminders({db, messaging, getWeather, userId, token
         const id = createHash('sha256').update(`${doc.id}:${departure}:${phone}`).digest('hex');
         const ref = db.collection('hikePrecautionDeliveries').doc(id);
         const claim = await db.runTransaction(async tx => {
+          // Query hike and previous reminder receipt
           const current = (await tx.get(doc.ref)).data();
           const previous = (await tx.get(ref)).data() || {};
           if (!current || current.isDeleted || current.startedAtLocal || Date.parse(current.departureTimeLocal || current.departureTime) !== departure || ![current.creatorPhone, ...(current.participantPhones || [])].includes(phone) || previous.leaseUntil > now) return null;
           const fresh = cautions.filter(c => (previous.sent?.[c.id] || 0) < c.severity);
           if (!fresh.length) return null;
+          // Update cloud: claim reminder and record delivery
           tx.set(ref, {leaseUntil: now + 10 * 60000}, {merge:true});
           return {fresh, sent: previous.sent || {}};
         });
         if (!claim) continue;
+        // Query hiker's reminder devices
         const user = (await readUser(db.collection('users').doc(userId(phone)), ["devices"])).data();
         const tokens = tokensFor(user || {});
         if (!tokens.length) { await ref.set({leaseUntil:0}, {merge:true}); continue; }
         let success = 0;
         for (let i=0;i<tokens.length;i+=500) {
+          // API: FCM precaution reminder
           const response = await messaging.sendEachForMulticast({tokens:tokens.slice(i,i+500),
             notification:{title:`Precautions for ${String(hike.trailName || 'your upcoming hike').slice(0,80)}`, body:claim.fresh.map(c=>c.message).join(' ').slice(0,900)},
             data:{type:'upcoming_hike_precaution',upcomingHikeId:doc.id,deepLink:`hikercircle://upcoming-hike/view?upcomingHikeId=${encodeURIComponent(doc.id)}`},

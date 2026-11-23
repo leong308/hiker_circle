@@ -10,13 +10,16 @@ class UpcomingHikeRequestEntry {
     required this.status,
     this.createdAt,
     this.decidedAt,
+    this.joinedAt,
   });
   final String id, hikeId, name, status;
-  final DateTime? createdAt, decidedAt;
+  final DateTime? createdAt, decidedAt, joinedAt;
+
+  bool get isJoined => status == 'joined' || status == 'accepted';
 
   /// Uses the same decision labels in the inbox and history.
   String get statusLabel => switch (status) {
-    'accepted' => 'Accepted',
+    'joined' || 'accepted' => 'Joined',
     'rejected' => 'Rejected',
     'pending' => 'Pending',
     _ => 'Expired',
@@ -31,6 +34,7 @@ class UpcomingHikeRequestEntry {
         status: data['status']?.toString() ?? 'expired',
         createdAt: DateTime.tryParse(data['createdAtLocal']?.toString() ?? ''),
         decidedAt: DateTime.tryParse(data['decidedAtLocal']?.toString() ?? ''),
+        joinedAt: DateTime.tryParse(data['joinedAtLocal']?.toString() ?? ''),
       );
 }
 

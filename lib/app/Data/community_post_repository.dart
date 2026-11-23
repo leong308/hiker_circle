@@ -132,8 +132,12 @@ HikerCircleFirebaseRepositoryException _communityWriteFailure(
     'retry-limit-exceeded',
   };
   final status = error.code.trim().toLowerCase().replaceAll('_', '-');
-  final messageStatus = error.message?.trim().toLowerCase().replaceAll('_', '-');
-  if (connectionCodes.contains(status) || connectionCodes.contains(messageStatus)) {
+  final messageStatus = error.message?.trim().toLowerCase().replaceAll(
+    '_',
+    '-',
+  );
+  if (connectionCodes.contains(status) ||
+      connectionCodes.contains(messageStatus)) {
     return HikerCircleFirebaseRepositoryException(
       sharingStory
           ? 'Your draft is still here. Check your connection and try sharing again.'
@@ -284,6 +288,7 @@ Future<void> _publishCommunity(
       );
       var exists = false;
       try {
+        // Query previously uploaded image metadata
         final old = await reference.getMetadata();
         exists =
             old.size == image.bytes.length &&
@@ -293,6 +298,7 @@ Future<void> _publishCommunity(
         if (error.code != 'object-not-found') rethrow;
       }
       if (!exists) {
+        // Update cloud: upload community post images
         await reference.putData(
           image.bytes,
           SettableMetadata(
@@ -304,6 +310,7 @@ Future<void> _publishCommunity(
       paths.add(reference.fullPath);
     }
     r._requireSameAccount(session, uid);
+    // Update cloud: publish community post
     await _communityCall(r, 'publishCommunityPost', {
       'postId': id,
       'caption': caption.trim(),
@@ -329,6 +336,7 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
   String? afterPostId,
   String? authorId,
   bool admin = false,
+  bool historyOnly = false,
   bool force = false,
 }) async {
   final owner = session?.phoneNumber ?? await r._cloudReadOwner();
@@ -366,12 +374,20 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
     }
   }
 
-  if (!r._firebaseBootstrapResult.isAvailable && admin) return cached();
+  if (!r._firebaseBootstrapResult.isAvailable && admin) {
+    if (historyOnly) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Reconnect to load moderation history.',
+      );
+    }
+    return cached();
+  }
   if (!sameAccount()) return [];
   try {
     final List<Map<String, dynamic>> sourceRows;
     final bool pageComplete;
     if (!admin) {
+      // Query community feed by author or visibility
       final data = await r.readCloudSnapshot(
         owner: owner,
         resourceType: 'community_posts',
@@ -398,6 +414,10 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
     } else {
       // Moderation views keep their role-checked live query, outside public caches.
       Query<Map<String, dynamic>> query = r._communityPosts;
+      // Query hidden and removed posts for restoration
+      if (historyOnly) {
+        query = query.where('visibility', whereIn: ['hidden', 'removed']);
+      }
       if (authorId != null) {
         query = query.where('authorId', isEqualTo: authorId);
       }
@@ -405,6 +425,7 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
           .orderBy('createdAt', descending: true)
           .orderBy(FieldPath.documentId, descending: true);
       if (afterPostId != null) {
+        // Query feed cursor by post ID
         final cursor = await r._communityPosts
             .doc(afterPostId)
             .get()
@@ -412,6 +433,7 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
         if (!cursor.exists) return [];
         query = query.startAfterDocument(cursor);
       }
+      // Query feed page and viewer reactions
       final result = await query
           .limit(limit.clamp(1, 100))
           .get()
@@ -527,6 +549,7 @@ Future<List<Map<String, dynamic>>> _readCommunityComments(
     if (afterCommentId != null) 'afterCommentId': afterCommentId,
   };
   try {
+    // Query comments for a community post
     final snapshot = await r.readCloudSnapshot(
       resourceType: 'community_comments',
       resourceArgs: args,
@@ -643,6 +666,7 @@ Future<List<Map<String, dynamic>>> _readCommunityCommentsDirect(
 
   if (!r._firebaseBootstrapResult.isAvailable) return cached();
   try {
+    // Query parent community post
     final post = await r._communityPosts
         .doc(postId)
         .get()
@@ -657,6 +681,7 @@ Future<List<Map<String, dynamic>>> _readCommunityCommentsDirect(
         .orderBy('createdAt', descending: true)
         .orderBy(FieldPath.documentId, descending: true);
     if (afterCommentId != null) {
+      // Query comment cursor and page
       final cursor = await r
           ._communityCommentsFor(postId)
           .doc(afterCommentId)

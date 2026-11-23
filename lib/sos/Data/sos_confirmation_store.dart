@@ -36,6 +36,7 @@ class SosConfirmationStore {
 
   /// Refreshes receipts before history loads or a durable client retry.
   Future<void> refresh(String owner) async {
+    // Query recent SOS delivery receipts
     final snapshot = await collection(
       owner,
     ).orderBy('triggeredAtMillis', descending: true).limit(300).get();
@@ -98,6 +99,7 @@ class SosConfirmationStore {
         var base = _alerts[owner]?[id];
         if (base == null) {
           try {
+            // Query alert linked to delivery receipt
             final document = await firestore
                 .collection('sosAlerts')
                 .doc(id)
@@ -115,6 +117,7 @@ class SosConfirmationStore {
       }
     }
 
+    // Query live SOS delivery receipts
     final subscription = collection(owner)
         .orderBy('triggeredAtMillis', descending: true)
         .limit(300)

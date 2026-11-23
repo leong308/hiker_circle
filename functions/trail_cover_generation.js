@@ -29,6 +29,7 @@ function coverPlan(trailId, data) {
 
 async function ensureTrailCover({db, bucket, trailId, render = routeCover, now = () => new Date().toISOString()}) {
   const reference = db.collection('trails').doc(trailId);
+  // Query trail and existing cover
   const snapshot = await reference.get();
   const plan = coverPlan(trailId, snapshot.data());
   if (!plan) return {written: false, reason: 'not-needed'};
@@ -39,6 +40,7 @@ async function ensureTrailCover({db, bucket, trailId, render = routeCover, now =
   const file = bucket.file(storagePath);
   const credit = routeCredit(plan.trail);
   try {
+    // Update cloud: upload generated trail cover
     await file.save(png, {
       resumable: false,
       preconditionOpts: {ifGenerationMatch: 0},
@@ -59,6 +61,7 @@ async function ensureTrailCover({db, bucket, trailId, render = routeCover, now =
     // Concurrent/retried events share the same immutable object and download token.
     if (Number(error.code) !== 412) throw error;
   }
+  // Query stored trail cover metadata
   const [metadata] = await file.getMetadata();
   const token = String(metadata.metadata?.firebaseStorageDownloadTokens || '').split(',')[0];
   if (!token) throw new Error('The generated trail cover has no download token.');
@@ -68,9 +71,11 @@ async function ensureTrailCover({db, bucket, trailId, render = routeCover, now =
 
   return db.runTransaction(async transaction => {
     // An upload, rename, route edit or deletion may have raced the PNG render/upload.
+    // Query current trail cover reference
     const current = await transaction.get(reference);
     const currentPlan = coverPlan(trailId, current.data());
     if (!currentPlan || currentPlan.signature !== plan.signature) return {written: false, reason: 'changed'};
+    // Update cloud: save generated trail cover reference
     transaction.update(reference, {
       coverImageUrl: [imageUrl],
       coverImageCredits: [credit],

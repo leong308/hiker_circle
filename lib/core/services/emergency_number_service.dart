@@ -254,6 +254,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
         'result_type': 'country',
         'key': key,
       });
+      // API: Google emergency country lookup
       final response =
           await (_client == null
                   ? PrivateProviderClient.request('googleGeocode', {
@@ -299,6 +300,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
         'format': 'json',
         'apiKey': key,
       });
+      // API: Geoapify emergency country lookup
       final response =
           await (_client == null
                   ? PrivateProviderClient.request('geoReverse', {

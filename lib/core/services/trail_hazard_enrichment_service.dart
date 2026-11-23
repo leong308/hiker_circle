@@ -110,6 +110,7 @@ class TrailHazardEnrichmentService {
 );
 out body geom;
 ''';
+      // API: Overpass trail hazards
       final response = await _client
           .post(
             _overpassEndpoint,
@@ -498,6 +499,7 @@ out body geom;
               .join(','),
         },
       );
+      // API: Open-Meteo route elevations
       final response = await _client
           .get(uri, headers: const {'User-Agent': 'HikerCircle/1.1'})
           .timeout(const Duration(seconds: 15));
